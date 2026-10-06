@@ -7,10 +7,13 @@ release, and Slipway builds it, runs it on one of your machines, gives it a
 domain with TLS, and keeps DNS pointed at your home connection. Everything is
 reachable through a REST API; the web UI is only a client of that API.
 
-> **Status:** pre-1.0 and under active development. The first release, v0.1,
-> is being built against the specification in
-> [docs/architecture.md](docs/architecture.md). Until 1.0, the REST API, the
-> agent protocol and the configuration may change between minor versions.
+> **Status:** pre-1.0. Every v0.1 feature of the specification in
+> [docs/architecture.md](docs/architecture.md) is implemented, and the whole
+> flow below (install, setup, deploying a GitHub release, a domain on the
+> edge) has been tested end to end with images built from this repository.
+> No release has been tagged yet. Until 1.0, the REST API, the agent protocol
+> and the configuration may change between minor versions; known gaps are in
+> [docs/roadmap.md](docs/roadmap.md).
 
 ## Principles
 
@@ -36,9 +39,12 @@ reachable through a REST API; the web UI is only a client of that API.
 ## Features in v0.1
 
 - **Deployments from GitHub.** Connect through a GitHub App that Slipway
-  creates for you, or through a fine-grained personal access token. Deploy a
-  release, a branch or a commit; every deployment is pinned to a commit SHA.
-  Published releases can be deployed automatically.
+  creates for you (with signed, deduplicated webhooks), or through a
+  fine-grained personal access token. Deploy a release, a branch or a commit;
+  every deployment is pinned to a commit SHA, one deployment per app runs at a
+  time, and queued or running deployments can be cancelled. Published
+  releases can be deployed automatically (webhooks, or polling for token
+  connections).
 - **Compose runtime.** One or more Compose files, or a single `Dockerfile`.
   Before anything runs, the node's agent checks the configuration against a
   policy: no host bind mounts, no privileged containers, no host network or
@@ -46,7 +52,7 @@ reachable through a REST API; the web UI is only a client of that API.
 - **Rollback** by redeploying an older release; images cached on the node
   make it fast.
 - **Live logs.** Deployment output and container logs stream to the UI and
-  the API as Server-Sent Events.
+  the API as Server-Sent Events; a change feed keeps every open page current.
 - **Edge with automatic TLS.** Caddy on the edge node, configured by the API
   from your routes, with Let's Encrypt certificates and a DNS check before a
   domain is served. A route points at an app service, an external
@@ -56,15 +62,17 @@ reachable through a REST API; the web UI is only a client of that API.
   interface. An anchor hostname follows your public IPv4 (dynamic DNS); app
   domains are CNAME records pointing at it.
 - **Nodes.** Agents connect outbound over WebSocket, so nodes behind NAT
-  work. A node joins with a one-time token; each app runs on the node you
-  choose.
+  work. A node joins with a one-time token and a ready-made `docker run` or
+  Compose snippet; each app runs on the node you choose. Node credentials can
+  be rotated and revoked.
 - **Accounts.** Passkeys and passwords, roles (`owner`, `admin`, `member`,
   `viewer`), invitations, scoped API tokens, rate limits and an audit log of
   every change.
 - **Environment variables** per app, encrypted at rest. Values marked secret
   are never returned by the API.
 - **API first.** REST under `/api/v1`, an OpenAPI 3.1 document and
-  interactive API docs. The web UI's client is generated from the document.
+  interactive API docs. The web UI is a client of that API and validates every
+  response against the shared contract schemas.
 - **Signed images** for `amd64` and `arm64`, with SBOM and provenance
   attestations.
 
@@ -136,9 +144,9 @@ irm https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.p
 The e-mail address is used for the Let's Encrypt account. The installer
 checks Docker, creates the `slipway-proxy` network (`10.210.0.0/24`), writes
 an `.env` file with generated secrets (`SLIPWAY_SECRET_KEY`,
-`POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN`), starts the stack with
-`docker compose up -d --wait` and prints the setup URL on port 3000. Open it
-and create the owner account.
+`POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN`), pulls the images, starts
+the stack with `docker compose up -d --wait` and prints the setup URL on port
+3000. Open it and create the owner account.
 
 `install.sh` accepts `--dir` (install directory; `/opt/slipway` when run as
 root on Linux, otherwise `~/slipway`), `--email`, `--port` (host port of the
@@ -149,6 +157,25 @@ running it, download it first, then run
 Keep the `.env` file safe: without `SLIPWAY_SECRET_KEY`, the encrypted secrets
 in the database cannot be recovered. Upgrades, backups and adding nodes are
 covered in [docs/operations.md](docs/operations.md).
+
+### Your first deployment
+
+1. Create the owner account in the setup wizard and set the platform URL and
+   the Let's Encrypt e-mail.
+2. Connect GitHub under Settings → GitHub (a fine-grained token with
+   `Contents: read` and `Metadata: read` is enough to start).
+3. Create an app: pick the repository, its Compose files or `Dockerfile`, and
+   the node (`local`, the machine you installed on). Add environment variables
+   if the app needs them; values marked secret are never shown again.
+4. Deploy a release from the Deployments tab and watch the live log until it
+   is `running`. Deploying an older release later is the rollback.
+5. Add a domain and a route to the app's service port under Domains & routes,
+   point the DNS record at your public IPv4 (or let a DNS provider account do
+   it), and redeploy so the service joins the edge network. Caddy obtains the
+   certificate once the DNS check passes.
+
+The same steps work with `curl` against `/api/v1` and an API token; the
+operations guide lists the exact calls.
 
 ## Development
 
@@ -192,8 +219,9 @@ compose.dev.yaml                     PostgreSQL for local development
 - [Architecture](docs/architecture.md): the v0.1 specification and the
   reference for design questions.
 - [Development guide](docs/development.md): working on the code base.
-- [Operations guide](docs/operations.md): installing, upgrading, backing up
-  and adding nodes.
+- [Operations guide](docs/operations.md): installing (Linux, macOS, Windows),
+  first setup, adding nodes, upgrading, backup and restore, troubleshooting.
+- [Roadmap](docs/roadmap.md): known gaps and follow-ups after v0.1.
 - [Architecture decision records](docs/adr/): why the main technical choices
   were made.
 - [Contributing](CONTRIBUTING.md): workflow, commit conventions and releases.

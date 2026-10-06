@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output and caches
+dist/
+.turbo/
+.vite/
+coverage/
+*.tsbuildinfo
+
+# Generated at build time (see turbo openapi:* tasks)
+apps/api/openapi.json
+apps/web/src/lib/api/schema.gen.ts
+
+# Playwright
+playwright-report/
+test-results/
+blob-report/
+
+# Environment and secrets
+.env
+.env.*
+!.env.example
+
+# Logs and OS/editor files
+*.log
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json

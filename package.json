@@ -1,0 +1,45 @@
+{
+  "name": "slipway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Self-hosted deployment platform: GitHub releases to running Compose apps with domains, TLS and DNS.",
+  "license": "Apache-2.0",
+  "author": "Jens Penneman",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/JensPenneman/slipway.git"
+  },
+  "type": "module",
+  "packageManager": "pnpm@11.21.0",
+  "engines": {
+    "node": ">=24.11.0",
+    "pnpm": ">=11.21.0"
+  },
+  "scripts": {
+    "prepare": "lefthook install",
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "lint:ci": "biome ci .",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:integration": "turbo run test:integration",
+    "test:e2e": "turbo run test:e2e",
+    "knip": "knip",
+    "check": "pnpm lint && pnpm typecheck && pnpm knip && pnpm test",
+    "db:generate": "turbo run db:generate",
+    "db:migrate": "turbo run db:migrate",
+    "openapi:generate": "turbo run openapi:generate"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.15",
+    "@commitlint/cli": "21.2.3",
+    "@commitlint/config-conventional": "21.2.3",
+    "knip": "6.40.0",
+    "lefthook": "2.1.17",
+    "turbo": "2.11.7",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

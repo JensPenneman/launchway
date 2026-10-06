@@ -1,0 +1,29 @@
+packages:
+  - apps/*
+  - packages/*
+
+# pnpm 11 reads its settings from this file; .npmrc only carries registry/auth settings.
+saveExact: true
+strictPeerDependencies: true
+engineStrict: true
+preferWorkspacePackages: true
+
+# Versions shared by several workspace packages. Reference them with "catalog:".
+catalog:
+  '@types/node': 24.19.1
+  pino: 10.4.0
+  pino-pretty: 13.2.0
+  tsx: 4.23.15
+  typescript: 5.9.3
+  vitest: 5.0.3
+  zod: 4.6.5
+
+# pnpm 11 holds back versions younger than minimumReleaseAge (supply-chain protection).
+# Entries here were deliberately accepted before reaching that age.
+minimumReleaseAgeExclude:
+  - knip@6.40.0
+
+# Dependency install scripts are denied unless listed with `true`.
+allowBuilds:
+  # Git hooks are installed by the root `prepare` script instead.
+  lefthook: false

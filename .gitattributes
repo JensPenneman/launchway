@@ -1,0 +1,10 @@
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+
+pnpm-lock.yaml linguist-generated=true
+apps/api/drizzle/meta/** linguist-generated=true
+apps/web/src/routeTree.gen.ts linguist-generated=true

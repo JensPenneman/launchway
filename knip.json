@@ -1,0 +1,26 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "workspaces": {
+    ".": {
+      "entry": ["vitest.config.ts", "commitlint.config.js"]
+    },
+    "packages/contracts": {
+      "entry": ["src/index.ts", "src/agent/index.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/api": {
+      "entry": ["src/index.ts", "scripts/*.ts", "drizzle.config.ts"],
+      "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+    },
+    "apps/agent": {
+      "entry": ["src/index.ts", "src/healthcheck.ts"],
+      "project": ["src/**/*.ts"]
+    },
+    "apps/web": {
+      "entry": ["src/main.tsx", "src/routes/**/*.tsx", "src/components/ui/*.tsx"],
+      "project": ["src/**/*.{ts,tsx}", "e2e/**/*.ts"],
+      "ignore": ["src/routeTree.gen.ts", "src/lib/api/schema.gen.ts"]
+    }
+  },
+  "ignoreExportsUsedInFile": true
+}

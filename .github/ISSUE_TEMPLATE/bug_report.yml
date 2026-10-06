@@ -1,0 +1,87 @@
+name: Bug report
+description: Something in Slipway does not work as expected.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a problem. Please search the existing issues first.
+        Security vulnerabilities do not belong here: report them privately through a [security advisory](https://github.com/JensPenneman/slipway/security/advisories/new).
+
+  - type: input
+    id: version
+    attributes:
+      label: Slipway version
+      description: |
+        The image tag you run, for example `0.2.0`. For `edge` images, add the commit from the `org.opencontainers.image.revision` label:
+        `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ghcr.io/jenspenneman/slipway:edge`
+      placeholder: 0.2.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-method
+    attributes:
+      label: Install method
+      options:
+        - Install script (deploy/install.sh)
+        - Install script for Windows (deploy/install.ps1)
+        - Docker Compose without the install script
+        - From source (development setup)
+        - Other (describe below)
+    validations:
+      required: true
+
+  - type: input
+    id: host-os
+    attributes:
+      label: Host operating system
+      description: Operating system and CPU architecture of the affected machine. Mention whether it is the edge node or another node.
+      placeholder: Ubuntu 24.04 (x86_64), edge node
+    validations:
+      required: true
+
+  - type: input
+    id: docker-version
+    attributes:
+      label: Docker version
+      description: Output of `docker version --format '{{.Server.Version}}'` and `docker compose version`.
+      placeholder: Docker Engine 28.5.1, Docker Compose v2.40.0
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: The smallest set of steps that shows the problem.
+      placeholder: |
+        1. Create an app from a repository with a Compose file
+        2. Deploy release v1.2.0
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What happened instead, including error messages shown in the UI or returned by the API.
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Relevant output of `docker compose logs slipway slipway-agent` or of the deployment log.
+        **Redact secrets before posting**: API tokens (`slp_...`), node join tokens and credentials, passwords, session cookies, `SLIPWAY_SECRET_KEY`, database URLs with passwords, DNS provider credentials, GitHub App keys and environment variable values.
+      render: text

@@ -1,0 +1,36 @@
+name: Feature request
+description: Suggest a new capability or an improvement for Slipway.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the suggestion. Please search the existing issues first, and check the "Deliberately later" list in [docs/architecture.md](https://github.com/JensPenneman/slipway/blob/main/docs/architecture.md).
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what makes it hard or impossible today?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should Slipway behave? Everything in the UI must also be possible through the API, so describe the API side as well when you can.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Workarounds you use today or other approaches you looked at.
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional context
+      description: Screenshots, links or examples.

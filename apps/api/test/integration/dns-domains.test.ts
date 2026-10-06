@@ -54,8 +54,6 @@ describe('DNS accounts, zones, records and domains against PostgreSQL', () => {
   beforeAll(async () => {
     pool = new pg.Pool({ connectionString: inject('databaseUrl') });
     db = createDatabase(pool);
-    // `active` joined DOMAIN_STATUSES on this branch; the next generated migration adds it.
-    await pool.query(`ALTER TYPE domain_status ADD VALUE IF NOT EXISTS 'active'`);
     dnsProviders.register(memoryProviderDefinition(kind, state));
     deps = createTestDeps({ db, auth: fixedAuth(member) });
     deps.events.subscribe((event) => events.push(`${event.topic}.${event.action}`));

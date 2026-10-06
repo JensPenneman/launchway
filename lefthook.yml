@@ -1,0 +1,23 @@
+# Git hooks, installed by `pnpm install` (prepare script). Skip once with LEFTHOOK=0.
+pre-commit:
+  parallel: true
+  commands:
+    biome:
+      glob: '*.{js,jsx,ts,tsx,cjs,mjs,cts,mts,json,jsonc,css}'
+      run: pnpm exec biome check --write --no-errors-on-unmatched --files-ignore-unknown=true --colors=off {staged_files}
+      stage_fixed: true
+
+commit-msg:
+  commands:
+    commitlint:
+      run: pnpm exec commitlint --edit {1}
+
+pre-push:
+  piped: true
+  commands:
+    typecheck:
+      priority: 1
+      run: pnpm typecheck
+    unit-tests:
+      priority: 2
+      run: pnpm test

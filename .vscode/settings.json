@@ -1,0 +1,24 @@
+{
+  "editor.defaultFormatter": "biomejs.biome",
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.biome": "explicit",
+    "source.organizeImports.biome": "explicit"
+  },
+  "[javascript][javascriptreact][typescript][typescriptreact][json][jsonc][css]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  },
+  "typescript.tsdk": "node_modules/typescript/lib",
+  "typescript.enablePromptUseWorkspaceTsdk": true,
+  "tailwindCSS.experimental.configFile": "apps/web/src/styles.css",
+  "files.readonlyInclude": {
+    "**/routeTree.gen.ts": true,
+    "**/schema.gen.ts": true,
+    "apps/api/drizzle/**": true
+  },
+  "search.exclude": {
+    "**/dist": true,
+    "**/.turbo": true,
+    "pnpm-lock.yaml": true
+  }
+}

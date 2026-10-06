@@ -1,0 +1,13 @@
+{
+  "recommendations": [
+    "biomejs.biome",
+    "vitest.explorer",
+    "ms-playwright.playwright",
+    "bradlc.vscode-tailwindcss",
+    "editorconfig.editorconfig",
+    "github.vscode-github-actions",
+    "ms-azuretools.vscode-containers",
+    "ms-vscode-remote.remote-containers"
+  ],
+  "unwantedRecommendations": ["esbenp.prettier-vscode", "dbaeumer.vscode-eslint"]
+}

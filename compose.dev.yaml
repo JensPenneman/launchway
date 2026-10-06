@@ -1,0 +1,23 @@
+# Services for local development only (production: deploy/compose.yaml).
+#   docker compose -f compose.dev.yaml up -d
+name: slipway-dev
+
+services:
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: slipway
+      POSTGRES_PASSWORD: slipway
+      POSTGRES_DB: slipway
+    ports:
+      - '127.0.0.1:${SLIPWAY_DEV_DB_PORT:-5432}:5432'
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U slipway -d slipway']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  db-data:

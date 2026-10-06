@@ -1,0 +1,53 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "ui": "stream",
+  "globalDependencies": [".node-version"],
+  "globalEnv": ["NODE_ENV"],
+  "globalPassThroughEnv": [
+    "CI",
+    "DATABASE_URL",
+    "DOCKER_HOST",
+    "LOG_LEVEL",
+    "PLAYWRIGHT_*",
+    "SLIPWAY_*",
+    "TESTCONTAINERS_*",
+    "TEST_DATABASE_URL"
+  ],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "outputs": []
+    },
+    "test": {
+      "outputs": []
+    },
+    "test:integration": {
+      "cache": false
+    },
+    "test:e2e": {
+      "dependsOn": ["build"],
+      "cache": false
+    },
+    "dev": {
+      "cache": false,
+      "persistent": true
+    },
+    "db:generate": {
+      "dependsOn": ["^build"],
+      "cache": false
+    },
+    "db:migrate": {
+      "cache": false
+    },
+    "openapi:export": {
+      "outputs": ["openapi.json"]
+    },
+    "openapi:generate": {
+      "outputs": ["src/lib/api/schema.gen.ts"]
+    }
+  }
+}

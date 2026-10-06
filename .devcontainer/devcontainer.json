@@ -1,0 +1,31 @@
+{
+  "name": "Slipway",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "24",
+      "pnpmVersion": "11.21.0"
+    },
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {}
+  },
+  "postCreateCommand": "pnpm install --frozen-lockfile",
+  "forwardPorts": [3000, 5173, 5432],
+  "portsAttributes": {
+    "3000": { "label": "API" },
+    "5173": { "label": "Web (Vite)" },
+    "5432": { "label": "PostgreSQL (dev)", "onAutoForward": "silent" }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "biomejs.biome",
+        "vitest.explorer",
+        "ms-playwright.playwright",
+        "bradlc.vscode-tailwindcss",
+        "editorconfig.editorconfig",
+        "github.vscode-github-actions",
+        "ms-azuretools.vscode-containers"
+      ]
+    }
+  }
+}

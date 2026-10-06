@@ -235,6 +235,14 @@ function AddRouteDialog({ app }: { app: App }) {
     (domain) => !routedDomainIds.has(domain.id),
   );
   const services = status.data?.services.map((item) => item.service) ?? [];
+  const needsRedeploy =
+    app.activeDeploymentId !== null &&
+    !(routes.data?.items ?? []).some(
+      (route) =>
+        route.target.kind === 'app' &&
+        route.target.appId === app.id &&
+        route.target.service === service,
+    );
 
   const hostnameError =
     domainChoice === NEW_DOMAIN && hostname !== '' ? fieldError(Hostname, hostname) : undefined;
@@ -257,7 +265,12 @@ function AddRouteDialog({ app }: { app: App }) {
     },
     {
       invalidate: [keys.routes, keys.domains, keys.edge],
-      success: (route) => `${route.hostname} routed to ${service}:${port}`,
+      // Services join the edge network when they are deployed, so a running app needs a
+      // redeploy before a newly routed service is reachable.
+      success: (route) =>
+        `${route.hostname} routed to ${service}:${port}${
+          needsRedeploy ? '. Redeploy the app so the edge can reach this service.' : ''
+        }`,
       onSuccess: () => {
         setOpen(false);
         setHostname('');

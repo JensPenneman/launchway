@@ -8,7 +8,7 @@ import type { EdgeRenderInput } from './render.js';
 
 const DOMAIN = 'dom_01jbh8m4x2f8k9z0a1b2c3d4e5' as DomainId;
 
-function input(status: DomainStatus, port = 7878): EdgeRenderInput {
+function input(status: DomainStatus, port = 7878, force = false): EdgeRenderInput {
   return {
     settings: { publicUrl: null, acmeEmail: null, forwardAuthUrl: null, edgeNodeId: null },
     routes: [
@@ -16,7 +16,7 @@ function input(status: DomainStatus, port = 7878): EdgeRenderInput {
         id: 'rt_01jbh8m4x2f8k9z0a1b2c3d4e5' as RouteId,
         domainId: DOMAIN,
         hostname: 'radarr.example.com',
-        domain: { status, force: false },
+        domain: { status, force },
         target: { kind: 'external', scheme: 'http', host: 'host.docker.internal', port },
         protected: false,
         compress: true,
@@ -74,6 +74,26 @@ describe('edge reconciler', () => {
     expect(caddy.loaded).toHaveLength(3);
     expect(caddy.loaded[2]).toContain('host.docker.internal:9000');
     expect(markDomainActive).not.toHaveBeenCalled();
+  });
+
+  it('activates a forced domain that passes its DNS check later, without reloading', async () => {
+    const caddy = fakeCaddy();
+    let current = input('pending', 7878, true);
+    const markDomainActive = vi.fn(() => Promise.resolve());
+    const reconciler = createEdgeReconciler(createTestDeps(), {
+      caddy,
+      loadInput: () => Promise.resolve(current),
+    });
+    reconciler.start({ markDomainActive });
+
+    await reconciler.apply();
+    expect(caddy.loaded).toHaveLength(1);
+    expect(markDomainActive).not.toHaveBeenCalled();
+
+    current = input('verified', 7878, true);
+    await reconciler.apply();
+    expect(caddy.loaded).toHaveLength(1);
+    expect(markDomainActive).toHaveBeenCalledWith(DOMAIN);
   });
 
   it('remembers the last error and reports it as a problem with Caddy’s message', async () => {

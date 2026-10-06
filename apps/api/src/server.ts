@@ -13,6 +13,8 @@ import { createEventBus } from './lib/event-bus.js';
 import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
 import { createAuthResolver } from './modules/auth/resolver.js';
+import { startDeploymentWorker } from './modules/deployments/dispatcher.js';
+import { startReleasePoller } from './modules/github/poller.js';
 import { APP_VERSION } from './version.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -52,6 +54,9 @@ export async function start(): Promise<void> {
     version: APP_VERSION,
   };
   const app = createApp(deps);
+  // Background jobs; both stop when lifecycle.signal aborts.
+  startDeploymentWorker(deps);
+  startReleasePoller(deps);
 
   // WebSocket upgrades (agent socket) are handled by `upgradeWebSocket` from @hono/node-server.
   const wss = new WebSocketServer({ noServer: true });

@@ -1,9 +1,12 @@
 import type { Api, Deps } from '../deps.js';
+import { registerAppsRoutes } from './apps/routes.js';
 import { registerAuditRoutes } from './audit/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerDeploymentsRoutes } from './deployments/routes.js';
 import { registerDnsRoutes } from './dns/routes.js';
 import { registerDomainsRoutes } from './domains/routes.js';
 import { registerEventsRoutes } from './events/routes.js';
+import { registerGitHubRoutes } from './github/routes.js';
 import { registerHealthRoutes } from './health/routes.js';
 import { registerInvitationsRoutes } from './invitations/routes.js';
 import { registerSettingsRoutes } from './settings/routes.js';
@@ -37,6 +40,9 @@ export const modules: readonly ModuleDefinition[] = [
   { name: 'events', mount: 'v1', register: registerEventsRoutes },
   { name: 'dns', mount: 'v1', register: registerDnsRoutes },
   { name: 'domains', mount: 'v1', register: registerDomainsRoutes },
+  { name: 'github', mount: 'v1', register: registerGitHubRoutes },
+  { name: 'apps', mount: 'v1', register: registerAppsRoutes },
+  { name: 'deployments', mount: 'v1', register: registerDeploymentsRoutes },
 ];
 
 export function registerModules(routers: Record<ModuleDefinition['mount'], Api>, deps: Deps): void {

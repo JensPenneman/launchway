@@ -1,0 +1,43 @@
+{
+  "name": "@slipway/contracts",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Zod schemas and TypeScript types shared by the Slipway API, agent and web UI.",
+  "license": "Apache-2.0",
+  "type": "module",
+  "sideEffects": [
+    "./src/zod.ts",
+    "./dist/zod.js"
+  ],
+  "exports": {
+    ".": {
+      "@slipway/source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./agent": {
+      "@slipway/source": "./src/agent/index.ts",
+      "types": "./dist/agent/index.d.ts",
+      "default": "./dist/agent/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b tsconfig.build.json",
+    "dev": "tsc -b tsconfig.build.json --watch --preserveWatchOutput",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@asteasolutions/zod-to-openapi": "9.1.0",
+    "typeid-js": "1.2.0",
+    "zod": "catalog:"
+  },
+  "devDependencies": {
+    "@slipway/tsconfig": "workspace:*",
+    "typescript": "catalog:",
+    "vitest": "catalog:"
+  }
+}

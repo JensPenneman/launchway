@@ -1,4 +1,6 @@
 # Git hooks, installed by `pnpm install` (prepare script). Skip once with LEFTHOOK=0.
+output:
+  - failure
 pre-commit:
   parallel: true
   commands:

@@ -3,6 +3,7 @@ import { and, eq, lt } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { systemActor } from '../../lib/auth-context.js';
 import type { GitProvider } from '../../lib/git-provider.js';
+import { startJob } from '../../lib/jobs.js';
 import { apps } from '../apps/schema.js';
 import { createDeploymentsService } from '../deployments/service.js';
 import { providerFor } from './providers.js';
@@ -65,19 +66,12 @@ export function startReleasePoller(
   intervalMs = GITHUB_RELEASE_POLL_INTERVAL_MS,
 ): () => void {
   const poller = createReleasePoller(deps);
-  let running = false;
-  const timer = setInterval(() => {
-    if (running || deps.lifecycle.shuttingDown) return;
-    running = true;
-    poller
-      .tick()
-      .catch((error: unknown) => deps.logger.error({ err: error }, 'release poller failed'))
-      .finally(() => {
-        running = false;
-      });
-  }, intervalMs);
-  timer.unref();
-  const stop = () => clearInterval(timer);
-  deps.lifecycle.signal.addEventListener('abort', stop, { once: true });
-  return stop;
+  const job = startJob({
+    name: 'github-release-poller',
+    intervalMs,
+    signal: deps.lifecycle.signal,
+    logger: deps.logger,
+    run: () => poller.tick(),
+  });
+  return job.stop;
 }

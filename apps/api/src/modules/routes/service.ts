@@ -9,12 +9,11 @@ import type {
   UpdateRouteInput,
 } from '@slipway/contracts';
 import { and, asc, eq, ne, type SQL, sql } from 'drizzle-orm';
-import { z } from 'zod';
 import type { Executor } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';
 import type { RequestActor } from '../../lib/auth-context.js';
-import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
+import { afterCursor, createdAtKey, toPage } from '../../lib/pagination.js';
 import { conflict, invalidField, notFound } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
@@ -28,8 +27,6 @@ type RouteRow = typeof routes.$inferSelect;
 /** Serializes route mutations so the alias collision check cannot race. */
 const ROUTES_LOCK = sql`select pg_advisory_xact_lock(hashtext('slipway:routes'))`;
 
-const RouteCursor = z.object({ at: z.string().min(1).max(64), id: z.string().min(1).max(64) });
-
 export interface RoutesService {
   list(query: RouteListQuery): Promise<RoutePage>;
   get(id: RouteId): Promise<Route>;
@@ -41,8 +38,6 @@ export interface RoutesService {
 const routeColumns = {
   route: routes,
   hostname: domains.hostname,
-  /** Microsecond-exact creation time for keyset cursors. */
-  cursorAt: sql<string>`to_char(${routes.createdAt} at time zone 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"')`,
 };
 
 function toRoute(row: RouteRow, hostname: string): Route {
@@ -106,31 +101,19 @@ export function createRoutesService(deps: Pick<Deps, 'db' | 'events'>): RoutesSe
 
   return {
     async list(query) {
-      const conditions: SQL[] = [];
+      const conditions: (SQL | undefined)[] = [
+        afterCursor(query.cursor, routes.createdAt, routes.id, 'asc'),
+      ];
       if (query.appId) conditions.push(eq(routes.appId, query.appId));
       if (query.domainId) conditions.push(eq(routes.domainId, query.domainId));
-      if (query.cursor) {
-        const cursor = decodeCursor(query.cursor, RouteCursor);
-        conditions.push(
-          sql`(${routes.createdAt}, ${routes.id}) > (${cursor.at}::timestamptz, ${cursor.id})`,
-        );
-      }
       const rows = await deps.db
-        .select(routeColumns)
+        .select({ ...routeColumns, id: routes.id, createdAtKey: createdAtKey(routes.createdAt) })
         .from(routes)
         .innerJoin(domains, eq(routes.domainId, domains.id))
         .where(and(...conditions))
         .orderBy(asc(routes.createdAt), asc(routes.id))
         .limit(query.limit + 1);
-      const items = rows.slice(0, query.limit);
-      const last = items.at(-1);
-      return {
-        items: items.map((row) => toRoute(row.route, row.hostname)),
-        nextCursor:
-          rows.length > query.limit && last
-            ? encodeCursor({ at: last.cursorAt, id: last.route.id })
-            : null,
-      };
+      return toPage(rows, query.limit, (row) => toRoute(row.route, row.hostname));
     },
 
     async get(id) {

@@ -38,3 +38,37 @@ export async function saveCredentials(
   });
   await rename(temporary, target);
 }
+
+/**
+ * Picks the bearer token of the next connection attempt: the stored node credential, or the join
+ * token before joining. When the server refuses the stored credential (for example after the
+ * control plane's database was restored from a backup) and a join token is configured, the agent
+ * joins again with it; the bundled agent's bootstrap token stays valid for exactly this.
+ */
+export interface TokenSource {
+  token(): string | null;
+  /** The server refused the current token; true when the next attempt uses the join token. */
+  refused(): boolean;
+  /** A new credential arrived with `hello.ok`. */
+  store(credentials: StoredCredentials): void;
+}
+
+export function createTokenSource(
+  stored: StoredCredentials | null,
+  joinToken: string | null,
+): TokenSource {
+  let credentials = stored;
+  let useJoinToken = credentials === null;
+  return {
+    token: () => (useJoinToken ? joinToken : (credentials?.credential ?? null)),
+    refused() {
+      if (useJoinToken || joinToken === null) return false;
+      useJoinToken = true;
+      return true;
+    },
+    store(next) {
+      credentials = next;
+      useJoinToken = false;
+    },
+  };
+}

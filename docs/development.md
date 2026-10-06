@@ -37,8 +37,8 @@ pnpm dev                                       # API on :3000, web UI on :5173 (
 | `pnpm lint` / `pnpm lint:fix` / `pnpm lint:ci` | Biome check / check with fixes / `biome ci` |
 | `pnpm typecheck` | `tsc` for every package (project references) |
 | `pnpm test` | Unit tests (Vitest), per package |
-| `pnpm test:integration` | API integration tests against PostgreSQL (Testcontainers, or `TEST_DATABASE_URL`) |
-| `pnpm test:e2e` | Playwright smoke tests of the web UI (`pnpm --filter @slipway/web exec playwright install chromium` once) |
+| `pnpm test:integration` | Integration tests: the API against PostgreSQL (Testcontainers, or `TEST_DATABASE_URL`) and a Caddy container; the agent against the local Docker daemon (pulls `traefik/whoami`) |
+| `pnpm test:e2e` | Playwright smoke tests of the web UI against its mock API (`pnpm --filter @slipway/web exec playwright install chromium` once) |
 | `pnpm knip` | Unused files, exports and dependencies |
 | `pnpm check` | lint + typecheck + knip + unit tests (run before pushing; the pre-push hook runs typecheck + unit tests) |
 | `pnpm db:generate` | drizzle-kit: next SQL migration from the schema (see the rule below) |
@@ -92,9 +92,13 @@ apps/api/src/modules/<module>/
 - A module talks to another module through that module's service (or, for read-only joins, its
   schema). Never write another module's tables directly. Biome's `noImportCycles` rejects
   circular imports between modules.
-- Shared infrastructure lives in `apps/api/src/lib` (`problem`, `auth-context`, `crypto`, `sse`,
-  `event-bus`, `pagination`, `openapi`, `client-ip`) and `apps/api/src/db` (`client`, `columns`,
-  `errors`, `migrate`, `schema`). Extend it there when several modules need the same thing.
+- Shared infrastructure lives in `apps/api/src/lib` (`problem`, `auth-context`, `csrf`,
+  `rate-limit`, `crypto`, `sse`, `event-bus`, `pagination`, `jobs`, `openapi`, `client-ip`,
+  `agent-gateway`, `git-provider`, `static`) and `apps/api/src/db` (`client`, `columns`, `errors`,
+  `migrate`, `schema`). Extend it there when several modules need the same thing.
+- Cross-module wiring (the agent gateway and the deployments sink, the edge's domain hooks, the
+  background workers) happens in the composition root, `src/server.ts`
+  ([ADR 0010](adr/0010-composition-root-wiring.md)).
 
 ### Registering routes
 
@@ -209,12 +213,15 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 
 ### Authentication and authorization
 
-- `c.var.principal` is set for every request by `Deps.auth` (an `AuthResolver`). Until the auth
-  module lands, `anonymousAuthResolver` makes every request anonymous, so protected routes answer
-  401. **TODO(auth):** implement the resolver (session cookie `slipway_session` with a hashed
-  token, sliding 30-day expiry, CSRF check via `Origin`/`Sec-Fetch-Site` for cookie-authenticated
-  unsafe methods; bearer `slp_...` tokens with hashed lookup, expiry and `lastUsedAt`) and wire it
-  in `src/server.ts`.
+- `c.var.principal` is set for every request by `Deps.auth` (an `AuthResolver`). The server uses
+  `createAuthResolver` (`modules/auth/resolver.ts`): a bearer `slp_...` token (hashed lookup,
+  expiry, scopes, `lastUsedAt`) takes precedence over the `slipway_session` cookie (hashed token,
+  30-day sliding expiry). Join tokens and node credentials (`slpn_...`, `slpa_...`) are left to the
+  agent socket, which checks them itself. Unit tests keep `anonymousAuthResolver` or `fixedAuth`.
+- Unsafe requests that carry the session cookie must send `Sec-Fetch-Site: same-origin`/`none` or
+  an `Origin` equal to the platform origin (`lib/csrf.ts`); browsers do this, scripts should use
+  bearer tokens. Setup, sign-in, passkeys, invitations and token creation are rate-limited per
+  client IP (`lib/rate-limit.ts`); route tests share one bucket per app instance.
 - Declare authorization per route with `middleware: [requireRole('viewer' | 'member' | 'admin' | 'owner')]`.
   Tokens are capped by scope (`read` acts as viewer, `write` as member, `admin` up to the user's
   role); `effectiveRole(principal)` computes the result.
@@ -242,14 +249,25 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 ### Pagination, streaming and WebSockets
 
 - Lists accept `PaginationQuery` (`limit`, `cursor`) and return `page(Entity)`. Use keyset
-  pagination on `(created_at, id)` with `encodeCursor` / `decodeCursor` (`src/lib/pagination.ts`);
-  never offsets.
+  pagination on `(created_at, id)` with the helpers in `src/lib/pagination.ts`: select
+  `createdAtKey(table.createdAt)` next to the row, filter with `afterCursor(cursor, createdAt, id,
+  'asc' | 'desc')` and cut the `limit + 1` rows with `toPage(rows, limit, map)`. They keep
+  PostgreSQL's microseconds in the cursor, which a `Date` would lose. Never use offsets.
 - Server-Sent Events: `sseResponse(c, (signal) => source(signal), { signal: deps.lifecycle.signal })`
   with event names from `SSE_EVENTS`. Streams end on client disconnect and on shutdown.
 - WebSockets: the HTTP server is created with WebSocket support. A route on the `api` mount uses
   `upgradeWebSocket` from `@hono/node-server`, with authentication (join token or node
   credential) checked before upgrading. Messages are validated with
   `parseAgentToServerMessage`; unknown types are logged and ignored.
+
+### Background jobs
+
+- Periodic work uses `startJob` from `src/lib/jobs.ts`: interval plus jitter, runs that never
+  overlap, scheduled-run errors logged, timers that do not keep the process alive, and a stop on
+  `deps.lifecycle.signal`. `runNow()` runs the job on demand (and rethrows its error).
+- Start jobs from the composition root (`src/server.ts`), not from `register<Module>Routes`:
+  `createApp` also runs in tests and in `pnpm openapi:generate`. The DNS and domain jobs predate
+  this rule and guard themselves with `config.env !== 'test'`.
 
 ### Logging
 
@@ -269,16 +287,35 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
   authorization (401/403) and validation (400) for every route.
 - Integration tests live in `apps/api/test/integration/*.test.ts`, get a migrated database through
   `inject('databaseUrl')` and exercise the real stack (HTTP, then service, then PostgreSQL),
-  including audit rows. Tests must not depend on each other's data: use unique values.
+  including audit rows. Tests must not depend on each other's data: use unique values. Helpers in
+  `apps/api/test/support`: `FakeAgentGateway`, `FakeGitHub`, an in-memory DNS provider and a fake
+  Cloudflare API, `startTestServer` with a scripted `TestAgent` for the agent socket, a software
+  WebAuthn authenticator, and fixtures for nodes, apps and domains. The edge test starts a real
+  `caddy:2-alpine` container.
+- The agent's integration test (`apps/agent/test/integration`) deploys, inspects, streams logs
+  of, stops and removes a real Compose project through the local Docker daemon, with an
+  in-process WebSocket server playing the control plane.
 - Contracts tests cover schemas and helpers. Web unit tests cover logic. Playwright smoke tests
-  (`apps/web/e2e`) cover user-visible flows with the API mocked via `page.route`.
+  (`apps/web/e2e`) cover user-visible flows against a build that serves the API from the MSW mock
+  (`VITE_API_MOCK=1`, fixtures in `apps/web/src/mocks`).
 
 ### Web UI
 
-- Pages are file-based routes in `apps/web/src/routes` (`_app/` = inside the app shell).
-  Data comes from the generated client (`api.GET('/api/v1/...')` in `src/lib/api/client.ts`),
-  wrapped in TanStack Query `queryOptions` in `src/lib/api/queries.ts`. Invalidate on
-  `PlatformEvent` topics.
+- Pages are file-based routes in `apps/web/src/routes` (`_app/` = inside the app shell); larger
+  page parts live in `src/features/<area>`.
+- Data comes from the resource modules in `src/api` (`apps`, `auth`, `domains`, `github`,
+  `nodes`, `platform`, `users`): TanStack Query `queryOptions` and mutations around one
+  `request()` helper that sends the session cookie, turns problem documents into `ApiError` and
+  parses every response with its `@slipway/contracts` schema (`ContractDriftError` on mismatch;
+  [ADR 0013](adr/0013-web-ui-data-layer.md)). `useApiMutation` adds toasts and invalidation.
+  Query keys have one root per resource; `keysForTopic()` maps each `/events` topic to the keys
+  to refresh. The client generated from the OpenAPI document (`src/lib/api/client.ts`) is used
+  for the health probe only.
+- Streams use the hooks in `src/api/events.ts`: `useLiveEvents` (change feed),
+  `useDeploymentLogStream` and `useAppLogStream`.
+- `pnpm --filter @slipway/web dev:mock` runs the UI against the MSW mock API; mock users sign in
+  with the password `correct horse battery staple` (see `apps/web/README.md` for the
+  scenarios).
 - UI building blocks are shadcn/ui components in `src/components/ui` (add more with
   `pnpm dlx shadcn@latest add <component>` from `apps/web`). Forms use react-hook-form + the
   contracts schemas. To use `@slipway/contracts` in the UI, add it as a dependency. Vite already
@@ -287,26 +324,28 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 ### Agent
 
 - Every process execution uses `execFile` with an argument array, never a shell string. Validate
-  refs with `GitRef` before use, pass Git credentials only through
-  `-c http.extraHeader=...`, and never log environment values.
+  refs with `GitRef` before use, pass Git credentials only as Git configuration in the child's
+  environment (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`, the equivalent of `-c http.extraHeader=...`
+  without showing up in the process list), and never log environment values. Child processes get
+  an allow-listed environment only.
+- The runtime lives in `apps/agent/src/runtime`: checkout, Compose file resolution, the policy
+  (`compose-policy.ts`), the `compose.slipway.yaml` override, the per-app deployment queue, log
+  streams and the outbox that re-sends results after a reconnect.
 - Protocol changes start in `packages/contracts/src/agent`. Breaking changes bump
-  `AGENT_PROTOCOL_VERSION`. Requests are answered with replies echoing the request `id`;
-  unimplemented requests answer an `error` with code `not-implemented`.
+  `AGENT_PROTOCOL_VERSION`. Requests are answered with replies echoing the request `id`; a request
+  the agent cannot handle answers an `error` (for example `not-found` or `busy`).
 
-## Open items for the next stage
+## Open items
 
-- **auth:** session/token resolver, CSRF, rate limits (see above).
-- **nodes:** `GET /api/agent/ws` handler, join tokens and credentials, registering
-  `SLIPWAY_LOCAL_JOIN_TOKEN` for the local edge node, offline detection.
-- **routes:** reject network-alias collisions across apps. `<slug>-<service>` can collide, for
-  example `shop` + `api-db` and `shop-api` + `db`.
-- **edge:** Caddy's admin API listens on `0.0.0.0:2019` inside the proxy network (spec), so app
-  containers on `slipway-proxy` can reach it. See ADR 0003 for the hardening options. Every
-  Caddyfile the API pushes must repeat the global options block (`admin 0.0.0.0:2019`, `email`,
-  `cert_issuer acme`); without `admin`, Caddy moves its admin API to localhost and, with
-  `--resume`, keeps that state across restarts.
-- **agent:** the Compose policy must also reject app Compose files that reference the
-  `slipway-proxy` network themselves (only the generated override attaches routed services).
-  Extra nodes have no `slipway-proxy` network until the agent creates it.
-- **docs page:** Scalar loads its UI bundle from a CDN. Self-host it if outbound access must be
-  avoided.
+The v0.1 modules are merged and wired. Known gaps and follow-ups, grouped by area, are in
+[roadmap.md](roadmap.md). Points that matter while changing the code:
+
+- Every Caddyfile the API pushes repeats the global options block (`admin 0.0.0.0:2019`, `email`,
+  `cert_issuer acme`; see `renderEdge`). Without `admin`, Caddy moves its admin API to localhost
+  and, with `--resume`, keeps that state across restarts.
+- Caddy's admin API stays reachable from app containers on `slipway-proxy`; ADR 0003 lists the
+  hardening options.
+- Routed services join the proxy network when they are deployed, so a new route of a running app
+  takes effect with its next deployment ([ADR 0011](adr/0011-domain-activation-and-edge-rules.md)).
+- The API reference page (Scalar) loads its bundle from a CDN. Self-host it if outbound access
+  must be avoided.

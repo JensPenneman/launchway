@@ -44,6 +44,7 @@
     "@types/ws": "catalog:",
     "drizzle-kit": "0.31.11",
     "pino-pretty": "catalog:",
+    "testcontainers": "12.2.0",
     "tsx": "catalog:",
     "typescript": "catalog:",
     "vitest": "catalog:"

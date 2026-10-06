@@ -7,14 +7,17 @@ import { type Config, ConfigError, loadConfig } from './config.js';
 import { createDatabase, createPool } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import type { Deps } from './deps.js';
-import { createUnavailableAgentGateway } from './lib/agent-gateway.js';
+import { noopDeploymentSink } from './lib/agent-gateway.js';
 import { createSecretBox } from './lib/crypto.js';
 import { createEventBus } from './lib/event-bus.js';
 import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
 import { createAuthResolver } from './modules/auth/resolver.js';
 import { startDeploymentWorker } from './modules/deployments/dispatcher.js';
+import { edgeReconciler } from './modules/edge/reconciler.js';
 import { startReleasePoller } from './modules/github/poller.js';
+import { createAgentGateway } from './modules/nodes/gateway.js';
+import { ensureLocalNode } from './modules/nodes/service.js';
 import { APP_VERSION } from './version.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -42,7 +45,7 @@ export async function start(): Promise<void> {
 
   const lifecycle = createLifecycle();
   const db = createDatabase(pool);
-  const deps: Deps = {
+  const core = {
     config,
     logger,
     db,
@@ -50,16 +53,26 @@ export async function start(): Promise<void> {
     auth: createAuthResolver({ db, logger }),
     events: createEventBus(),
     lifecycle,
-    agents: createUnavailableAgentGateway(), // TODO(nodes): replace with the WebSocket gateway.
     version: APP_VERSION,
   };
+  // !!! TODO(deployments): replace noopDeploymentSink with the deployments module's
+  // createDeploymentSink(...). Until then every progress/log/result/status report of the agents
+  // is DROPPED and offline nodes do not fail their in-flight deployments.
+  const agents = createAgentGateway({ deps: core, sink: noopDeploymentSink });
+  const deps: Deps = { ...core, agents };
   const app = createApp(deps);
+
+  await ensureLocalNode(deps);
+  await agents.start();
+  // TODO(domains): pass { markDomainActive } from the domains module (see EdgeHooks).
+  edgeReconciler(deps).start();
   // Background jobs; both stop when lifecycle.signal aborts.
   startDeploymentWorker(deps);
   startReleasePoller(deps);
 
   // WebSocket upgrades (agent socket) are handled by `upgradeWebSocket` from @hono/node-server.
-  const wss = new WebSocketServer({ noServer: true });
+  // Agent frames are at most 500 log lines of 16 KiB each.
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 });
   // `ws` declares `noServer?: boolean | undefined`; the adapter type omits `| undefined`, which
   // only matters under exactOptionalPropertyTypes. The runtime shapes are identical.
   const websocketServer = wss as unknown as WebSocketServerLike;

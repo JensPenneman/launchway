@@ -172,6 +172,9 @@ importers:
       pino-pretty:
         specifier: 'catalog:'
         version: 13.2.0
+      testcontainers:
+        specifier: 12.2.0
+        version: 12.2.0(supports-color@10.2.2)
       tsx:
         specifier: 'catalog:'
         version: 4.23.15

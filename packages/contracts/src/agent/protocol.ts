@@ -26,6 +26,8 @@ export const AGENT_CLOSE_CODES = {
   incompatibleProtocol: 4426,
   replaced: 4409,
   revoked: 4403,
+  /** No heartbeat within NODE_OFFLINE_AFTER_MS; the agent reconnects. */
+  heartbeatTimeout: 4408,
 } as const;
 
 /** Correlation id. Requests carry a fresh id; replies echo the id of the request. */

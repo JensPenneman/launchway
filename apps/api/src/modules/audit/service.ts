@@ -2,7 +2,7 @@ import type { AuditEvent, AuditEventPage, AuditListQuery } from '@slipway/contra
 import { and, desc, eq, getTableColumns, gte, like, lt, type SQL } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { auditActorOf, type RequestActor } from '../../lib/auth-context.js';
-import { afterCursor, createdAtKey, toPage } from './keyset.js';
+import { afterCursor, createdAtKey, toPage } from '../../lib/pagination.js';
 import { auditEvents } from './schema.js';
 
 type AuditEventRow = typeof auditEvents.$inferSelect;

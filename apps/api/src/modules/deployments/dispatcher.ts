@@ -4,6 +4,7 @@ import type { Deps } from '../../deps.js';
 import { AgentUnavailableError } from '../../lib/agent-gateway.js';
 import { systemActor } from '../../lib/auth-context.js';
 import { GitProviderError } from '../../lib/git-provider.js';
+import { startJob } from '../../lib/jobs.js';
 import { loadDecryptedEnv } from '../apps/env.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
@@ -202,19 +203,12 @@ export function createDispatcher(deps: Deps): Dispatcher {
 /** Starts the dispatch worker; it stops on shutdown or when the returned function is called. */
 export function startDeploymentWorker(deps: Deps, intervalMs = DISPATCH_INTERVAL_MS): () => void {
   const dispatcher = createDispatcher(deps);
-  let running = false;
-  const timer = setInterval(() => {
-    if (running || deps.lifecycle.shuttingDown) return;
-    running = true;
-    dispatcher
-      .tick()
-      .catch((error: unknown) => deps.logger.error({ err: error }, 'deployment worker failed'))
-      .finally(() => {
-        running = false;
-      });
-  }, intervalMs);
-  timer.unref();
-  const stop = () => clearInterval(timer);
-  deps.lifecycle.signal.addEventListener('abort', stop, { once: true });
-  return stop;
+  const job = startJob({
+    name: 'deployment-dispatcher',
+    intervalMs,
+    signal: deps.lifecycle.signal,
+    logger: deps.logger,
+    run: () => dispatcher.tick(),
+  });
+  return job.stop;
 }

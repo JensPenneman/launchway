@@ -18,8 +18,8 @@ describe('SecretBox (AES-256-GCM)', () => {
 
   it('round-trips values, with and without context', () => {
     expect(box.decrypt(box.encrypt('hunter2'))).toBe('hunter2');
-    expect(box.decrypt(box.encrypt('ünïcødé 🔑', 'env:app_1:KEY'), 'env:app_1:KEY')).toBe(
-      'ünïcødé 🔑',
+    expect(box.decrypt(box.encrypt('ünïcødé 日本語 €', 'env:app_1:KEY'), 'env:app_1:KEY')).toBe(
+      'ünïcødé 日本語 €',
     );
     expect(box.decrypt(box.encrypt(''))).toBe('');
   });

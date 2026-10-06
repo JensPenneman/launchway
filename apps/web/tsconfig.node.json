@@ -1,0 +1,10 @@
+{
+  "extends": "@slipway/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/node.tsbuildinfo"
+  },
+  "include": ["vite.config.ts", "vitest.config.ts", "playwright.config.ts", "e2e"]
+}

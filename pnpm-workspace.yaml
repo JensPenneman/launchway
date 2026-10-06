@@ -24,6 +24,7 @@ catalog:
 # Entries here were deliberately accepted before reaching that age.
 minimumReleaseAgeExclude:
   - knip@6.40.0
+  - vite@8.3.3
 
 # Dependency install scripts are denied unless listed with `true`.
 allowBuilds:

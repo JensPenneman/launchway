@@ -36,9 +36,14 @@ export function registerWebUi(app: Hono<AppEnv>, root: string, logger: Logger): 
   app.use('*', async (c, next) => {
     if (c.req.path === '/api' || c.req.path.startsWith('/api/')) return next();
     if (c.req.path.startsWith('/assets/')) {
-      await assets(c, next);
-      if (c.res.status === 200) c.header('Cache-Control', 'public, max-age=31536000, immutable');
-      return;
+      // serveStatic returns the response instead of finalizing the context, so it must be
+      // returned. A missing hashed asset is a 404, never the index.html fallback.
+      const response = await assets(c, async () => {});
+      if (!response) return c.notFound();
+      if (response.status === 200) {
+        response.headers.set('Cache-Control', 'public, max-age=31536000, immutable');
+      }
+      return response;
     }
     if (c.req.path !== '/' && c.req.path !== '/index.html') return assets(c, next);
     return next();

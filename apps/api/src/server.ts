@@ -8,11 +8,11 @@ import { createDatabase, createPool } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import type { Deps } from './deps.js';
 import { createUnavailableAgentGateway } from './lib/agent-gateway.js';
-import { anonymousAuthResolver } from './lib/auth-context.js';
 import { createSecretBox } from './lib/crypto.js';
 import { createEventBus } from './lib/event-bus.js';
 import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
+import { createAuthResolver } from './modules/auth/resolver.js';
 import { APP_VERSION } from './version.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -39,12 +39,13 @@ export async function start(): Promise<void> {
   await runMigrations(pool, logger);
 
   const lifecycle = createLifecycle();
+  const db = createDatabase(pool);
   const deps: Deps = {
     config,
     logger,
-    db: createDatabase(pool),
+    db,
     secrets: createSecretBox(config.secretKey),
-    auth: anonymousAuthResolver, // TODO(auth): replace with the session/token resolver.
+    auth: createAuthResolver({ db, logger }),
     events: createEventBus(),
     lifecycle,
     agents: createUnavailableAgentGateway(), // TODO(nodes): replace with the WebSocket gateway.

@@ -52,9 +52,15 @@ export const AuditEventPage = page(AuditEvent).openapi('AuditEventPage');
 export type AuditEventPage = z.infer<typeof AuditEventPage>;
 
 export const AuditListQuery = PaginationQuery.extend({
-  action: z.string().max(100).optional(),
+  action: z
+    .string()
+    .max(100)
+    .optional()
+    .openapi({ description: 'Action prefix, e.g. `user.` or `settings.update`' }),
   actorId: z.string().max(64).optional(),
   targetType: z.string().max(50).optional(),
   targetId: z.string().max(64).optional(),
+  since: Timestamp.optional().openapi({ description: 'Only events at or after this time' }),
+  until: Timestamp.optional().openapi({ description: 'Only events before this time' }),
 });
 export type AuditListQuery = z.infer<typeof AuditListQuery>;

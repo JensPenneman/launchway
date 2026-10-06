@@ -138,16 +138,24 @@ resolves it to a commit SHA at deployment creation). Optional per app:
 1. `git clone --depth 1 --branch <ref>` (or fetch a SHA) into
    `/var/lib/slipway/apps/<appId>/<deploymentId>`. Credentials are passed with
    `-c http.extraHeader="Authorization: basic <token>"`, never written to disk.
+   *(v0.1 passes the same setting through the `GIT_CONFIG_*` environment of
+   the `git` process, which keeps it out of the process list.)*
 2. Policy check with `docker compose config` on the merged files. Rejected:
    host bind mounts (named volumes and `configs:` with inline `content` are
    fine), `privileged`, `network_mode: host`, `pid: host`, capabilities beyond
    `cap_add` of a small allow-list. Published `ports:` are allowed (a mail
    server needs 25/465/993) and reported back so the UI can show them.
+   *(v0.1's policy refuses more, for example devices, other host namespaces
+   and files outside the checkout; see `apps/agent/src/runtime/compose-policy.ts`.
+   Reserved service names are only refused for routed services.)*
 3. Write `.env` (mode 0600) from the app's environment variables and the
    override file `compose.slipway.yaml`: attaches routed services to
    `slipway-proxy` with their aliases, adds the labels, and — when the app is
    not on the edge node — publishes each routed service port on the node's
-   LAN IP so the edge can reach it.
+   LAN IP so the edge can reach it. *(While no edge node is set, every app
+   counts as on the edge. Routes are applied here, so a route added to a
+   running app takes effect with its next deployment;
+   [ADR 0011](adr/0011-domain-activation-and-edge-rules.md).)*
 4. `docker compose -p slipway-<slug> --project-directory <dir> -f … build --pull`
    then `pull`, then `up -d --wait --remove-orphans`. Every line of output is
    streamed as a log line.
@@ -183,6 +191,10 @@ Rollback = redeploy an older ref. Stop/remove an app = `compose down`
   A route is only rendered once its domain passed the **DNS preflight**
   (resolves to the current public IPv4 / to the anchor), unless the user
   forces it. This avoids burning ACME attempts on misconfigured names.
+  *(v0.1: a verified domain becomes `active` once the edge serves it. Protected
+  routes are skipped while no forward-auth URL is set, and so are routes on
+  the platform's own host name; redirects answer 308 or 307;
+  [ADR 0011](adr/0011-domain-activation-and-edge-rules.md).)*
 - **Anchor hostname + dynamic DNS**: `Setting.anchorHostname`
   (e.g. `home.example.com`) holds the public IPv4 as an `A` record. The
   API detects the public IPv4 every 5 minutes (two independent HTTP services,
@@ -262,7 +274,8 @@ export interface DnsProvider {
 - **Webhooks** at `POST /api/v1/webhooks/github`: HMAC `X-Hub-Signature-256`
   verified with timing-safe comparison; events handled: `release`
   (published → deployment when auto-deploy is on), `installation`,
-  `installation_repositories`, `ping`.
+  `installation_repositories`, `ping`. *(v0.1 does not auto-deploy drafts or
+  prereleases; such deployments carry the trigger `auto`.)*
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; }` so another host could be added later.
 
@@ -277,7 +290,9 @@ export interface DnsProvider {
   internal URL on the same host) with the join token; the server replies with
   a long-lived node credential that the agent persists in
   `/var/lib/slipway/agent/credentials.json` (mode 0600). Credentials can be
-  rotated and revoked from the UI.
+  rotated and revoked from the UI. *(v0.1: the bundled agent's bootstrap token
+  stays valid, and an agent whose stored credential is refused joins again
+  with its join token; [ADR 0010](adr/0010-composition-root-wiring.md).)*
 - **Protocol**: JSON messages `{ id, type, payload }` over WebSocket, schemas
   in `@slipway/contracts` (`agent/*`). Agent → server: `hello`, `heartbeat`
   (15 s), `deployment.progress`, `deployment.log`, `deployment.result`,
@@ -302,7 +317,7 @@ export interface DnsProvider {
   schemas (`@hono/zod-openapi`), served at `/api/openapi.json`; interactive
   docs (Scalar) at `/api/docs`. Internal endpoints used by the edge
   (`/internal/*`) are not part of the public spec and only accept requests
-  from the Docker network.
+  from the Docker network. *(v0.1 has no internal endpoints.)*
 - Errors are RFC 9457 problem details (`application/problem+json`) with stable
   `type` slugs (`validation-failed`, `not-found`, `forbidden`, `conflict`,
   `rate-limited`, …).
@@ -328,7 +343,9 @@ export interface DnsProvider {
 React 19 + Vite + TypeScript, TanStack Router (file-based routes) and TanStack
 Query, Tailwind CSS v4 + shadcn/ui components, react-hook-form + Zod. The API
 client is generated from the OpenAPI document (`openapi-typescript` +
-`openapi-fetch`) at build time so the UI cannot drift from the API. Dark and
+`openapi-fetch`) at build time so the UI cannot drift from the API. *(v0.1:
+the UI's resource modules validate every response with the contract schemas
+instead; [ADR 0013](adr/0013-web-ui-data-layer.md).)* Dark and
 light theme. Pages: setup wizard · sign-in (passkey first, password fallback) ·
 overview · apps (list, create wizard: connection → repository → compose
 location → node) · app detail (deployments with live logs, environment,
@@ -412,7 +429,9 @@ Agent (`slipway-agent` container):
 - No shell string execution anywhere; all external input validated with Zod.
 - Compose policy (section 4) enforced on the agent, not only in the UI.
 - Internal endpoints (`/internal/*`, agent WebSocket upgrades without a valid
-  token) reject requests from outside the Docker networks.
+  token) reject requests from outside the Docker networks. *(v0.1 refuses
+  upgrades without a valid token with 401 from any network; the network
+  restriction is on the [roadmap](roadmap.md).)*
 - Logs never contain secrets, tokens or Authorization headers.
 - Platform containers run non-root with dropped capabilities except where the
   Docker socket is required.

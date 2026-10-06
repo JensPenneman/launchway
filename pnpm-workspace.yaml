@@ -25,5 +25,11 @@ minimumReleaseAgeExclude:
 
 # Dependency install scripts are denied unless listed with `true`.
 allowBuilds:
+  # Verifies the platform binary used by tsx, drizzle-kit and Vite tooling.
+  esbuild: true
   # Git hooks are installed by the root `prepare` script instead.
   lefthook: false
+  # Optional native SSH acceleration and postinstall notices pulled in by Testcontainers.
+  cpu-features: false
+  protobufjs: false
+  ssh2: false

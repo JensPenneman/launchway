@@ -1,0 +1,22 @@
+{
+  "extends": "@slipway/tsconfig/node.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/typecheck.tsbuildinfo",
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": [
+    "src",
+    "test",
+    "scripts",
+    "drizzle.config.ts",
+    "vitest.config.ts",
+    "vitest.integration.config.ts"
+  ],
+  "references": [
+    {
+      "path": "../../packages/contracts/tsconfig.build.json"
+    }
+  ]
+}

@@ -1,15 +1,12 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
   "workspaces": {
-    ".": {
-      "entry": ["vitest.config.ts", "commitlint.config.js"]
-    },
+    ".": {},
     "packages/contracts": {
-      "entry": ["src/index.ts", "src/agent/index.ts"],
       "project": ["src/**/*.ts"]
     },
     "apps/api": {
-      "entry": ["src/index.ts", "scripts/*.ts", "drizzle.config.ts"],
+      "entry": ["scripts/*.ts"],
       "project": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
     },
     "apps/agent": {

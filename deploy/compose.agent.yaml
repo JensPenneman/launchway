@@ -1,0 +1,69 @@
+# Slipway node agent for an additional machine.
+#
+# In the web UI, open "Add node" and put the values it shows in a .env file
+# next to this file:
+#
+#   SLIPWAY_SERVER_URL=wss://deploy.example.com
+#   SLIPWAY_JOIN_TOKEN=slpn_...
+#
+# then start the agent from that directory:
+#
+#   docker compose -f compose.agent.yaml up -d
+#
+# The agent connects outbound to the control plane over a WebSocket, so the node
+# needs no inbound port for it. The join token is single-use, valid for 15
+# minutes and only needed for the first start: the agent then keeps a node
+# credential in the agent-data volume, and the token can be removed from .env.
+# SLIPWAY_SERVER_URL is needed on every start.
+#
+# Optional: SLIPWAY_VERSION (image tag; keep it equal to the control plane's),
+# SLIPWAY_NODE_LAN_IP (address the edge uses to reach this node; detected
+# automatically, set it when detection picks the wrong interface, for example
+# under Docker Desktop) and LOG_LEVEL.
+#
+# Upgrade: docker compose -f compose.agent.yaml pull && docker compose -f compose.agent.yaml up -d
+
+name: slipway-agent
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 10m
+    max-file: "5"
+
+services:
+  slipway-agent:
+    image: ghcr.io/jenspenneman/slipway-agent:${SLIPWAY_VERSION:-latest}
+    restart: unless-stopped
+    init: true
+    # Host networking lets the agent detect the node's LAN address.
+    network_mode: host
+    # Runs as root and keeps a writable root filesystem: it owns the Docker
+    # socket and drives the docker and git CLIs.
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      SLIPWAY_SERVER_URL: ${SLIPWAY_SERVER_URL:-}
+      SLIPWAY_JOIN_TOKEN: ${SLIPWAY_JOIN_TOKEN:-}
+      SLIPWAY_NODE_LAN_IP: ${SLIPWAY_NODE_LAN_IP:-}
+      SLIPWAY_WORKSPACE: /var/lib/slipway
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - agent-data:/var/lib/slipway
+    healthcheck:
+      test: ["CMD", "node", "dist/healthcheck.js"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+    logging: *logging
+
+volumes:
+  agent-data:

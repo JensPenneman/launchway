@@ -1,0 +1,2 @@
+# Mock-API build used by the Playwright smoke tests
+/dist-e2e/

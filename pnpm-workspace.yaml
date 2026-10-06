@@ -38,3 +38,5 @@ allowBuilds:
   ssh2: false
   # argon2 ships N-API prebuilds (linux glibc/musl x64+arm64, darwin-arm64); no compile needed.
   argon2: false
+  # Its postinstall only copies the mock service worker; the web build serves it instead.
+  msw: false

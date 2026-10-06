@@ -31,19 +31,16 @@ export type Principal =
     };
 
 /**
- * Resolves the caller of a request. TODO(auth): the auth module provides the real
- * implementation and wires it into `Deps.auth` in src/server.ts:
- * - cookie `slipway_session`: look up the SHA-256 hash of the cookie value, check expiry, extend
- *   the 30-day sliding window; for unsafe methods enforce CSRF (Origin / Sec-Fetch-Site must
- *   match the platform origin);
- * - `Authorization: Bearer slp_...`: look up the hashed token, check expiry, touch lastUsedAt.
- * Return null for anonymous requests; throw `unauthorized()` for invalid or expired credentials.
+ * Resolves the caller of a request. The implementation is `createAuthResolver()` in
+ * src/modules/auth/resolver.ts (session cookie or `Authorization: Bearer slp_...`); CSRF is
+ * enforced separately by `csrfProtection()` (src/lib/csrf.ts). Return null for anonymous
+ * requests; throw `unauthorized()` for invalid or expired credentials.
  */
 export interface AuthResolver {
   resolve(c: Context<AppEnv>): Promise<Principal | null>;
 }
 
-/** Placeholder until the auth module lands: every request is anonymous. */
+/** Every request is anonymous (unit tests that do not exercise authentication). */
 export const anonymousAuthResolver: AuthResolver = {
   resolve: () => Promise.resolve(null),
 };
@@ -119,6 +116,21 @@ export function systemActor(label: string): RequestActor {
     requestId: `system:${label}`,
     actor: { type: 'system', id: null, label },
   };
+}
+
+/** The principal behind a service call (services behind `requireRole()`); 401 when anonymous. */
+export function getActorPrincipal(actor: RequestActor): Principal {
+  if (!actor.principal) throw unauthorized();
+  return actor.principal;
+}
+
+/** The session principal of a request; API tokens get a 403 (browser-only operations). */
+export function getSessionPrincipal(c: Context<AppEnv>): Extract<Principal, { kind: 'session' }> {
+  const principal = getPrincipal(c);
+  if (principal.kind !== 'session') {
+    throw forbidden('This operation requires a signed-in session, not an API token');
+  }
+  return principal;
 }
 
 /** Audit actor of a request. */

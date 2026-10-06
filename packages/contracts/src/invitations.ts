@@ -73,3 +73,15 @@ export const AcceptInvitationInput = z
   })
   .openapi('AcceptInvitationInput');
 export type AcceptInvitationInput = z.infer<typeof AcceptInvitationInput>;
+
+/** Body of `POST /invitations/{token}/accept` (the token travels in the path). */
+export const AcceptInvitationBody = z
+  .strictObject({
+    name: DisplayName,
+    email: Email.optional().openapi({ description: 'Required when the invitation has no e-mail' }),
+    password: Password.optional().openapi({
+      description: 'Optional; without a password the invitee registers a passkey right after',
+    }),
+  })
+  .openapi('AcceptInvitationBody');
+export type AcceptInvitationBody = z.infer<typeof AcceptInvitationBody>;

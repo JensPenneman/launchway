@@ -6,6 +6,7 @@ import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv, Deps } from './deps.js';
 import { authenticate } from './lib/auth-context.js';
 import { clientIp, createTrustedProxyList } from './lib/client-ip.js';
+import { createPlatformOriginResolver, csrfProtection } from './lib/csrf.js';
 import { openApiObject, registerSecuritySchemes } from './lib/openapi.js';
 import {
   notFound,
@@ -14,6 +15,7 @@ import {
   toProblem,
   toValidationIssues,
 } from './lib/problem.js';
+import { rateLimit } from './lib/rate-limit.js';
 import { requestContext } from './lib/request-context.js';
 import { registerWebUi } from './lib/static.js';
 import { registerModules } from './modules/index.js';
@@ -61,7 +63,9 @@ export function createApp(deps: Deps): OpenAPIHono<AppEnv> {
       },
     }),
   );
+  app.use('/api/*', rateLimit());
   app.use('/api/*', authenticate(deps.auth));
+  app.use('/api/*', csrfProtection(createPlatformOriginResolver(deps)));
 
   const api = new OpenAPIHono<AppEnv>({ defaultHook: validationHook });
   const v1 = new OpenAPIHono<AppEnv>({ defaultHook: validationHook });

@@ -1,6 +1,12 @@
 import type { Api, Deps } from '../deps.js';
+import { registerAuditRoutes } from './audit/routes.js';
+import { registerAuthRoutes } from './auth/routes.js';
+import { registerEventsRoutes } from './events/routes.js';
 import { registerHealthRoutes } from './health/routes.js';
+import { registerInvitationsRoutes } from './invitations/routes.js';
 import { registerSettingsRoutes } from './settings/routes.js';
+import { registerTokensRoutes } from './tokens/routes.js';
+import { registerUsersRoutes } from './users/routes.js';
 
 export interface ModuleDefinition {
   /** Module name, matching the directory under src/modules. */
@@ -21,6 +27,12 @@ export interface ModuleDefinition {
 export const modules: readonly ModuleDefinition[] = [
   { name: 'health', mount: 'api', register: registerHealthRoutes },
   { name: 'settings', mount: 'v1', register: registerSettingsRoutes },
+  { name: 'auth', mount: 'v1', register: registerAuthRoutes },
+  { name: 'users', mount: 'v1', register: registerUsersRoutes },
+  { name: 'invitations', mount: 'v1', register: registerInvitationsRoutes },
+  { name: 'tokens', mount: 'v1', register: registerTokensRoutes },
+  { name: 'audit', mount: 'v1', register: registerAuditRoutes },
+  { name: 'events', mount: 'v1', register: registerEventsRoutes },
 ];
 
 export function registerModules(routers: Record<ModuleDefinition['mount'], Api>, deps: Deps): void {

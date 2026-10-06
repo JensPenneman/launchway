@@ -12,6 +12,7 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { AgentConnection } from './connection.js';
+import { createTokenSource } from './credentials.js';
 import { createAgentRuntime } from './runtime/agent-runtime.js';
 import type { Runner } from './runtime/exec.js';
 
@@ -27,8 +28,12 @@ interface Harness {
   sockets: WebSocket[];
 }
 
-async function startServer(): Promise<Harness> {
-  const server = new WebSocketServer({ port: 0, host: '127.0.0.1' });
+async function startServer(refuse: (authorization?: string) => boolean = () => false) {
+  const server = new WebSocketServer({
+    port: 0,
+    host: '127.0.0.1',
+    verifyClient: (info, done) => done(!refuse(info.req.headers.authorization), 401),
+  });
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
   const harness: Harness = {
     server,
@@ -61,7 +66,7 @@ async function startServer(): Promise<Harness> {
       }
     });
   });
-  return harness;
+  return harness as Harness;
 }
 
 async function waitFor(condition: () => boolean, timeoutMs = 3_000): Promise<void> {
@@ -78,6 +83,45 @@ afterEach(async () => {
 });
 
 describe('AgentConnection', () => {
+  it('joins again with the join token when the server refuses the stored credential', async () => {
+    const stale = `slpa_${'s'.repeat(43)}`;
+    const joinToken = `slpn_${'j'.repeat(43)}`;
+    const harness = await startServer((authorization) => authorization === `Bearer ${stale}`);
+    const tokens = createTokenSource({ nodeId: generateId('node'), credential: stale }, joinToken);
+    const connection = new AgentConnection({
+      url: harness.url,
+      logger,
+      token: () => tokens.token(),
+      hello: async () => ({
+        protocolVersion: AGENT_PROTOCOL_VERSION,
+        agentVersion: '0.1.0',
+        hostname: 'test-node',
+        platform: { os: 'linux', arch: 'amd64' },
+        lanIp: null,
+        docker: null,
+        dockerError: 'no docker in tests',
+      }),
+      onHelloOk: async (payload) => {
+        if (payload.credential)
+          tokens.store({ nodeId: payload.nodeId, credential: payload.credential });
+      },
+      onRefused: () => {
+        tokens.refused();
+      },
+      onRequest: () => {},
+      backoff: { initialMs: 10, maxMs: 50 },
+    });
+    cleanups.push(async () => {
+      await connection.stop();
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+    });
+
+    connection.start();
+    await waitFor(() => connection.connected);
+    expect(harness.authorizations).toEqual([`Bearer ${joinToken}`]);
+    expect(tokens.token()).toBe(credential);
+  });
+
   it('joins with the join token, stores the credential, heartbeats and answers requests', async () => {
     const harness = await startServer();
     let token = `slpn_${'a'.repeat(43)}`;

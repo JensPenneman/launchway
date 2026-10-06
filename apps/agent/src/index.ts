@@ -2,7 +2,7 @@ import { hostname } from 'node:os';
 import { AGENT_PROTOCOL_VERSION } from '@slipway/contracts';
 import { AgentConfigError, loadAgentConfig } from './config.js';
 import { AgentConnection } from './connection.js';
-import { loadCredentials, type StoredCredentials, saveCredentials } from './credentials.js';
+import { createTokenSource, loadCredentials, saveCredentials } from './credentials.js';
 import { createDockerClient, normalizeArch, probeDocker } from './docker.js';
 import { detectLanIp } from './lan-ip.js';
 import { LIVENESS_INTERVAL_MS, writeLiveness } from './liveness.js';
@@ -25,7 +25,7 @@ function readConfig() {
 const config = readConfig();
 const logger = createLogger(config.logLevel);
 const docker = createDockerClient(config.dockerHost);
-let credentials: StoredCredentials | null = await loadCredentials(config.workspace);
+const credentials = await loadCredentials(config.workspace);
 
 if (!credentials && !config.joinToken) {
   logger.fatal(
@@ -33,6 +33,8 @@ if (!credentials && !config.joinToken) {
   );
   process.exit(1);
 }
+
+const tokens = createTokenSource(credentials, config.joinToken);
 
 /** Running deployments get this long to finish on SIGTERM before they are reported as failed. */
 const SHUTDOWN_GRACE_MS = 20_000;
@@ -46,7 +48,7 @@ const runtime = createAgentRuntime({
 const connection: AgentConnection = new AgentConnection({
   url: config.socketUrl,
   logger,
-  token: () => credentials?.credential ?? config.joinToken,
+  token: () => tokens.token(),
   hello: async () => {
     const probe = await probeDocker(docker);
     if (probe.dockerError) logger.warn({ error: probe.dockerError }, 'Docker probe failed');
@@ -65,9 +67,15 @@ const connection: AgentConnection = new AgentConnection({
   },
   onHelloOk: async (payload) => {
     if (payload.credential) {
-      credentials = { nodeId: payload.nodeId, credential: payload.credential };
-      await saveCredentials(config.workspace, credentials);
+      const joined = { nodeId: payload.nodeId, credential: payload.credential };
+      await saveCredentials(config.workspace, joined);
+      tokens.store(joined);
       logger.info({ nodeId: payload.nodeId }, 'joined; node credential stored');
+    }
+  },
+  onRefused: () => {
+    if (tokens.refused()) {
+      logger.warn('the control plane refused the stored node credential; joining again');
     }
   },
   onReady: () => runtime.onConnected(),

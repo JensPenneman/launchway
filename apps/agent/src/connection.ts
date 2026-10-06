@@ -22,6 +22,11 @@ export interface AgentConnectionOptions {
   hello: () => Promise<HelloPayload>;
   /** Called on `hello.ok`; persist `payload.credential` here when present. */
   onHelloOk: (payload: HelloOkPayload) => Promise<void>;
+  /**
+   * The server refused the token: HTTP 401 on the upgrade, or close code `unauthorized` after
+   * `hello`. Called before the reconnect is scheduled, so `token()` may switch.
+   */
+  onRefused?: () => void;
   /** Called after each completed handshake (heartbeats running, `connected` is true). */
   onReady?: () => void;
   /** Server requests and errors received after the handshake. */
@@ -121,6 +126,8 @@ export class AgentConnection {
     });
     socket.on('error', (err) => {
       this.#log.warn({ error: err.message }, 'agent socket error');
+      // `ws` reports a refused upgrade as "Unexpected server response: <status>".
+      if (/Unexpected server response: 401\b/.test(err.message)) this.#options.onRefused?.();
     });
     socket.on('close', (code, reason) => this.#onClose(socket, code, reason.toString()));
   }
@@ -209,6 +216,7 @@ export class AgentConnection {
     const explanation = CLOSE_REASONS[code];
     if (explanation) this.#log.error({ code, reason }, `disconnected: ${explanation}`);
     else this.#log.warn({ code, reason }, 'disconnected from the control plane');
+    if (code === AGENT_CLOSE_CODES.unauthorized) this.#options.onRefused?.();
     this.#scheduleReconnect();
   }
 

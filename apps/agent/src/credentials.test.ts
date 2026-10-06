@@ -3,7 +3,12 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { generateId } from '@slipway/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
-import { credentialsPath, loadCredentials, saveCredentials } from './credentials.js';
+import {
+  createTokenSource,
+  credentialsPath,
+  loadCredentials,
+  saveCredentials,
+} from './credentials.js';
 
 const workspaces: string[] = [];
 afterEach(async () => {
@@ -33,5 +38,35 @@ describe('node credentials', () => {
     await expect(
       saveCredentials(await workspace(), { nodeId: generateId('node'), credential: 'nope' }),
     ).rejects.toThrow();
+  });
+});
+
+describe('token source', () => {
+  const joinToken = `slpn_${'j'.repeat(43)}`;
+  const stored = { nodeId: generateId('node'), credential: `slpa_${'c'.repeat(43)}` };
+
+  it('uses the join token until a credential is stored', () => {
+    const tokens = createTokenSource(null, joinToken);
+    expect(tokens.token()).toBe(joinToken);
+    tokens.store(stored);
+    expect(tokens.token()).toBe(stored.credential);
+  });
+
+  it('falls back to the join token once the server refuses the stored credential', () => {
+    const tokens = createTokenSource(stored, joinToken);
+    expect(tokens.token()).toBe(stored.credential);
+    expect(tokens.refused()).toBe(true);
+    expect(tokens.token()).toBe(joinToken);
+    // A refused join token has nothing left to fall back to.
+    expect(tokens.refused()).toBe(false);
+    const rejoined = { nodeId: generateId('node'), credential: `slpa_${'d'.repeat(43)}` };
+    tokens.store(rejoined);
+    expect(tokens.token()).toBe(rejoined.credential);
+  });
+
+  it('keeps the credential when no join token is configured', () => {
+    const tokens = createTokenSource(stored, null);
+    expect(tokens.refused()).toBe(false);
+    expect(tokens.token()).toBe(stored.credential);
   });
 });

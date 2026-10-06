@@ -152,10 +152,10 @@ export function DomainsTab({ app }: { app: App }) {
                       {domain && <DomainStatusBadge status={domain.status} />}
                       {domain && (
                         <StatusBadge tone={isDomainServing(domain.status) ? 'success' : 'neutral'}>
-                          {(domain.status as string) === 'active'
-                            ? 'certificate issued'
+                          {domain.status === 'active'
+                            ? 'served by the edge'
                             : isDomainServing(domain.status)
-                              ? 'certificate requested'
+                              ? 'waiting for the edge'
                               : 'tls waiting for dns'}
                         </StatusBadge>
                       )}

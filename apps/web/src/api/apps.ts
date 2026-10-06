@@ -1,6 +1,7 @@
 import {
   App,
   AppPage,
+  AppRuntimeStatus,
   type CreateAppInput,
   type CreateDeploymentInput,
   Deployment,
@@ -14,7 +15,6 @@ import {
 } from '@slipway/contracts';
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
-import { AppRuntimeStatus } from './provisional';
 import { buildUrl, request } from './request';
 
 const appPath = (id: string) => `/apps/${encodeURIComponent(id)}`;

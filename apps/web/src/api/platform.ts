@@ -1,7 +1,6 @@
-import { Settings, type UpdateSettingsInput } from '@slipway/contracts';
+import { EdgeConfig, Settings, type UpdateSettingsInput } from '@slipway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
-import { EdgeStatus } from './provisional';
 import { request } from './request';
 
 export const settingsQuery = queryOptions({
@@ -15,9 +14,9 @@ export function updateSettings(input: UpdateSettingsInput) {
 
 export const edgeConfigQuery = queryOptions({
   queryKey: [...keys.edge, 'config'],
-  queryFn: ({ signal }) => request('/edge/config', { schema: EdgeStatus, signal }),
+  queryFn: ({ signal }) => request('/edge/config', { schema: EdgeConfig, signal }),
 });
 
 export function reloadEdge() {
-  return request('/edge/reload', { method: 'POST', schema: EdgeStatus });
+  return request('/edge/reload', { method: 'POST', schema: EdgeConfig });
 }

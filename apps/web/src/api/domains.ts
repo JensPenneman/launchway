@@ -2,6 +2,8 @@ import {
   type CreateDnsProviderAccountInput,
   type CreateDomainInput,
   type CreateRouteInput,
+  DdnsRun,
+  DdnsStatus,
   DnsProviderAccount,
   DnsProviderAccountList,
   DnsProviderInfoList,
@@ -20,7 +22,6 @@ import {
 } from '@slipway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
-import { DdnsRun, DdnsStatus } from './provisional';
 import { request } from './request';
 
 const enc = encodeURIComponent;

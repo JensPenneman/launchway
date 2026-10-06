@@ -71,11 +71,7 @@ export const passkeysQuery = queryOptions({
 });
 
 export function passkeyRegistrationOptions() {
-  return request('/auth/passkeys/register/options', {
-    method: 'POST',
-    body: {},
-    schema: WebAuthnOptions,
-  });
+  return request('/auth/passkeys/register/options', { method: 'POST', schema: WebAuthnOptions });
 }
 
 export function verifyPasskeyRegistration(input: PasskeyRegistrationInput) {
@@ -85,7 +81,6 @@ export function verifyPasskeyRegistration(input: PasskeyRegistrationInput) {
 export function passkeyLoginOptions() {
   return request('/auth/passkeys/login/options', {
     method: 'POST',
-    body: {},
     schema: WebAuthnOptions,
     onUnauthorized: 'throw',
   });

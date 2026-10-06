@@ -5,6 +5,7 @@ import { createApp } from './app.js';
 import { loadConfig } from './config.js';
 import { createDatabase } from './db/client.js';
 import type { Deps } from './deps.js';
+import { createUnavailableAgentGateway } from './lib/agent-gateway.js';
 import { anonymousAuthResolver } from './lib/auth-context.js';
 import { createSecretBox } from './lib/crypto.js';
 import { createEventBus } from './lib/event-bus.js';
@@ -31,6 +32,7 @@ export function buildOpenApiDocument() {
     auth: anonymousAuthResolver,
     events: createEventBus(),
     lifecycle: createLifecycle(),
+    agents: createUnavailableAgentGateway(),
     version: APP_VERSION,
   };
   return createApp(deps).getOpenAPI31Document(openApiObject(APP_VERSION));

@@ -7,6 +7,7 @@ import { type Config, ConfigError, loadConfig } from './config.js';
 import { createDatabase, createPool } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import type { Deps } from './deps.js';
+import { createUnavailableAgentGateway } from './lib/agent-gateway.js';
 import { anonymousAuthResolver } from './lib/auth-context.js';
 import { createSecretBox } from './lib/crypto.js';
 import { createEventBus } from './lib/event-bus.js';
@@ -46,6 +47,7 @@ export async function start(): Promise<void> {
     auth: anonymousAuthResolver, // TODO(auth): replace with the session/token resolver.
     events: createEventBus(),
     lifecycle,
+    agents: createUnavailableAgentGateway(), // TODO(nodes): replace with the WebSocket gateway.
     version: APP_VERSION,
   };
   const app = createApp(deps);

@@ -1,0 +1,154 @@
+name: Images
+
+# Publishes the multi-arch images to GHCR, signs them with cosign (keyless)
+# and scans them with Trivy.
+#   push to main             -> :edge and :sha-<short>
+#   release (workflow_call)  -> :X.Y.Z, :X.Y, :X (from 1.0.0 on) and :latest
+#   manual run               -> as a release when `version` is set, else as a push
+on:
+  push:
+    branches: [main]
+  workflow_call:
+    inputs:
+      version:
+        description: Release tag to publish, for example v0.2.0.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      version:
+        description: >-
+          Release tag to rebuild and publish, for example v0.2.0. Its version
+          tags and latest move to the new build. Leave empty for edge images.
+        required: false
+        type: string
+        default: ""
+
+permissions: {}
+
+# Releases get a group of their own, so edge builds can never delay or
+# replace a release build. Nothing is cancelled half-way through publishing.
+concurrency:
+  group: images-${{ inputs.version || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: ${{ matrix.image }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write # push to ghcr.io
+      id-token: write # keyless cosign signing
+      security-events: write # upload Trivy results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: slipway
+            dockerfile: apps/api/Dockerfile
+            title: Slipway
+            description: Slipway control plane with the REST API and the web UI.
+          - image: slipway-agent
+            dockerfile: apps/agent/Dockerfile
+            title: Slipway agent
+            description: Slipway node agent that builds and runs deployments with Docker Compose.
+    env:
+      IMAGE: ghcr.io/jenspenneman/${{ matrix.image }}
+    steps:
+      - name: Validate version
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version::Expected a release tag such as v1.2.3, got '${VERSION}'."
+            exit 1
+          fi
+
+      # Release builds check out the tag itself, so a rebuild of an older
+      # release uses that release's code.
+      - name: Check out
+        id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute tags and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          # The bare major tag is skipped while the major version is 0.
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.version != '' && !startsWith(inputs.version, 'v0.') }}
+            type=raw,value=latest,enable=${{ inputs.version != '' }}
+            type=edge,branch=main,enable=${{ inputs.version == '' }}
+            type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ steps.checkout.outputs.commit }}
+
+      # steps.meta.outputs.version is X.Y.Z for a release and "edge" for main.
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: SLIPWAY_VERSION=${{ steps.meta.outputs.version }}
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign image
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: cosign sign --yes "${IMAGE}@${DIGEST}"
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+
+      - name: Upload scan results
+        uses: github/codeql-action/upload-sarif@2892aa5e19bbd11bc0cff5427e3b750a04d9e3c2 # v4.38.2
+        with:
+          sarif_file: trivy-${{ matrix.image }}.sarif
+          category: trivy-${{ matrix.image }}

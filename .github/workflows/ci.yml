@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  merge_group:
+
+permissions:
+  contents: read
+
+# Superseded pull request runs are cancelled. Runs on main and in the merge
+# queue are grouped per commit, so every commit there gets a complete run.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  verify:
+    name: Verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up toolchain
+        uses: ./.github/actions/setup
+
+      - name: Lint and format
+        run: pnpm lint:ci
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Find unused code and dependencies
+        run: pnpm knip
+
+      - name: Unit tests
+        run: pnpm test
+
+      - name: Build
+        run: pnpm build
+
+      # Regenerating migrations from the schema must not change anything:
+      # a modified journal or a new migration file means a schema change was
+      # committed without its migration.
+      - name: Check that migrations match the schema
+        timeout-minutes: 5
+        run: |
+          pnpm db:generate
+          if ! git diff --exit-code -- apps/api/drizzle \
+            || [ -n "$(git ls-files --others --exclude-standard -- apps/api/drizzle)" ]; then
+            git status --short --untracked-files=all -- apps/api/drizzle
+            echo "::error title=Missing database migration::The Drizzle schema differs from the committed migrations. Run 'pnpm db:generate' and commit the changes in apps/api/drizzle."
+            exit 1
+          fi
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: slipway
+          POSTGRES_PASSWORD: slipway
+          POSTGRES_DB: slipway_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready --username=slipway --dbname=slipway_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgres://slipway:slipway@localhost:5432/slipway_test
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up toolchain
+        uses: ./.github/actions/setup
+
+      - name: Integration tests
+        run: pnpm test:integration
+
+  e2e:
+    name: End-to-end tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up toolchain
+        uses: ./.github/actions/setup
+
+      - name: Install Playwright browser
+        run: pnpm --filter @slipway/web exec playwright install --with-deps chromium
+
+      - name: End-to-end tests
+        run: pnpm test:e2e
+
+      - name: Upload Playwright report
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 14
+          overwrite: true
+
+  docker:
+    name: Docker build (${{ matrix.image }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: slipway
+            dockerfile: apps/api/Dockerfile
+          - image: slipway-agent
+            dockerfile: apps/agent/Dockerfile
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Reads the per-image cache that the Images workflow writes on main.
+      # This job only checks that the Dockerfile builds, so it writes no
+      # cache and cannot evict the cache used by the published builds.
+      - name: Build image
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image }}

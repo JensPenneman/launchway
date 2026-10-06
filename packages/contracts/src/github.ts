@@ -1,4 +1,4 @@
-import { DisplayName, Timestamp } from './common.js';
+import { CommitSha, DisplayName, Timestamp } from './common.js';
 import { GitHubConnectionId } from './ids.js';
 import { list, PaginationQuery, page } from './pagination.js';
 import { z } from './zod.js';
@@ -182,3 +182,19 @@ export type GitHubReleasePage = z.infer<typeof GitHubReleasePage>;
 
 export const GitHubReleaseListQuery = PaginationQuery.extend({ connectionId: GitHubConnectionId });
 export type GitHubReleaseListQuery = z.infer<typeof GitHubReleaseListQuery>;
+
+// --- Ref resolution --------------------------------------------------------------------------
+
+export const GIT_REF_KINDS = ['tag', 'branch', 'commit'] as const;
+
+export const ResolvedGitRef = z
+  .object({
+    ref: z.string().openapi({ description: 'The ref as requested' }),
+    sha: CommitSha,
+    kind: z.enum(GIT_REF_KINDS).openapi({ description: 'How the ref was resolved' }),
+  })
+  .openapi('ResolvedGitRef');
+export type ResolvedGitRef = z.infer<typeof ResolvedGitRef>;
+
+export const GitHubRefQuery = z.object({ connectionId: GitHubConnectionId });
+export type GitHubRefQuery = z.infer<typeof GitHubRefQuery>;

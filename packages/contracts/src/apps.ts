@@ -1,4 +1,5 @@
 import { DisplayName, RelativePath, ServiceName, Timestamp } from './common.js';
+import { ServiceStatus } from './deployments.js';
 import { RepositoryRef } from './github.js';
 import { AppId, DeploymentId, EnvVarId, GitHubConnectionId, NodeId } from './ids.js';
 import { list, PaginationQuery, page } from './pagination.js';
@@ -238,3 +239,30 @@ export const AppLogsQuery = z.object({
   tail: z.coerce.number().int().min(0).max(10_000).default(200),
 });
 export type AppLogsQuery = z.infer<typeof AppLogsQuery>;
+
+/** Query of `DELETE /apps/{id}`. */
+export const DeleteAppQuery = z.object({
+  force: z.stringbool().default(false).openapi({
+    description: 'Delete even when the node is offline (its containers are left behind)',
+  }),
+  removeVolumes: z.stringbool().default(false).openapi({
+    description: 'Also remove the named volumes of the app ("delete data")',
+  }),
+});
+export type DeleteAppQuery = z.infer<typeof DeleteAppQuery>;
+
+/** Runtime state of an app's containers (`GET /apps/{id}/status`, `POST /apps/{id}/stop`). */
+export const AppRuntimeStatus = z
+  .object({
+    appId: AppId,
+    nodeId: NodeId,
+    nodeOnline: z.boolean(),
+    source: z.enum(['agent', 'last-deployment']).openapi({
+      description:
+        'agent: live from the node; last-deployment: the node is offline, last reported state',
+    }),
+    activeDeploymentId: DeploymentId.nullable(),
+    services: z.array(ServiceStatus),
+  })
+  .openapi('AppRuntimeStatus');
+export type AppRuntimeStatus = z.infer<typeof AppRuntimeStatus>;

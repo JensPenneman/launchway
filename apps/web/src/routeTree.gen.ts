@@ -16,11 +16,14 @@ import { Route as AppIndexRouteImport } from './routes/_app/index'
 import { Route as AppAuditRouteImport } from './routes/_app/audit'
 import { Route as AppDomainsRouteImport } from './routes/_app/domains'
 import { Route as AppSettingsRouteImport } from './routes/_app/settings'
+import { Route as InviteIndexRouteImport } from './routes/invite/index'
+import { Route as InviteTokenRouteImport } from './routes/invite/$token'
 import { Route as AppAppsIndexRouteImport } from './routes/_app/apps/index'
 import { Route as AppAppsAppIdRouteImport } from './routes/_app/apps/$appId'
 import { Route as AppAppsNewRouteImport } from './routes/_app/apps/new'
 import { Route as AppNodesIndexRouteImport } from './routes/_app/nodes/index'
 import { Route as AppNodesNodeIdRouteImport } from './routes/_app/nodes/$nodeId'
+import { Route as AppSettingsGithubRouteImport } from './routes/_app/settings_.github'
 
 const AppRoute = AppRouteImport.update({
   id: '/_app',
@@ -56,6 +59,16 @@ const AppSettingsRoute = AppSettingsRouteImport.update({
   path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
+const InviteIndexRoute = InviteIndexRouteImport.update({
+  id: '/invite/',
+  path: '/invite/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const InviteTokenRoute = InviteTokenRouteImport.update({
+  id: '/invite/$token',
+  path: '/invite/$token',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AppAppsIndexRoute = AppAppsIndexRouteImport.update({
   id: '/apps/',
   path: '/apps/',
@@ -81,6 +94,11 @@ const AppNodesNodeIdRoute = AppNodesNodeIdRouteImport.update({
   path: '/nodes/$nodeId',
   getParentRoute: () => AppRoute,
 } as any)
+const AppSettingsGithubRoute = AppSettingsGithubRouteImport.update({
+  id: '/settings_/github',
+  path: '/settings/github',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof AppIndexRoute
@@ -89,9 +107,12 @@ export interface FileRoutesByFullPath {
   '/audit': typeof AppAuditRoute
   '/domains': typeof AppDomainsRoute
   '/settings': typeof AppSettingsRoute
+  '/invite/$token': typeof InviteTokenRoute
+  '/invite/': typeof InviteIndexRoute
   '/apps/$appId': typeof AppAppsAppIdRoute
   '/apps/new': typeof AppAppsNewRoute
   '/nodes/$nodeId': typeof AppNodesNodeIdRoute
+  '/settings/github': typeof AppSettingsGithubRoute
   '/apps/': typeof AppAppsIndexRoute
   '/nodes/': typeof AppNodesIndexRoute
 }
@@ -101,10 +122,13 @@ export interface FileRoutesByTo {
   '/audit': typeof AppAuditRoute
   '/domains': typeof AppDomainsRoute
   '/settings': typeof AppSettingsRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/': typeof AppIndexRoute
+  '/invite': typeof InviteIndexRoute
   '/apps/$appId': typeof AppAppsAppIdRoute
   '/apps/new': typeof AppAppsNewRoute
   '/nodes/$nodeId': typeof AppNodesNodeIdRoute
+  '/settings/github': typeof AppSettingsGithubRoute
   '/apps': typeof AppAppsIndexRoute
   '/nodes': typeof AppNodesIndexRoute
 }
@@ -116,10 +140,13 @@ export interface FileRoutesById {
   '/_app/audit': typeof AppAuditRoute
   '/_app/domains': typeof AppDomainsRoute
   '/_app/settings': typeof AppSettingsRoute
+  '/invite/$token': typeof InviteTokenRoute
   '/_app/': typeof AppIndexRoute
+  '/invite/': typeof InviteIndexRoute
   '/_app/apps/$appId': typeof AppAppsAppIdRoute
   '/_app/apps/new': typeof AppAppsNewRoute
   '/_app/nodes/$nodeId': typeof AppNodesNodeIdRoute
+  '/_app/settings_/github': typeof AppSettingsGithubRoute
   '/_app/apps/': typeof AppAppsIndexRoute
   '/_app/nodes/': typeof AppNodesIndexRoute
 }
@@ -132,9 +159,12 @@ export interface FileRouteTypes {
     | '/audit'
     | '/domains'
     | '/settings'
+    | '/invite/$token'
+    | '/invite/'
     | '/apps/$appId'
     | '/apps/new'
     | '/nodes/$nodeId'
+    | '/settings/github'
     | '/apps/'
     | '/nodes/'
   fileRoutesByTo: FileRoutesByTo
@@ -144,10 +174,13 @@ export interface FileRouteTypes {
     | '/audit'
     | '/domains'
     | '/settings'
+    | '/invite/$token'
     | '/'
+    | '/invite'
     | '/apps/$appId'
     | '/apps/new'
     | '/nodes/$nodeId'
+    | '/settings/github'
     | '/apps'
     | '/nodes'
   id:
@@ -158,10 +191,13 @@ export interface FileRouteTypes {
     | '/_app/audit'
     | '/_app/domains'
     | '/_app/settings'
+    | '/invite/$token'
     | '/_app/'
+    | '/invite/'
     | '/_app/apps/$appId'
     | '/_app/apps/new'
     | '/_app/nodes/$nodeId'
+    | '/_app/settings_/github'
     | '/_app/apps/'
     | '/_app/nodes/'
   fileRoutesById: FileRoutesById
@@ -170,6 +206,8 @@ export interface RootRouteChildren {
   AppRoute: typeof AppRouteWithChildren
   SetupRoute: typeof SetupRoute
   SignInRoute: typeof SignInRoute
+  InviteTokenRoute: typeof InviteTokenRoute
+  InviteIndexRoute: typeof InviteIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -223,6 +261,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
+    '/invite/': {
+      id: '/invite/'
+      path: '/invite'
+      fullPath: '/invite/'
+      preLoaderRoute: typeof InviteIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/invite/$token': {
+      id: '/invite/$token'
+      path: '/invite/$token'
+      fullPath: '/invite/$token'
+      preLoaderRoute: typeof InviteTokenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/_app/apps/': {
       id: '/_app/apps/'
       path: '/apps'
@@ -258,6 +310,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppNodesNodeIdRouteImport
       parentRoute: typeof AppRoute
     }
+    '/_app/settings_/github': {
+      id: '/_app/settings_/github'
+      path: '/settings/github'
+      fullPath: '/settings/github'
+      preLoaderRoute: typeof AppSettingsGithubRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
@@ -269,6 +328,7 @@ interface AppRouteChildren {
   AppAppsAppIdRoute: typeof AppAppsAppIdRoute
   AppAppsNewRoute: typeof AppAppsNewRoute
   AppNodesNodeIdRoute: typeof AppNodesNodeIdRoute
+  AppSettingsGithubRoute: typeof AppSettingsGithubRoute
   AppAppsIndexRoute: typeof AppAppsIndexRoute
   AppNodesIndexRoute: typeof AppNodesIndexRoute
 }
@@ -281,6 +341,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAppsAppIdRoute: AppAppsAppIdRoute,
   AppAppsNewRoute: AppAppsNewRoute,
   AppNodesNodeIdRoute: AppNodesNodeIdRoute,
+  AppSettingsGithubRoute: AppSettingsGithubRoute,
   AppAppsIndexRoute: AppAppsIndexRoute,
   AppNodesIndexRoute: AppNodesIndexRoute,
 }
@@ -291,6 +352,8 @@ const rootRouteChildren: RootRouteChildren = {
   AppRoute: AppRouteWithChildren,
   SetupRoute: SetupRoute,
   SignInRoute: SignInRoute,
+  InviteTokenRoute: InviteTokenRoute,
+  InviteIndexRoute: InviteIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

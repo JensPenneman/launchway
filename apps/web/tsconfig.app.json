@@ -4,5 +4,6 @@
     "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/app.tsbuildinfo",
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "references": [{ "path": "../../packages/contracts/tsconfig.build.json" }]
 }

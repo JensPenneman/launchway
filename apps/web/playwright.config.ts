@@ -2,7 +2,10 @@ import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 4173;
 
-/** Smoke tests against the production build (`vite preview`); the API is mocked per test. */
+/**
+ * Smoke tests against a production build that serves the API from MSW (`VITE_API_MOCK=1`,
+ * fixtures in `src/mocks`). Built into `dist-e2e/` so the real `dist/` stays mock-free.
+ */
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: true,
@@ -12,9 +15,10 @@ export default defineConfig({
   use: { baseURL: `http://127.0.0.1:${PORT}`, trace: 'on-first-retry' },
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   webServer: {
-    command: `pnpm exec vite preview --host 127.0.0.1 --port ${PORT}`,
+    command: `pnpm exec vite build --outDir dist-e2e --emptyOutDir && pnpm exec vite preview --outDir dist-e2e --host 127.0.0.1 --port ${PORT}`,
+    env: { VITE_API_MOCK: '1' },
     url: `http://127.0.0.1:${PORT}`,
-    reuseExistingServer: !process.env.CI,
-    timeout: 60_000,
+    reuseExistingServer: false,
+    timeout: 120_000,
   },
 });

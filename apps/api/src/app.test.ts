@@ -40,6 +40,19 @@ describe('app', () => {
     expect(doc.components.schemas).toHaveProperty('Problem');
   });
 
+  it('declares every tag the operations use, and every operation has an operationId', async () => {
+    const res = await app.request('/api/openapi.json');
+    const doc = (await res.json()) as {
+      tags: { name: string }[];
+      paths: Record<string, Record<string, { tags?: string[]; operationId?: string }>>;
+    };
+    const declared = new Set(doc.tags.map((tag) => tag.name));
+    const operations = Object.values(doc.paths).flatMap((ops) => Object.values(ops));
+    const used = new Set(operations.flatMap((op) => op.tags ?? []));
+    expect([...used].filter((tag) => !declared.has(tag))).toEqual([]);
+    expect(operations.filter((op) => !op.operationId)).toEqual([]);
+  });
+
   it('serves the API reference UI', async () => {
     const res = await app.request('/api/docs');
     expect(res.status).toBe(200);

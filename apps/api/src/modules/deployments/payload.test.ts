@@ -51,10 +51,8 @@ describe('buildDeployPayload', () => {
     expect(payload.network.publishOnIp).toBe('192.168.1.20');
   });
 
-  it('treats a missing edge node as "not the edge"', () => {
-    expect(buildDeployPayload(input({ edgeNodeId: null })).network.publishOnIp).toBe(
-      '192.168.1.20',
-    );
+  it('treats every node as the edge while no edge node is set, like the edge renderer', () => {
+    expect(buildDeployPayload(input({ edgeNodeId: null })).network.publishOnIp).toBeNull();
   });
 
   it('collapses duplicate routes and assigns proxy aliases', () => {

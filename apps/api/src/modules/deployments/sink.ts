@@ -218,6 +218,16 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
       }
     },
 
+    onNodeOnline(nodeId) {
+      // Send what waited for this node now instead of on the next worker pass. Not awaited:
+      // dispatching waits for the agent's acknowledgement, which must not hold up the gateway's
+      // per-node state queue.
+      void dispatcher.tick().catch((error: unknown) => {
+        logger.error({ err: error, nodeId }, 'dispatch after the node came online failed');
+      });
+      return Promise.resolve();
+    },
+
     async onNodeOffline(nodeId) {
       const failed = await deps.db.transaction(async (tx) => {
         const rows = await tx

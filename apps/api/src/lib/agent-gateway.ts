@@ -76,10 +76,7 @@ export interface DeploymentSink {
   onNodeOnline?(nodeId: NodeId): Promise<void>;
 }
 
-/**
- * Sink that drops every agent report. Placeholder until the deployments module provides
- * `createDeploymentSink(deps)`.
- */
+/** Sink that drops every agent report (tests, and the deferred sink before it is bound). */
 export const noopDeploymentSink: DeploymentSink = {
   onProgress: () => Promise.resolve(),
   onLog: () => Promise.resolve(),
@@ -87,6 +84,32 @@ export const noopDeploymentSink: DeploymentSink = {
   onAppStatus: () => Promise.resolve(),
   onNodeOffline: () => Promise.resolve(),
 };
+
+/**
+ * A sink that forwards every report to a target bound later. The deployments sink dispatches
+ * queued deployments through the gateway while the gateway reports to the sink, so the
+ * composition root creates the gateway with this forwarder and binds the real sink once the full
+ * `Deps` exist. Until then reports are dropped (agents can only connect after the server listens).
+ */
+export function createDeferredDeploymentSink(): {
+  readonly sink: DeploymentSink;
+  bind(target: DeploymentSink): void;
+} {
+  let target: DeploymentSink = noopDeploymentSink;
+  return {
+    sink: {
+      onProgress: (nodeId, payload) => target.onProgress(nodeId, payload),
+      onLog: (nodeId, payload) => target.onLog(nodeId, payload),
+      onResult: (nodeId, payload) => target.onResult(nodeId, payload),
+      onAppStatus: (nodeId, payload) => target.onAppStatus(nodeId, payload),
+      onNodeOffline: (nodeId) => target.onNodeOffline(nodeId),
+      onNodeOnline: (nodeId) => target.onNodeOnline?.(nodeId) ?? Promise.resolve(),
+    },
+    bind(next) {
+      target = next;
+    },
+  };
+}
 
 /** @public */
 export class AgentUnavailableError extends Error {

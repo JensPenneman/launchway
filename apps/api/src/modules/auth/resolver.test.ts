@@ -80,6 +80,15 @@ describe('createAuthResolver', () => {
     }
   });
 
+  it('leaves join tokens and node credentials to the agent socket (anonymous, no lookup)', async () => {
+    for (const prefix of ['slpn_', 'slpa_'] as const) {
+      const { db, statements } = scriptedDb([]);
+      const { body } = await resolveWith(db, { authorization: `Bearer ${generateToken(prefix)}` });
+      expect(body).toEqual({ principal: null });
+      expect(statements).toEqual([]);
+    }
+  });
+
   it('resolves a bearer token, keeping its scopes, and touches last_used_at', async () => {
     const tokenId = generateId('tok');
     const { db, statements } = scriptedDb([

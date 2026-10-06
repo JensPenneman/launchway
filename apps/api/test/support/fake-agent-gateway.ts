@@ -23,6 +23,8 @@ export class FakeAgentGateway implements AgentGateway {
   logLines: AppLogLine[] = [];
   /** Error thrown by `deploy` once (e.g. a policy violation reply). */
   deployError: Error | undefined;
+  /** Error thrown by `cancelDeployment` once (e.g. a `not-found` reply or a timeout). */
+  cancelError: Error | undefined;
 
   connect(nodeId: NodeId): void {
     this.online.add(nodeId);
@@ -50,6 +52,9 @@ export class FakeAgentGateway implements AgentGateway {
 
   async cancelDeployment(nodeId: NodeId, deploymentId: DeploymentId): Promise<void> {
     this.require(nodeId);
+    const error = this.cancelError;
+    this.cancelError = undefined;
+    if (error) throw error;
     this.cancelled.push({ nodeId, deploymentId });
   }
 

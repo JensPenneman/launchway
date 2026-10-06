@@ -15,11 +15,11 @@ import { and, asc, desc, eq, gt, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
-import { AgentUnavailableError } from '../../lib/agent-gateway.js';
+import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import type { RequestActor } from '../../lib/auth-context.js';
 import { GitProviderError } from '../../lib/git-provider.js';
 import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
-import { conflict, invalidField, notFound } from '../../lib/problem.js';
+import { conflict, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
@@ -232,9 +232,17 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       try {
         await deps.agents.cancelDeployment(row.nodeId, row.id);
       } catch (error) {
-        // The agent is gone, so nothing runs this deployment any more.
-        if (error instanceof AgentUnavailableError) return cancelLocally(row, actor);
-        throw error;
+        // The agent is gone or does not know the deployment, so nothing runs it any more.
+        if (
+          error instanceof AgentUnavailableError ||
+          (error instanceof AgentRequestError && error.code === 'not-found')
+        ) {
+          return cancelLocally(row, actor);
+        }
+        throw new ProblemError('upstream-failed', {
+          detail: 'The node did not confirm the cancellation',
+          cause: error,
+        });
       }
       const updated = await deps.db.transaction(async (tx) => {
         const [changed] = await tx

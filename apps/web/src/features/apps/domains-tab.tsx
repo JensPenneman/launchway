@@ -151,12 +151,18 @@ export function DomainsTab({ app }: { app: App }) {
                       </a>
                       {domain && <DomainStatusBadge status={domain.status} />}
                       {domain && (
-                        <StatusBadge tone={isDomainServing(domain.status) ? 'success' : 'neutral'}>
+                        <StatusBadge
+                          tone={
+                            domain.force || isDomainServing(domain.status) ? 'success' : 'neutral'
+                          }
+                        >
                           {domain.status === 'active'
                             ? 'served by the edge'
                             : isDomainServing(domain.status)
                               ? 'waiting for the edge'
-                              : 'tls waiting for dns'}
+                              : domain.force
+                                ? 'served, dns check skipped'
+                                : 'tls waiting for dns'}
                         </StatusBadge>
                       )}
                     </div>

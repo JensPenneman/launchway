@@ -1,0 +1,97 @@
+import type {
+  AppId,
+  AppLogLine,
+  AppStatusPayload,
+  DeploymentId,
+  DeploymentLogPayload,
+  DeploymentProgressPayload,
+  DeploymentResultPayload,
+  DeployPayload,
+  NodeId,
+  ServiceStatus,
+} from '@slipway/contracts';
+
+/** The app a node-side command targets: enough to derive the Compose project name. @public */
+export interface AppTarget {
+  readonly id: AppId;
+  readonly slug: string;
+}
+
+/** @public */
+export interface LogsRequest {
+  readonly app: AppTarget;
+  /** Only this service's logs; all services when omitted. */
+  readonly service?: string;
+  /** Number of historical lines to send first. */
+  readonly tail?: number;
+  readonly follow: boolean;
+}
+
+/**
+ * The control plane's view of connected node agents. Implemented by the nodes
+ * module (WebSocket gateway); consumed by the deployments, apps and edge modules.
+ *
+ * Commands resolve when the agent acknowledged them, not when the work finished:
+ * progress, logs and results arrive asynchronously through the `DeploymentSink`.
+ * Every method rejects with `AgentUnavailableError` when the node is offline.
+ */
+export interface AgentGateway {
+  isOnline(nodeId: NodeId): boolean;
+  deploy(nodeId: NodeId, payload: DeployPayload): Promise<void>;
+  cancelDeployment(nodeId: NodeId, deploymentId: DeploymentId): Promise<void>;
+  /** `compose stop`; resolves with the resulting per-service status. */
+  stopApp(nodeId: NodeId, app: AppTarget): Promise<ServiceStatus[]>;
+  /** `compose down` (`--volumes` when `removeVolumes`); removes the checkouts too. */
+  removeApp(nodeId: NodeId, app: AppTarget, removeVolumes: boolean): Promise<void>;
+  appStatus(nodeId: NodeId, app: AppTarget): Promise<ServiceStatus[]>;
+  /**
+   * Streams container logs; `onLine` is called per line until the agent ends the
+   * stream or `signal` aborts. Resolves when the stream ended.
+   */
+  streamLogs(
+    nodeId: NodeId,
+    request: LogsRequest,
+    onLine: (line: AppLogLine) => void,
+    signal: AbortSignal,
+  ): Promise<void>;
+}
+
+/**
+ * Where the gateway delivers what agents report. Implemented by the deployments
+ * module; the nodes module calls it for every matching agent message.
+ * @public
+ */
+export interface DeploymentSink {
+  onProgress(nodeId: NodeId, payload: DeploymentProgressPayload): Promise<void>;
+  onLog(nodeId: NodeId, payload: DeploymentLogPayload): Promise<void>;
+  onResult(nodeId: NodeId, payload: DeploymentResultPayload): Promise<void>;
+  onAppStatus(nodeId: NodeId, payload: AppStatusPayload): Promise<void>;
+  /** The node lost its connection: in-flight deployments on it must not stay in progress forever. */
+  onNodeOffline(nodeId: NodeId): Promise<void>;
+}
+
+/** @public */
+export class AgentUnavailableError extends Error {
+  override readonly name = 'AgentUnavailableError';
+  readonly nodeId: NodeId;
+
+  constructor(nodeId: NodeId) {
+    super(`node ${nodeId} has no connected agent`);
+    this.nodeId = nodeId;
+  }
+}
+
+/** Placeholder used until the nodes module provides the real gateway. */
+export function createUnavailableAgentGateway(): AgentGateway {
+  const unavailable = (nodeId: NodeId): Promise<never> =>
+    Promise.reject(new AgentUnavailableError(nodeId));
+  return {
+    isOnline: () => false,
+    deploy: unavailable,
+    cancelDeployment: unavailable,
+    stopApp: unavailable,
+    removeApp: unavailable,
+    appStatus: unavailable,
+    streamLogs: unavailable,
+  };
+}

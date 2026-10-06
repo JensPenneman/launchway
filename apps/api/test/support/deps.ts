@@ -5,6 +5,7 @@ import { pino } from 'pino';
 import { loadConfig } from '../../src/config.js';
 import { createDatabase } from '../../src/db/client.js';
 import type { Deps } from '../../src/deps.js';
+import { createUnavailableAgentGateway } from '../../src/lib/agent-gateway.js';
 import {
   type AuthResolver,
   anonymousAuthResolver,
@@ -33,6 +34,7 @@ export function createTestDeps(overrides: Partial<Deps> = {}): Deps {
     auth: anonymousAuthResolver,
     events: createEventBus(),
     lifecycle: createLifecycle(),
+    agents: createUnavailableAgentGateway(),
     version: '0.0.0-test',
     ...overrides,
   };

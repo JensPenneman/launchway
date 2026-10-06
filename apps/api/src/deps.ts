@@ -2,6 +2,7 @@ import type { OpenAPIHono } from '@hono/zod-openapi';
 import type { Logger } from 'pino';
 import type { Config } from './config.js';
 import type { Database } from './db/client.js';
+import type { AgentGateway } from './lib/agent-gateway.js';
 import type { AuthResolver, Principal } from './lib/auth-context.js';
 import type { SecretBox } from './lib/crypto.js';
 import type { EventBus } from './lib/event-bus.js';
@@ -20,6 +21,8 @@ export interface Deps {
   readonly events: EventBus;
   /** Shutdown signal; long-lived streams must end when it aborts. */
   readonly lifecycle: Lifecycle;
+  /** Connected node agents (nodes module). Consumers: deployments, apps, edge. */
+  readonly agents: AgentGateway;
   readonly version: string;
 }
 

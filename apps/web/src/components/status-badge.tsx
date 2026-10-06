@@ -62,8 +62,8 @@ export function DeploymentStatusBadge({ status }: { status: DeploymentStatus }) 
   );
 }
 
-// Keyed by string: the domains module adds `active` (verified + certificate issued).
-const DOMAIN_TONES: Record<string, Tone> = {
+// `active`: the edge serves the domain (Caddy loaded its site and manages the certificate).
+const DOMAIN_TONES: Record<DomainStatus, Tone> = {
   pending: 'warning',
   verified: 'success',
   active: 'success',
@@ -72,7 +72,7 @@ const DOMAIN_TONES: Record<string, Tone> = {
 
 export function DomainStatusBadge({ status }: { status: DomainStatus }) {
   return (
-    <StatusBadge tone={DOMAIN_TONES[status] ?? 'neutral'} className="capitalize">
+    <StatusBadge tone={DOMAIN_TONES[status]} className="capitalize">
       {status}
     </StatusBadge>
   );

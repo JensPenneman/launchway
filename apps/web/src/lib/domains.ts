@@ -1,11 +1,11 @@
 import type { DomainStatus } from '@slipway/contracts';
 
 /**
- * Statuses in which the edge serves the domain: `verified` (DNS preflight passed) and `active`
- * (verified and holding a certificate; added by the domains module).
+ * Statuses in which the edge renders the domain: `verified` (DNS preflight passed) and `active`
+ * (Caddy loaded its site and manages the certificate).
  */
-const SERVING: readonly string[] = ['verified', 'active'];
+const SERVING: readonly DomainStatus[] = ['verified', 'active'];
 
-export function isDomainServing(status: DomainStatus | string): boolean {
+export function isDomainServing(status: DomainStatus): boolean {
   return SERVING.includes(status);
 }

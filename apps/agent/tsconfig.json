@@ -6,6 +6,10 @@
     "declarationMap": false,
     "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/typecheck.tsbuildinfo"
   },
-  "include": ["src", "vitest.config.ts"],
-  "references": [{ "path": "../../packages/contracts/tsconfig.build.json" }]
+  "include": ["src", "test", "vitest.config.ts", "vitest.integration.config.ts"],
+  "references": [
+    {
+      "path": "../../packages/contracts/tsconfig.build.json"
+    }
+  ]
 }

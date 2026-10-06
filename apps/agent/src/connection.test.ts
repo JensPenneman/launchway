@@ -1,4 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import {
   AGENT_PROTOCOL_VERSION,
   type AgentToServerMessage,
@@ -9,7 +12,8 @@ import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { AgentConnection } from './connection.js';
-import { createRequestHandler } from './handlers.js';
+import { createAgentRuntime } from './runtime/agent-runtime.js';
+import type { Runner } from './runtime/exec.js';
 
 const logger = pino({ level: 'silent' });
 const credential = `slpa_${'b'.repeat(43)}`;
@@ -78,6 +82,18 @@ describe('AgentConnection', () => {
     const harness = await startServer();
     let token = `slpn_${'a'.repeat(43)}`;
     const joined: string[] = [];
+    const workspace = await mkdtemp(join(tmpdir(), 'slipway-agent-conn-'));
+    const commands: string[][] = [];
+    const run: Runner = async (_command, args) => {
+      commands.push([...args]);
+      return { code: 0, signal: null, stdout: '', aborted: false, timedOut: false };
+    };
+    const runtime = createAgentRuntime({
+      logger,
+      workspace,
+      run,
+      trySend: (message) => connection.connected && connection.send(message),
+    });
     const connection: AgentConnection = new AgentConnection({
       url: harness.url,
       logger,
@@ -97,12 +113,14 @@ describe('AgentConnection', () => {
           joined.push(payload.nodeId);
         }
       },
-      onRequest: createRequestHandler(logger, (message) => connection.send(message)),
+      onReady: () => runtime.onConnected(),
+      onRequest: (message) => runtime.handle(message),
       backoff: { initialMs: 10, maxMs: 50 },
     });
     cleanups.push(async () => {
       await connection.stop();
       await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+      await rm(workspace, { recursive: true, force: true });
     });
 
     connection.start();
@@ -114,19 +132,27 @@ describe('AgentConnection', () => {
     await waitFor(() => harness.received.some((m) => m.type === 'heartbeat'));
 
     const socket = harness.sockets[0];
+    const appId = generateId('app');
     socket?.send(JSON.stringify({ id: 'future-1', type: 'some.future.type', payload: {} }));
     socket?.send(
       JSON.stringify({
         id: 'req-7',
         type: 'status',
-        payload: { appId: generateId('app'), slug: 'trail' },
+        payload: { appId, slug: 'trail' },
       }),
     );
-    await waitFor(() => harness.received.some((m) => m.type === 'error'));
-    const reply = harness.received.find((m) => m.type === 'error');
-    expect(reply).toMatchObject({
+    socket?.send(JSON.stringify({ id: 'req-8', type: 'logs.stop', payload: { streamId: 'nope' } }));
+    await waitFor(() => harness.received.some((m) => m.type === 'app.status'));
+    expect(harness.received.find((m) => m.type === 'app.status')).toEqual({
       id: 'req-7',
-      payload: { code: 'not-implemented', retryable: false },
+      type: 'app.status',
+      payload: { appId, services: [] },
+    });
+    expect(commands[0]).toEqual(expect.arrayContaining(['-p', 'slipway-trail', 'ps', '--all']));
+    await waitFor(() => harness.received.some((m) => m.type === 'error'));
+    expect(harness.received.find((m) => m.type === 'error')).toMatchObject({
+      id: 'req-8',
+      payload: { code: 'not-found', retryable: false },
     });
     expect(harness.received.some((m) => m.id === 'future-1')).toBe(false);
 

@@ -1,0 +1,60 @@
+{
+  "name": "slipway-mail",
+  "networks": { "default": { "name": "slipway-mail_default", "ipam": {} } },
+  "services": {
+    "mail": {
+      "image": "ghcr.io/docker-mailserver/docker-mailserver:15",
+      "cap_add": ["NET_BIND_SERVICE", "CAP_CHOWN", "setuid"],
+      "env_file": [{ "path": "/ws/apps/app_1/dep_1/.env" }],
+      "networks": { "default": null },
+      "ports": [
+        { "mode": "ingress", "target": 25, "published": "25", "protocol": "tcp" },
+        {
+          "mode": "ingress",
+          "target": 993,
+          "published": "993",
+          "protocol": "tcp",
+          "host_ip": "0.0.0.0"
+        }
+      ],
+      "volumes": [
+        { "type": "volume", "source": "maildata", "target": "/var/mail", "volume": {} },
+        { "type": "tmpfs", "target": "/tmp" }
+      ],
+      "configs": [{ "source": "motd" }]
+    },
+    "web": {
+      "build": { "context": "/ws/apps/app_1/dep_1/web", "dockerfile": "Dockerfile" },
+      "image": "slipway-mail-web",
+      "networks": { "default": null, "back": null },
+      "ports": [{ "mode": "ingress", "target": 8080, "protocol": "tcp" }]
+    },
+    "db": {
+      "image": "postgres:18-alpine",
+      "networks": { "back": null },
+      "volumes": [
+        { "type": "volume", "source": "pg", "target": "/var/lib/postgresql", "volume": {} }
+      ]
+    },
+    "worker": {
+      "build": {
+        "context": "https://github.com/acme/worker.git#main",
+        "additional_contexts": { "shared": "docker-image://alpine:3" }
+      },
+      "network_mode": "service:web"
+    }
+  },
+  "volumes": {
+    "maildata": { "name": "slipway-mail_maildata" },
+    "pg": {
+      "name": "slipway-mail_pg",
+      "driver": "local",
+      "driver_opts": { "type": "nfs", "o": "addr=10.0.0.5,rw", "device": ":/exports/pg" }
+    }
+  },
+  "networks_unused": {},
+  "configs": { "motd": { "content": "hello", "name": "slipway-mail_motd" } },
+  "secrets": {
+    "api": { "file": "/ws/apps/app_1/dep_1/secrets/api.txt", "name": "slipway-mail_api" }
+  }
+}

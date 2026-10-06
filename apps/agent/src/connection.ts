@@ -22,6 +22,8 @@ export interface AgentConnectionOptions {
   hello: () => Promise<HelloPayload>;
   /** Called on `hello.ok`; persist `payload.credential` here when present. */
   onHelloOk: (payload: HelloOkPayload) => Promise<void>;
+  /** Called after each completed handshake (heartbeats running, `connected` is true). */
+  onReady?: () => void;
   /** Server requests and errors received after the handshake. */
   onRequest: (message: RequestMessage) => void;
   activeDeployments?: () => DeploymentId[];
@@ -183,6 +185,7 @@ export class AgentConnection {
       { nodeId: payload.nodeId, serverVersion: payload.serverVersion },
       'connected to the control plane',
     );
+    this.#options.onReady?.();
   }
 
   #heartbeat(): void {

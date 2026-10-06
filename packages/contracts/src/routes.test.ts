@@ -36,6 +36,14 @@ describe('route target union', () => {
     });
   });
 
+  it('rejects routing to service names reserved for platform containers', () => {
+    for (const service of ['slipway', 'slipway-agent', 'caddy', 'db']) {
+      expect(
+        RouteTarget.safeParse({ kind: 'app', appId: generateId('app'), service, port: 80 }).success,
+      ).toBe(false);
+    }
+  });
+
   it('rejects unknown kinds and incomplete targets', () => {
     expect(RouteTarget.safeParse({ kind: 'tcp', host: 'x', port: 1 }).success).toBe(false);
     expect(RouteTarget.safeParse({ kind: 'app', appId: generateId('app'), port: 80 }).success).toBe(

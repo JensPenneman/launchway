@@ -4,10 +4,10 @@ import { AgentConfigError, loadAgentConfig } from './config.js';
 import { AgentConnection } from './connection.js';
 import { loadCredentials, type StoredCredentials, saveCredentials } from './credentials.js';
 import { createDockerClient, normalizeArch, probeDocker } from './docker.js';
-import { createRequestHandler } from './handlers.js';
 import { detectLanIp } from './lan-ip.js';
 import { LIVENESS_INTERVAL_MS, writeLiveness } from './liveness.js';
 import { createLogger } from './logger.js';
+import { createAgentRuntime } from './runtime/agent-runtime.js';
 import { AGENT_VERSION } from './version.js';
 
 function readConfig() {
@@ -34,7 +34,16 @@ if (!credentials && !config.joinToken) {
   process.exit(1);
 }
 
-const connection = new AgentConnection({
+/** Running deployments get this long to finish on SIGTERM before they are reported as failed. */
+const SHUTDOWN_GRACE_MS = 20_000;
+
+const runtime = createAgentRuntime({
+  logger,
+  workspace: config.workspace,
+  trySend: (message) => connection.connected && connection.send(message),
+});
+
+const connection: AgentConnection = new AgentConnection({
   url: config.socketUrl,
   logger,
   token: () => credentials?.credential ?? config.joinToken,
@@ -61,7 +70,9 @@ const connection = new AgentConnection({
       logger.info({ nodeId: payload.nodeId }, 'joined; node credential stored');
     }
   },
-  onRequest: createRequestHandler(logger, (message) => connection.send(message)),
+  onReady: () => runtime.onConnected(),
+  onRequest: (message) => runtime.handle(message),
+  activeDeployments: () => runtime.activeDeploymentIds(),
 });
 
 const reportLiveness = () => {
@@ -77,13 +88,27 @@ const liveness = setInterval(reportLiveness, LIVENESS_INTERVAL_MS);
 logger.info({ version: AGENT_VERSION, url: config.socketUrl }, 'Slipway agent starting');
 connection.start();
 
+process.on('unhandledRejection', (reason) => {
+  logger.error({ err: reason }, 'unhandled promise rejection');
+});
+process.on('uncaughtException', (error) => {
+  logger.error({ err: error }, 'uncaught exception');
+});
+
+let shuttingDown = false;
 const shutdown = (signal: NodeJS.Signals) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info({ signal }, 'shutting down');
   clearInterval(liveness);
-  connection.stop().then(
-    () => process.exit(0),
-    () => process.exit(1),
-  );
+  runtime
+    .shutdown(SHUTDOWN_GRACE_MS)
+    .catch((err: unknown) => logger.error({ err }, 'failed to stop deployments cleanly'))
+    .then(() => connection.stop())
+    .then(
+      () => process.exit(0),
+      () => process.exit(1),
+    );
 };
 process.once('SIGTERM', shutdown);
 process.once('SIGINT', shutdown);

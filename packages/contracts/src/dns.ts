@@ -89,6 +89,9 @@ export const DnsZone = z
 export type DnsZone = z.infer<typeof DnsZone>;
 
 export const DnsZoneList = list(DnsZone).openapi('DnsZoneList');
+
+export const DnsZoneListQuery = z.object({ accountId: DnsProviderAccountId.optional() });
+export type DnsZoneListQuery = z.infer<typeof DnsZoneListQuery>;
 export type DnsZoneList = z.infer<typeof DnsZoneList>;
 
 /** Record as reported by a provider (`DnsProvider.listRecords` / `upsertRecord`). */
@@ -100,6 +103,10 @@ export const DnsRecord = z
     content: z.string(),
     ttl: z.number().int().nullable().openapi({ description: '1 = automatic; null when unknown' }),
     proxied: z.boolean().nullable().openapi({ description: 'null when the provider has no proxy' }),
+    instruction: z.string().optional().openapi({
+      description:
+        'Set by providers without an API (manual): what the user must create at their DNS host',
+    }),
   })
   .openapi('DnsRecord');
 export type DnsRecord = z.infer<typeof DnsRecord>;
@@ -130,3 +137,52 @@ export const DnsRecordInput = z
   ])
   .openapi('DnsRecordInput');
 export type DnsRecordInput = z.infer<typeof DnsRecordInput>;
+
+export const DDNS_OUTCOMES = ['unchanged', 'updated', 'skipped', 'failed'] as const;
+export const DdnsOutcome = z.enum(DDNS_OUTCOMES).openapi('DdnsOutcome', {
+  description:
+    'unchanged: IPv4 and anchor record already current; updated: the stored IPv4 or the anchor ' +
+    'record changed; skipped: the detection services disagreed or failed; failed: an error occurred',
+});
+export type DdnsOutcome = z.infer<typeof DdnsOutcome>;
+
+/** Answer of one public-IPv4 detection service. */
+export const DdnsSourceResult = z
+  .object({
+    url: z.url(),
+    ipv4: z.ipv4().nullable(),
+    error: z.string().nullable(),
+  })
+  .openapi('DdnsSourceResult');
+export type DdnsSourceResult = z.infer<typeof DdnsSourceResult>;
+
+/** Result of one public-IPv4 detection + anchor record update. */
+export const DdnsRun = z
+  .object({
+    startedAt: Timestamp,
+    finishedAt: Timestamp,
+    outcome: DdnsOutcome,
+    message: z.string(),
+    detectedIpv4: z.ipv4().nullable(),
+    previousIpv4: z.ipv4().nullable(),
+    recordUpdated: z
+      .boolean()
+      .openapi({ description: 'The anchor A record was created or changed at the provider' }),
+    sources: z.array(DdnsSourceResult),
+  })
+  .openapi('DdnsRun');
+export type DdnsRun = z.infer<typeof DdnsRun>;
+
+export const DdnsStatus = z
+  .object({
+    dynamicDnsEnabled: z.boolean(),
+    anchorHostname: Hostname.nullable(),
+    anchorZoneId: DnsZoneId.nullable().openapi({
+      description: 'Managed zone that contains the anchor; null = the record is not managed',
+    }),
+    publicIpv4: z.ipv4().nullable(),
+    publicIpv4CheckedAt: Timestamp.nullable(),
+    lastRun: DdnsRun.nullable().openapi({ description: 'null until the first run since start' }),
+  })
+  .openapi('DdnsStatus');
+export type DdnsStatus = z.infer<typeof DdnsStatus>;

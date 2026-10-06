@@ -82,18 +82,21 @@ export function createEdgeReconciler(
   async function run(force: boolean): Promise<EdgeConfig> {
     const { caddyfile, rendered } = renderEdge(await loadInput());
     const renderedAt = new Date();
-    if (!force && applied?.caddyfile === caddyfile) return snapshot(caddyfile, renderedAt);
-    try {
-      await caddy.load(caddyfile);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      lastError = { message, at: new Date().toISOString() };
-      log.error({ err: error }, 'loading the edge configuration failed');
-      throw error instanceof CaddyError ? error.toProblem() : error;
+    if (force || applied?.caddyfile !== caddyfile) {
+      try {
+        await caddy.load(caddyfile);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        lastError = { message, at: new Date().toISOString() };
+        log.error({ err: error }, 'loading the edge configuration failed');
+        throw error instanceof CaddyError ? error.toProblem() : error;
+      }
+      applied = { caddyfile, at: new Date() };
+      lastError = null;
+      log.info({ sites: rendered.length }, 'edge configuration loaded');
     }
-    applied = { caddyfile, at: new Date() };
-    lastError = null;
-    log.info({ sites: rendered.length }, 'edge configuration loaded');
+    // Also when nothing was reloaded: a forced domain that passes its DNS check later is already
+    // served. Activation only touches `verified` domains, so it cannot loop.
     const activatable = new Set(
       rendered
         .filter((route) => ACTIVATABLE_DOMAIN_STATUSES.has(route.domain.status))

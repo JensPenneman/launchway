@@ -1,0 +1,14 @@
+# Slipway edge proxy: bootstrap configuration.
+#
+# Only the global options live here. The Slipway API renders the site blocks
+# from its routes and loads the complete configuration through the admin API.
+# Caddy runs with --resume, so it keeps the last loaded configuration across
+# restarts and reads this file only when nothing has been loaded yet.
+#
+# The admin API listens on all interfaces of the container so that the API can
+# reach it as caddy:2019 on the slipway-proxy network. Never publish port 2019.
+{
+	admin 0.0.0.0:2019
+	email {$SLIPWAY_ACME_EMAIL}
+	cert_issuer acme
+}

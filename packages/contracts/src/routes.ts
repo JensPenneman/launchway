@@ -56,7 +56,10 @@ export type Route = z.infer<typeof Route>;
 export const RoutePage = page(Route).openapi('RoutePage');
 export type RoutePage = z.infer<typeof RoutePage>;
 
-export const RouteListQuery = PaginationQuery.extend({ appId: AppId.optional() });
+export const RouteListQuery = PaginationQuery.extend({
+  appId: AppId.optional(),
+  domainId: DomainId.optional(),
+});
 export type RouteListQuery = z.infer<typeof RouteListQuery>;
 
 export const CreateRouteInput = z
@@ -81,12 +84,31 @@ export const UpdateRouteInput = z
   .openapi('UpdateRouteInput');
 export type UpdateRouteInput = z.infer<typeof UpdateRouteInput>;
 
+/** Failure of a load attempt into Caddy (validation or admin API error). */
+export const EdgeError = z
+  .object({
+    message: z.string().openapi({ description: "Caddy's error message or the transport error" }),
+    at: Timestamp,
+  })
+  .openapi('EdgeError');
+export type EdgeError = z.infer<typeof EdgeError>;
+
 /** Rendered edge configuration (`GET /edge/config`, read-only). */
 export const EdgeConfig = z
   .object({
     caddyfile: z.string(),
     renderedAt: Timestamp,
     loadedAt: Timestamp.nullable().openapi({ description: 'Last successful load into Caddy' }),
+    appliedCaddyfile: z
+      .string()
+      .nullable()
+      .openapi({ description: 'Configuration of the last successful load; null before the first' }),
+    inSync: z
+      .boolean()
+      .openapi({ description: 'True when the rendered configuration is the one Caddy runs' }),
+    lastError: EdgeError.nullable().openapi({
+      description: 'Failure of the most recent load attempt; null once a load succeeded',
+    }),
   })
   .openapi('EdgeConfig');
 export type EdgeConfig = z.infer<typeof EdgeConfig>;

@@ -1,4 +1,5 @@
 import type {
+  AgentErrorCode,
   AppId,
   AppLogLine,
   AppStatusPayload,
@@ -68,7 +69,24 @@ export interface DeploymentSink {
   onAppStatus(nodeId: NodeId, payload: AppStatusPayload): Promise<void>;
   /** The node lost its connection: in-flight deployments on it must not stay in progress forever. */
   onNodeOffline(nodeId: NodeId): Promise<void>;
+  /**
+   * Optional: an agent completed its handshake (queued deployments for the node can be sent now).
+   * Called after the node is marked online.
+   */
+  onNodeOnline?(nodeId: NodeId): Promise<void>;
 }
+
+/**
+ * Sink that drops every agent report. Placeholder until the deployments module provides
+ * `createDeploymentSink(deps)`.
+ */
+export const noopDeploymentSink: DeploymentSink = {
+  onProgress: () => Promise.resolve(),
+  onLog: () => Promise.resolve(),
+  onResult: () => Promise.resolve(),
+  onAppStatus: () => Promise.resolve(),
+  onNodeOffline: () => Promise.resolve(),
+};
 
 /** @public */
 export class AgentUnavailableError extends Error {
@@ -78,6 +96,25 @@ export class AgentUnavailableError extends Error {
   constructor(nodeId: NodeId) {
     super(`node ${nodeId} has no connected agent`);
     this.nodeId = nodeId;
+  }
+}
+
+/**
+ * The agent answered a request with an `error` message (or did not answer in time: code
+ * `timeout`), e.g. `not-found` for an unknown deployment or `policy-violation`.
+ * @public
+ */
+export class AgentRequestError extends Error {
+  override readonly name = 'AgentRequestError';
+  readonly nodeId: NodeId;
+  readonly code: AgentErrorCode;
+  readonly retryable: boolean;
+
+  constructor(nodeId: NodeId, code: AgentErrorCode, message: string, retryable: boolean) {
+    super(message);
+    this.nodeId = nodeId;
+    this.code = code;
+    this.retryable = retryable;
   }
 }
 

@@ -5,10 +5,13 @@ import { registerAuthRoutes } from './auth/routes.js';
 import { registerDeploymentsRoutes } from './deployments/routes.js';
 import { registerDnsRoutes } from './dns/routes.js';
 import { registerDomainsRoutes } from './domains/routes.js';
+import { registerEdgeRoutes } from './edge/routes.js';
 import { registerEventsRoutes } from './events/routes.js';
 import { registerGitHubRoutes } from './github/routes.js';
 import { registerHealthRoutes } from './health/routes.js';
 import { registerInvitationsRoutes } from './invitations/routes.js';
+import { registerAgentSocketRoutes, registerNodesRoutes } from './nodes/routes.js';
+import { registerRoutesRoutes } from './routes/routes.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import { registerTokensRoutes } from './tokens/routes.js';
 import { registerUsersRoutes } from './users/routes.js';
@@ -43,6 +46,10 @@ export const modules: readonly ModuleDefinition[] = [
   { name: 'github', mount: 'v1', register: registerGitHubRoutes },
   { name: 'apps', mount: 'v1', register: registerAppsRoutes },
   { name: 'deployments', mount: 'v1', register: registerDeploymentsRoutes },
+  { name: 'nodes', mount: 'v1', register: registerNodesRoutes },
+  { name: 'nodes', mount: 'api', register: registerAgentSocketRoutes },
+  { name: 'routes', mount: 'v1', register: registerRoutesRoutes },
+  { name: 'edge', mount: 'v1', register: registerEdgeRoutes },
 ];
 
 export function registerModules(routers: Record<ModuleDefinition['mount'], Api>, deps: Deps): void {

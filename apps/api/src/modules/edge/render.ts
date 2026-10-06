@@ -16,10 +16,10 @@ export const PLATFORM_UPSTREAM = 'slipway:3000';
 export const CADDY_ADMIN_LISTEN = '0.0.0.0:2019';
 
 /**
- * Domain states whose routes are rendered. `verified` is the v0.1 contract; `dns_ok` and `active`
- * are accepted too so a finer-grained domain lifecycle needs no change here.
+ * Domain states whose routes are rendered: the DNS preflight passed (`verified`) or Caddy already
+ * serves the domain (`active`).
  */
-const RENDERABLE_DOMAIN_STATUSES: ReadonlySet<string> = new Set(['verified', 'dns_ok', 'active']);
+const RENDERABLE_DOMAIN_STATUSES: ReadonlySet<DomainStatus> = new Set(['verified', 'active']);
 
 export interface EdgeSettings {
   /** Effective public URL (SLIPWAY_PUBLIC_URL override applied); null renders no platform site. */
@@ -33,7 +33,7 @@ export interface EdgeRoute {
   readonly id: RouteId;
   readonly domainId: DomainId;
   readonly hostname: string;
-  readonly domain: { readonly status: DomainStatus | (string & {}); readonly force: boolean };
+  readonly domain: { readonly status: DomainStatus; readonly force: boolean };
   readonly target: RouteTarget;
   readonly protected: boolean;
   readonly compress: boolean;

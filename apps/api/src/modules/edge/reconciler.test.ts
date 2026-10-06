@@ -1,4 +1,4 @@
-import type { DomainId, RouteId } from '@slipway/contracts';
+import type { DomainId, DomainStatus, RouteId } from '@slipway/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestDeps } from '../../../test/support/deps.js';
 import { ProblemError } from '../../lib/problem.js';
@@ -8,7 +8,7 @@ import type { EdgeRenderInput } from './render.js';
 
 const DOMAIN = 'dom_01jbh8m4x2f8k9z0a1b2c3d4e5' as DomainId;
 
-function input(status: string, port = 7878): EdgeRenderInput {
+function input(status: DomainStatus, port = 7878): EdgeRenderInput {
   return {
     settings: { publicUrl: null, acmeEmail: null, forwardAuthUrl: null, edgeNodeId: null },
     routes: [

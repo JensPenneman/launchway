@@ -47,6 +47,8 @@ export class InvalidDeployPayloadError extends Error {
 /**
  * Builds the `deploy` request for the agent (spec sections 4 and 9). Routed ports are published
  * on the node's LAN IP only when the app does not run on the edge node, so the edge can reach it.
+ * Without an edge node every app counts as local, the same rule the Caddyfile renderer applies
+ * (it then reaches every app by its alias on the proxy network).
  */
 export function buildDeployPayload(input: DeployPayloadInput): DeployPayload {
   const seen = new Set<string>();
@@ -64,7 +66,7 @@ export function buildDeployPayload(input: DeployPayloadInput): DeployPayload {
     });
   }
 
-  const onEdge = input.deployment.nodeId === input.edgeNodeId;
+  const onEdge = input.edgeNodeId === null || input.deployment.nodeId === input.edgeNodeId;
   const candidate = {
     deploymentId: input.deployment.id,
     app: { id: input.app.id, slug: input.app.slug },

@@ -1,4 +1,4 @@
-import type { DomainId, EdgeConfig, EdgeError, EventTopic } from '@slipway/contracts';
+import type { DomainId, DomainStatus, EdgeConfig, EdgeError, EventTopic } from '@slipway/contracts';
 import type { Logger } from 'pino';
 import type { Deps } from '../../deps.js';
 import { ProblemError } from '../../lib/problem.js';
@@ -17,7 +17,7 @@ const EDGE_TOPICS: ReadonlySet<EventTopic> = new Set([
 ]);
 
 /** Domain states that become `active` once Caddy serves them. */
-const ACTIVATABLE_DOMAIN_STATUSES: ReadonlySet<string> = new Set(['verified', 'dns_ok']);
+const ACTIVATABLE_DOMAIN_STATUSES: ReadonlySet<DomainStatus> = new Set(['verified']);
 
 const DEFAULT_DEBOUNCE_MS = 500;
 

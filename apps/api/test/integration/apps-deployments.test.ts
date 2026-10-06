@@ -25,6 +25,7 @@ import {
   users,
 } from '../../src/db/schema.js';
 import type { Deps } from '../../src/deps.js';
+import { AgentRequestError } from '../../src/lib/agent-gateway.js';
 import type { Principal } from '../../src/lib/auth-context.js';
 import { basicAuthorization } from '../../src/lib/git-provider.js';
 import { createDispatcher } from '../../src/modules/deployments/dispatcher.js';
@@ -364,6 +365,25 @@ describe('apps and deployments against PostgreSQL', () => {
       .from(auditEvents)
       .where(and(eq(auditEvents.targetId, a.id), eq(auditEvents.action, 'deployment.fail')));
     expect(failedAudit).toBeDefined();
+  });
+
+  it('cancels locally when the agent does not know the deployment, 502 when it does not answer', async () => {
+    const node = await insertNode('192.168.1.42');
+    gateway.connect(node);
+    const app = await createTestApp(node);
+    const sent = await deploy(app.id, 'v1.0.0');
+    // Dispatched, so a cancel has to go through the agent.
+    expect((await getDeployment(sent.id)).startedAt).not.toBeNull();
+
+    gateway.cancelError = new AgentRequestError(node, 'timeout', 'no answer in time', true);
+    const timedOut = await api.request(`/api/v1/deployments/${sent.id}/cancel`, json('POST'));
+    expect(timedOut.status).toBe(502);
+    expect((await getDeployment(sent.id)).status).toBe('queued');
+
+    gateway.cancelError = new AgentRequestError(node, 'not-found', 'unknown deployment', false);
+    const unknown = await api.request(`/api/v1/deployments/${sent.id}/cancel`, json('POST'));
+    expect(unknown.status).toBe(200);
+    expect(await unknown.json()).toMatchObject({ status: 'cancelled' });
   });
 
   it('fails a deployment the agent refuses and resolves unknown refs as validation errors', async () => {

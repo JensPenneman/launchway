@@ -1,4 +1,9 @@
-import { API_TOKEN_PATTERN, SESSION_TTL_SECONDS } from '@slipway/contracts';
+import {
+  API_TOKEN_PATTERN,
+  NODE_CREDENTIAL_PREFIX,
+  NODE_JOIN_TOKEN_PREFIX,
+  SESSION_TTL_SECONDS,
+} from '@slipway/contracts';
 import { and, eq, gt, lt } from 'drizzle-orm';
 import type { Context } from 'hono';
 import type { AppEnv, Deps } from '../../deps.js';
@@ -14,6 +19,14 @@ import { clearSessionCookie, readSessionCookie, writeSessionCookie } from './ses
 export const TOUCH_INTERVAL_MS = 60_000;
 
 const BEARER = /^Bearer[ \t]+(\S+)[ \t]*$/i;
+
+function isAgentToken(header: string): boolean {
+  const token = BEARER.exec(header)?.[1];
+  return (
+    token !== undefined &&
+    (token.startsWith(NODE_JOIN_TOKEN_PREFIX) || token.startsWith(NODE_CREDENTIAL_PREFIX))
+  );
+}
 
 const userColumns = { id: users.id, email: users.email, name: users.name, role: users.role };
 
@@ -112,6 +125,9 @@ export function createAuthResolver(
   return {
     async resolve(c) {
       const authorization = c.req.header('authorization');
+      // Join tokens and node credentials authenticate the agent socket, which checks them
+      // itself; for the REST API such a request is anonymous.
+      if (authorization !== undefined && isAgentToken(authorization)) return null;
       if (authorization !== undefined) return fromToken(c, authorization);
       const token = readSessionCookie(c);
       return token ? fromSession(c, token) : null;

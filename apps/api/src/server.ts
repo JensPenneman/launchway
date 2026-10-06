@@ -7,13 +7,15 @@ import { type Config, ConfigError, loadConfig } from './config.js';
 import { createDatabase, createPool } from './db/client.js';
 import { runMigrations } from './db/migrate.js';
 import type { Deps } from './deps.js';
-import { noopDeploymentSink } from './lib/agent-gateway.js';
+import { createDeferredDeploymentSink } from './lib/agent-gateway.js';
 import { createSecretBox } from './lib/crypto.js';
 import { createEventBus } from './lib/event-bus.js';
 import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
 import { createAuthResolver } from './modules/auth/resolver.js';
 import { startDeploymentWorker } from './modules/deployments/dispatcher.js';
+import { createDeploymentSink } from './modules/deployments/sink.js';
+import { createDomainsService } from './modules/domains/service.js';
 import { edgeReconciler } from './modules/edge/reconciler.js';
 import { startReleasePoller } from './modules/github/poller.js';
 import { createAgentGateway } from './modules/nodes/gateway.js';
@@ -55,18 +57,25 @@ export async function start(): Promise<void> {
     lifecycle,
     version: APP_VERSION,
   };
-  // !!! TODO(deployments): replace noopDeploymentSink with the deployments module's
-  // createDeploymentSink(...). Until then every progress/log/result/status report of the agents
-  // is DROPPED and offline nodes do not fail their in-flight deployments.
-  const agents = createAgentGateway({ deps: core, sink: noopDeploymentSink });
+  // The deployment sink dispatches through the gateway and the gateway reports to the sink: the
+  // gateway gets a forwarder that is bound to the real sink once `deps` exists. The sink shares
+  // `deps.events` with the routes (live deployment logs), so it must be built from `deps`.
+  const sink = createDeferredDeploymentSink();
+  const agents = createAgentGateway({ deps: core, sink: sink.sink });
   const deps: Deps = { ...core, agents };
+  sink.bind(createDeploymentSink(deps));
   const app = createApp(deps);
 
   await ensureLocalNode(deps);
+  // Marks nodes a previous process left online offline (through the sink), then sweeps heartbeats.
   await agents.start();
-  // TODO(domains): pass { markDomainActive } from the domains module (see EdgeHooks).
-  edgeReconciler(deps).start();
-  // Background jobs; both stop when lifecycle.signal aborts.
+  const domains = createDomainsService(deps);
+  edgeReconciler(deps).start({
+    markDomainActive: async (domainId) => {
+      await domains.markDomainActive(domainId);
+    },
+  });
+  // Background jobs; they stop when lifecycle.signal aborts.
   startDeploymentWorker(deps);
   startReleasePoller(deps);
 

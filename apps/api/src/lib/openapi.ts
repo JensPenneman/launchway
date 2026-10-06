@@ -77,7 +77,30 @@ export function openApiObject(version: string) {
     },
     tags: [
       { name: 'Health', description: 'Liveness and readiness probes' },
+      {
+        name: 'Auth',
+        description: 'First-run setup, sign-in (password, passkeys) and the account',
+      },
+      { name: 'Users', description: 'Users and their roles' },
+      { name: 'Invitations', description: 'Single-use invitation links' },
+      { name: 'Tokens', description: 'API tokens for scripts and CI' },
       { name: 'Settings', description: 'Platform settings' },
+      { name: 'Audit', description: 'Who changed what, when and from where' },
+      { name: 'Events', description: 'Platform-wide change feed (Server-Sent Events)' },
+      {
+        name: 'GitHub',
+        description: 'GitHub connections, repositories, releases, refs and webhooks',
+      },
+      { name: 'Apps', description: 'Apps, their environment, status, logs and lifecycle' },
+      { name: 'Deployments', description: 'Deployments of a release or ref, with live logs' },
+      { name: 'Nodes', description: 'Machines running the agent, join tokens and credentials' },
+      { name: 'Domains', description: 'Domains Slipway serves and their DNS verification' },
+      {
+        name: 'Routes',
+        description: 'What a domain serves: an app, an external upstream or a redirect',
+      },
+      { name: 'Edge', description: 'The rendered Caddy configuration and its load state' },
+      { name: 'DNS', description: 'DNS provider accounts, zones, records and dynamic DNS' },
     ],
   };
 }

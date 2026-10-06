@@ -104,5 +104,23 @@ export const ServiceName = z
   .regex(/^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$/, 'Must be a lowercase Compose service name')
   .openapi({ example: 'web' });
 
+/**
+ * Names of the platform containers on the proxy network. Compose registers every service name as
+ * a DNS alias on each network the service joins, so a routed app service with one of these names
+ * could capture traffic meant for the platform (including the database connection).
+ */
+export const RESERVED_SERVICE_NAMES: readonly string[] = [
+  'slipway',
+  'slipway-agent',
+  'caddy',
+  'db',
+];
+
+/** Compose service that may be attached to the proxy network (routed). */
+export const RoutableServiceName = ServiceName.refine(
+  (name) => !RESERVED_SERVICE_NAMES.includes(name),
+  'This service name is reserved for platform containers on the proxy network',
+).openapi({ example: 'web' });
+
 /** Free-form JSON object. */
 export const JsonObject = z.record(z.string(), z.unknown());

@@ -1,6 +1,14 @@
 import type { ZodType } from 'zod';
 import { AppSlug, AppSource, EnvKey } from '../apps.js';
-import { CommitSha, GitRef, IpAddress, Port, ServiceName, Timestamp } from '../common.js';
+import {
+  CommitSha,
+  GitRef,
+  IpAddress,
+  Port,
+  RoutableServiceName,
+  ServiceName,
+  Timestamp,
+} from '../common.js';
 import { AppLogLine, LogLine, ServiceStatus } from '../deployments.js';
 import { AppId, DeploymentId, NodeId } from '../ids.js';
 import { DockerInfo, NODE_CREDENTIAL_PATTERN } from '../nodes.js';
@@ -108,7 +116,7 @@ export type HelloOkPayload = z.infer<typeof HelloOkPayload>;
 
 /** A routed service: attached to the proxy network under `alias` (`<slug>-<service>`). */
 export const DeployRoute = z.object({
-  service: ServiceName,
+  service: RoutableServiceName,
   port: Port,
   alias: z.string().min(1).max(63),
 });

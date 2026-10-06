@@ -1,4 +1,4 @@
-import { Hostname, HttpUrl, Port, ServiceName, Timestamp, UpstreamHost } from './common.js';
+import { Hostname, HttpUrl, Port, RoutableServiceName, Timestamp, UpstreamHost } from './common.js';
 import { AppId, DomainId, RouteId } from './ids.js';
 import { PaginationQuery, page } from './pagination.js';
 import { z } from './zod.js';
@@ -7,7 +7,7 @@ export const ROUTE_TARGET_KINDS = ['app', 'external', 'redirect'] as const;
 export type RouteTargetKind = (typeof ROUTE_TARGET_KINDS)[number];
 
 export const AppRouteTarget = z
-  .object({ kind: z.literal('app'), appId: AppId, service: ServiceName, port: Port })
+  .object({ kind: z.literal('app'), appId: AppId, service: RoutableServiceName, port: Port })
   .openapi('AppRouteTarget', { description: 'A service port of a Slipway app' });
 
 export const ExternalRouteTarget = z

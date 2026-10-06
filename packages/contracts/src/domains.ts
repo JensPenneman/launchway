@@ -4,10 +4,11 @@ import { DnsZoneId, DomainId } from './ids.js';
 import { PaginationQuery, page } from './pagination.js';
 import { z } from './zod.js';
 
-export const DOMAIN_STATUSES = ['pending', 'verified', 'misconfigured'] as const;
+export const DOMAIN_STATUSES = ['pending', 'verified', 'misconfigured', 'active'] as const;
 export const DomainStatus = z.enum(DOMAIN_STATUSES).openapi('DomainStatus', {
   description:
-    'pending: not checked yet; verified: DNS preflight passed, routes are rendered; misconfigured: preflight failed',
+    'pending: not checked yet; verified: DNS preflight passed, routes are rendered; ' +
+    'misconfigured: preflight failed; active: verified and the edge holds a certificate',
 });
 export type DomainStatus = z.infer<typeof DomainStatus>;
 

@@ -7,7 +7,7 @@ export const dnsProviderAccounts = pgTable('dns_provider_accounts', {
   id: idColumn('prov'),
   kind: text('kind').notNull(),
   name: text('name').notNull(),
-  /** JSON credentials, encrypted (AAD `dns:<accountId>`). */
+  /** JSON credentials, encrypted (AAD `dns-account:<accountId>`). */
   credentialsEncrypted: text('credentials_encrypted').notNull(),
   lastVerifiedAt: tz('last_verified_at'),
   ...timestamps(),

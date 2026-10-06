@@ -1,6 +1,8 @@
 import type { Api, Deps } from '../deps.js';
 import { registerAuditRoutes } from './audit/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerDnsRoutes } from './dns/routes.js';
+import { registerDomainsRoutes } from './domains/routes.js';
 import { registerEventsRoutes } from './events/routes.js';
 import { registerHealthRoutes } from './health/routes.js';
 import { registerInvitationsRoutes } from './invitations/routes.js';
@@ -33,6 +35,8 @@ export const modules: readonly ModuleDefinition[] = [
   { name: 'tokens', mount: 'v1', register: registerTokensRoutes },
   { name: 'audit', mount: 'v1', register: registerAuditRoutes },
   { name: 'events', mount: 'v1', register: registerEventsRoutes },
+  { name: 'dns', mount: 'v1', register: registerDnsRoutes },
+  { name: 'domains', mount: 'v1', register: registerDomainsRoutes },
 ];
 
 export function registerModules(routers: Record<ModuleDefinition['mount'], Api>, deps: Deps): void {

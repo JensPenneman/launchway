@@ -22,6 +22,15 @@ const WRITABLE_KEYS = [
 export interface SettingsService {
   get(): Promise<Settings>;
   update(input: UpdateSettingsInput, actor: RequestActor): Promise<Settings>;
+  /**
+   * Stores the detected public IPv4 (dynamic DNS) and the check time. Audited and published only
+   * when the address changed.
+   */
+  recordPublicIpv4(
+    ipv4: string,
+    checkedAt: Date,
+    actor: RequestActor,
+  ): Promise<{ settings: Settings; previous: string | null; changed: boolean }>;
 }
 
 export function createSettingsService(
@@ -90,6 +99,35 @@ export function createSettingsService(
 
       deps.events.publish({ topic: 'settings', action: 'updated', resourceId: null });
       return toSettings(row);
+    },
+
+    async recordPublicIpv4(ipv4, checkedAt, actor) {
+      const result = await deps.db.transaction(async (tx) => {
+        const before = await load(tx, true);
+        const [after] = await tx
+          .update(settings)
+          .set({ publicIpv4: ipv4, publicIpv4CheckedAt: checkedAt })
+          .where(eq(settings.id, 1))
+          .returning();
+        if (!after) throw new Error('settings row is missing');
+        const changed = before.publicIpv4 !== after.publicIpv4;
+        if (changed) {
+          await recordAudit(tx, actor, {
+            action: 'settings.public-ipv4',
+            target: { type: 'settings', id: null },
+            summary: diffSummary(before, after, ['publicIpv4']),
+          });
+        }
+        return { row: after, previous: before.publicIpv4, changed };
+      });
+      if (result.changed) {
+        deps.events.publish({ topic: 'settings', action: 'updated', resourceId: null });
+      }
+      return {
+        settings: toSettings(result.row),
+        previous: result.previous,
+        changed: result.changed,
+      };
     },
   };
 }

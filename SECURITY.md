@@ -99,13 +99,17 @@ This is a summary of the security requirements in section 14 of
 ### Network exposure
 
 - Agents connect outbound to the control plane; a node exposes no agent port.
-- Internal endpoints (`/internal/*`) and agent WebSocket upgrades without a
-  valid token are rejected from outside the Docker networks.
+- Agent WebSocket upgrades require a valid join token or node credential.
+  v0.1 does not restrict them by network (see the roadmap), and the bundled
+  agent's bootstrap token (`SLIPWAY_LOCAL_JOIN_TOKEN`) does not expire, so
+  keep `.env` secret.
 - PostgreSQL is reachable only on an internal Docker network shared with the
   API. Caddy's admin API listens only on a unix socket that the `caddy` and
   `slipway` containers share; app containers cannot reach it.
-- Port 3000 serves plain HTTP for the first setup. Do not expose it to the
-  internet; use the platform's HTTPS URL once it works.
+- Port 3000 serves plain HTTP for the first setup, which requires the
+  installer's one-time setup token. Do not expose it to the internet; use the
+  platform's HTTPS URL once it works, and bind port 3000 to loopback then
+  (see the operations guide).
 
 ### Containers and supply chain
 
@@ -114,9 +118,13 @@ This is a summary of the security requirements in section 14 of
   read-only root filesystem; the agent runs as root because it owns the
   Docker socket.
 - Release images for `amd64` and `arm64` are signed with cosign (keyless) and
-  carry SBOM and provenance attestations. Built images are scanned with Trivy.
-- The repository uses CodeQL, Dependabot (grouped weekly updates, including
-  GitHub Actions and Docker base images), secret scanning and push protection.
+  carry SBOM and provenance attestations. Published images are scanned with
+  Trivy (amd64) and the findings go to code scanning; the scan is
+  informational and does not block a release.
+- The repository uses CodeQL, Dependabot (grouped weekly updates of npm
+  packages and GitHub Actions), secret scanning and push protection. The
+  Docker base images are pinned by major version only and are not yet
+  updated by Dependabot (see the roadmap).
 
 To verify the signature of an image:
 

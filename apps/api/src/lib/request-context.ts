@@ -25,7 +25,7 @@ export function requestContext(logger: Logger): MiddlewareHandler<AppEnv> {
     const status = c.res.status;
     const entry = {
       method: c.req.method,
-      path: c.req.path,
+      path: redactPath(c.req.path),
       status,
       durationMs: Math.round(performance.now() - started),
       clientIp: c.get('clientIp'),
@@ -34,4 +34,9 @@ export function requestContext(logger: Logger): MiddlewareHandler<AppEnv> {
     else if (c.req.path.startsWith('/api/health/')) log.debug(entry, 'request completed');
     else log.info(entry, 'request completed');
   };
+}
+
+/** Secret-shaped path segments (invitation tokens: `/invitations/slpi_...`) never reach the log. */
+export function redactPath(path: string): string {
+  return path.replace(/\b(slp[a-z]?_)[A-Za-z0-9]{20,}/g, '$1[redacted]');
 }

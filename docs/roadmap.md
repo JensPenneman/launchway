@@ -28,11 +28,9 @@ features that are deliberately out of scope for v0.1 are listed in
 
 ## GitHub, apps and deployments
 
-- Restarting the API while a deployment runs fails it ("node went offline")
-  when the API marks stale nodes offline at start; the agent's later result is
-  ignored because the deployment is already terminal. Use
-  `heartbeat.activeDeploymentIds` after a reconnect, or accept late results for
-  deployments the agent still reports, before failing them.
+- A deployment whose result was lost is failed after two heartbeats leave it
+  out, even if it succeeded; the containers then run while the database shows
+  the previous deployment. Ask the agent for the app status before settling.
 - A route added to a running app works only after the next deployment
   ([ADR 0011](adr/0011-domain-activation-and-edge-rules.md)). Attach networks
   live, or persist a "redeploy required" flag (also for environment and source

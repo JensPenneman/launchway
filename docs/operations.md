@@ -412,8 +412,9 @@ docker compose ps                                  # container health
 
 - **A node is offline.** A node is marked offline after 45 seconds without a
   heartbeat. Check the agent's logs on that node and whether it can reach
-  `SLIPWAY_SERVER_URL`. Deployments for an offline node wait in `queued` for
-  10 minutes, then fail.
+  `SLIPWAY_SERVER_URL`. Deployments for an offline node wait in `queued`
+  until the node has been gone for 10 minutes, then fail. Deployments in
+  progress fail when the node does not reconnect within 45 seconds.
 - **The API logs `agent socket refused: invalid token`.** An agent presents a
   join token or credential the server does not know (expired token, revoked
   credential, restored or reset database). Issue a new join token for that

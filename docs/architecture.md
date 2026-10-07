@@ -306,7 +306,13 @@ export interface DnsProvider {
   error that the UI shows.
 - Reconnects with exponential backoff and jitter; the server marks a node
   `offline` after 45 s without heartbeat. A deployment addressed to an offline
-  node stays `queued` for 10 minutes, then `failed`.
+  node stays `queued` until the node has been gone for 10 minutes, then
+  `failed`; waiting behind another deployment on an online node never times
+  out. *(v0.1: a disconnected node has 45 s to reconnect before its in-progress
+  deployments fail, since the agent keeps running them. The agent answers
+  `deploy` at once with a log line, and the server compares the heartbeat's
+  `activeDeploymentIds` with the database: a deployment left out of two
+  heartbeats is failed (its result was lost) or, if never started, re-sent.)*
 - All process execution uses `execFile` with argument arrays — never a shell
   string. Refs match `^[A-Za-z0-9._/-]+$` and may not start with `-`.
   Environment values are never logged.

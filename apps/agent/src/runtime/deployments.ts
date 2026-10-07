@@ -61,6 +61,8 @@ interface Job {
   controller: AbortController;
   state: 'queued' | 'running';
   cancelled: boolean;
+  /** Next sequence number of the job's log lines (the acknowledgement takes the first). */
+  logSeq: number;
 }
 
 /** Ends the run with this error (code + message) instead of the generic internal error. */
@@ -138,8 +140,10 @@ export class DeploymentManager {
 
   deploy(requestId: string, payload: DeployPayload): void {
     const { deploymentId } = payload;
-    if (this.#jobs.has(deploymentId)) {
+    const existing = this.#jobs.get(deploymentId);
+    if (existing) {
       this.#log.warn({ deploymentId }, 'deployment already queued or running; ignoring duplicate');
+      this.#acknowledge(requestId, existing, `Already ${existing.state} on this node`);
       return;
     }
     if (this.#shuttingDown) {
@@ -156,9 +160,12 @@ export class DeploymentManager {
       controller: new AbortController(),
       state: 'queued',
       cancelled: false,
+      logSeq: 0,
     };
     this.#jobs.set(deploymentId, job);
     this.#log.info({ deploymentId, appId: payload.app.id }, 'deployment queued');
+    // Answer at once: the job may wait behind other work of the app or for a build slot.
+    this.#acknowledge(requestId, job, 'Received by the node');
     void this.#enqueue(payload.app.id, () => this.#execute(job));
   }
 
@@ -247,6 +254,18 @@ export class DeploymentManager {
     }
   }
 
+  /** The server waits for a first reply to `deploy`; a system log line is that reply. */
+  #acknowledge(requestId: string, job: Job, line: string): void {
+    this.#options.send({
+      id: requestId,
+      type: 'deployment.log',
+      payload: {
+        deploymentId: job.payload.deploymentId,
+        lines: [{ seq: job.logSeq++, timestamp: new Date().toISOString(), stream: 'system', line }],
+      },
+    });
+  }
+
   #sendResult(requestId: string, deploymentId: DeploymentId, error: AgentError): void {
     this.#options.send({
       id: requestId,
@@ -277,7 +296,6 @@ class DeploymentRun {
   readonly #secrets: string[];
   readonly #tail = new Tail<string>(15);
   readonly #batcher: Batcher<LogLine>;
-  #seq = 0;
 
   constructor(job: Job, options: DeploymentManagerOptions, run: Runner, builds: Semaphore) {
     this.#job = job;
@@ -593,7 +611,12 @@ class DeploymentRun {
   #line(stream: LogStream, raw: string): void {
     const line = this.#redact(raw).slice(0, MAX_LINE_LENGTH);
     if (stream !== 'system') this.#tail.push(line);
-    this.#batcher.add({ seq: this.#seq++, timestamp: new Date().toISOString(), stream, line });
+    this.#batcher.add({
+      seq: this.#job.logSeq++,
+      timestamp: new Date().toISOString(),
+      stream,
+      line,
+    });
   }
 
   #system(line: string): void {

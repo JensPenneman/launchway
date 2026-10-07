@@ -1,7 +1,7 @@
 import { type AppId, type DeploymentId, QUEUED_DEPLOYMENT_TIMEOUT_MS } from '@slipway/contracts';
 import { and, asc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
-import { AgentUnavailableError } from '../../lib/agent-gateway.js';
+import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import { systemActor } from '../../lib/auth-context.js';
 import { GitProviderError } from '../../lib/git-provider.js';
 import { startJob } from '../../lib/jobs.js';
@@ -142,6 +142,12 @@ export function createDispatcher(deps: Deps): Dispatcher {
       const payload = await payloadFor(app, deployment);
       await deps.agents.deploy(deployment.nodeId, payload);
     } catch (error) {
+      if (error instanceof AgentRequestError && error.code === 'timeout') {
+        // The agent may still have it (busy, slow link): keep the claim. Its heartbeats list what
+        // it queues; the sink releases the claim for a re-send if the deployment never shows up.
+        logger.warn({ ...context, reason: error.message }, 'deployment dispatch unacknowledged');
+        return 'sent';
+      }
       const transient =
         error instanceof AgentUnavailableError ||
         (error instanceof GitProviderError && error.kind === 'upstream');
@@ -180,13 +186,23 @@ export function createDispatcher(deps: Deps): Dispatcher {
     dispatchApp,
 
     async tick(now = new Date()) {
+      // Only deployments whose node has been offline for the whole timeout: one that waits
+      // behind a long build on an online node is not stale.
       const cutoff = new Date(now.getTime() - QUEUED_DEPLOYMENT_TIMEOUT_MS);
       const stale = await deps.db
-        .select()
+        .select({ deployment: deployments })
         .from(deployments)
-        .where(and(eq(deployments.status, 'queued'), lt(deployments.createdAt, cutoff)));
-      for (const row of stale) {
-        await fail(row, 'Timed out waiting for the node to accept the deployment');
+        .innerJoin(nodes, eq(nodes.id, deployments.nodeId))
+        .where(
+          and(
+            eq(deployments.status, 'queued'),
+            lt(deployments.createdAt, cutoff),
+            or(isNull(nodes.lastSeenAt), lt(nodes.lastSeenAt, cutoff)),
+          ),
+        );
+      for (const { deployment } of stale) {
+        if (deps.agents.isOnline(deployment.nodeId)) continue;
+        await fail(deployment, 'Timed out waiting for the node to accept the deployment');
       }
 
       const waiting = await deps.db

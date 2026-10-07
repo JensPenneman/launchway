@@ -134,6 +134,21 @@ const logLines = () =>
   messages.flatMap((m) => (m.type === 'deployment.log' ? m.payload.lines.map((l) => l.line) : []));
 
 describe('DeploymentManager', () => {
+  it('acknowledges deploy requests at once, duplicates included', async () => {
+    const fake = fakeDocker();
+    const deployments = manager(fake);
+    const job = payload();
+    deployments.deploy('req-1', job);
+    deployments.deploy('req-2', job);
+    const acks = messages.filter((m) => m.type === 'deployment.log');
+    expect(acks.map((m) => m.id)).toEqual(['req-1', 'req-2']);
+    expect(logLines().slice(0, 2)).toEqual([
+      'Received by the node',
+      expect.stringMatching(/^Already /),
+    ]);
+    await waitFor(() => results().length === 1);
+  });
+
   it('runs a deployment end to end and reports progress, logs and services', async () => {
     const fake = fakeDocker();
     const deployments = manager(fake);

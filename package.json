@@ -26,7 +26,7 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "test:e2e": "turbo run test:e2e",
-    "knip": "knip",
+    "knip": "turbo run openapi:generate --filter=@slipway/web && knip",
     "check": "pnpm lint && pnpm typecheck && pnpm knip && pnpm test",
     "db:generate": "turbo run db:generate",
     "db:migrate": "turbo run db:migrate",

@@ -108,10 +108,10 @@ Windows specifics:
   firewall when asked.
 - Routes of kind `external` can reach services on the Windows host as
   `host.docker.internal:<port>`.
-- The bundled agent runs inside Docker Desktop's VM, so the LAN address it
-  reports is internal. That does not matter on the edge node. When a Windows
-  machine is an *additional* node, set `LAUNCHWAY_NODE_LAN_IP` to its LAN
-  address (see [Add a node](#add-a-node)).
+- The bundled agent runs inside Docker Desktop's VM and cannot see the
+  machine's LAN address, so it reports none and logs a warning. That does not
+  matter on the edge node. When a Windows machine is an *additional* node, set
+  `LAUNCHWAY_NODE_LAN_IP` to its LAN address (see [Add a node](#add-a-node)).
 - Keep the machine from sleeping; the platform stops with Docker Desktop.
 
 ### Running images you built yourself
@@ -226,6 +226,7 @@ Docker Compose reads `.env` from the install directory:
 | `LAUNCHWAY_SETUP_TOKEN` | Generated. Required to create the owner account in the first-run setup; unused afterwards. |
 | `POSTGRES_PASSWORD` | Generated. The database only accepts the password it was created with. |
 | `LOG_LEVEL` | `fatal`, `error`, `warn`, `info` (default), `debug` or `trace`. |
+| `LAUNCHWAY_NODE_LAN_IP` | Optional. This machine's LAN address, reported by the bundled agent, which cannot detect it from the proxy network. The edge node works without it. |
 
 All API and agent variables are described in section 13 of the architecture
 and in [ADR 0009](adr/0009-v0-1-specification-interpretations.md). After
@@ -319,8 +320,7 @@ port): allow that traffic from the edge in the node's firewall.
 
    Optional variables: `LAUNCHWAY_VERSION` (keep it equal to the control
    plane's), `LAUNCHWAY_NODE_LAN_IP` (the address the edge uses to reach this
-   node; detected automatically with host networking, set it on Docker Desktop
-   or when detection picks the wrong interface) and `LOG_LEVEL`.
+   node, see below) and `LOG_LEVEL`.
 
 On its first start the agent exchanges the join token for a long-lived node
 credential, stores it in its `agent-data` volume at
@@ -329,6 +329,27 @@ credential, stores it in its `agent-data` volume at
 is not needed after that;
 `LAUNCHWAY_SERVER_URL` is needed on every start. The node shows as online once
 the handshake completes, and queued deployments for it are sent right away.
+
+The agent reports the node's LAN address each time it connects, taking the
+first of:
+
+1. `LAUNCHWAY_NODE_LAN_IP`;
+2. a private IPv4 address the Docker daemon reports for its host (the node
+   address, when the daemon is in swarm mode, except on Docker Desktop, whose
+   daemon runs in a VM);
+3. the first IPv4 address of the agent's network interfaces, skipping
+   loopback and link-local addresses, Docker, CNI and VPN interfaces, and
+   addresses inside the subnet of a Docker bridge network on the node. With
+   host networking, as in the commands above, that is the machine's own
+   address.
+
+Inside a bridge network (the bundled agent on the proxy network) and in any
+container on Docker Desktop, the agent only sees addresses that other
+machines cannot reach. It then reports no LAN address and logs a warning that
+asks for `LAUNCHWAY_NODE_LAN_IP`. Set it as well when the detected address is
+the wrong one (`GET /api/v1/nodes` shows `lanIp`). Without a LAN address,
+routes to apps on the node are left out of the edge configuration, and
+`GET /api/v1/edge/config` says so; the edge node itself needs none.
 
 Node credentials can be rotated (the agent must be online) and revoked in the
 UI. To reconnect a node whose credential was revoked or lost, issue a new join

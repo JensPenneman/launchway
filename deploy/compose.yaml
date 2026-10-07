@@ -87,6 +87,9 @@ services:
     environment:
       LAUNCHWAY_SERVER_URL: ws://launchway:3000
       LAUNCHWAY_JOIN_TOKEN: ${LAUNCHWAY_LOCAL_JOIN_TOKEN:-}
+      # On the proxy network the agent cannot see this machine's LAN address
+      # and reports none; the edge node does not need one.
+      LAUNCHWAY_NODE_LAN_IP: ${LAUNCHWAY_NODE_LAN_IP:-}
       LAUNCHWAY_WORKSPACE: /var/lib/launchway
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:

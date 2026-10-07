@@ -4,7 +4,7 @@ import { AgentConfigError, loadAgentConfig } from './config.js';
 import { AgentConnection } from './connection.js';
 import { createTokenSource, loadCredentials, saveCredentials } from './credentials.js';
 import { createDockerClient, normalizeArch, probeDocker } from './docker.js';
-import { detectLanIp } from './lan-ip.js';
+import { createLanIpDetector } from './lan-ip.js';
 import { LIVENESS_INTERVAL_MS, writeLiveness } from './liveness.js';
 import { createLogger } from './logger.js';
 import { createAgentRuntime } from './runtime/agent-runtime.js';
@@ -35,6 +35,7 @@ if (!credentials && !config.joinToken) {
 }
 
 const tokens = createTokenSource(credentials, config.joinToken);
+const lanIp = createLanIpDetector({ configured: config.lanIp, docker, logger });
 
 /** Running deployments get this long to finish on SIGTERM before they are reported as failed. */
 const SHUTDOWN_GRACE_MS = 20_000;
@@ -60,7 +61,7 @@ const connection: AgentConnection = new AgentConnection({
         os: process.platform,
         arch: normalizeArch(probe.docker?.architecture ?? process.arch),
       },
-      lanIp: config.lanIp ?? detectLanIp(),
+      lanIp: await lanIp.detect(probe),
       docker: probe.docker,
       dockerError: probe.dockerError,
     };

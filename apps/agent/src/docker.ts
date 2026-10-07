@@ -9,6 +9,12 @@ const PROBE_TIMEOUT_MS = 5_000;
 export interface DockerProbe {
   docker: DockerInfo | null;
   dockerError: string | null;
+  /**
+   * Addresses the daemon reports for its host: the node address when swarm mode is active.
+   * Docker Desktop has none worth reporting: its daemon runs in a VM, and host.docker.internal
+   * resolves to an address of its VM network, not to the machine's LAN address.
+   */
+  hostAddresses: string[];
 }
 
 /** dockerode client for DOCKER_HOST (`unix:///var/run/docker.sock` or `tcp://host:2375`). */
@@ -57,9 +63,14 @@ export async function probeDocker(docker: Docker): Promise<DockerProbe> {
         rootDir: info.DockerRootDir ? String(info.DockerRootDir) : null,
       },
       dockerError: null,
+      hostAddresses: info.Swarm?.NodeAddr ? [String(info.Swarm.NodeAddr)] : [],
     };
   } catch (error) {
-    return { docker: null, dockerError: error instanceof Error ? error.message : String(error) };
+    return {
+      docker: null,
+      dockerError: error instanceof Error ? error.message : String(error),
+      hostAddresses: [],
+    };
   }
 }
 

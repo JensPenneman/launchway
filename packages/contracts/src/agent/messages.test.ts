@@ -59,6 +59,11 @@ describe('agent protocol', () => {
     if (result.ok) expect(result.message.type).toBe('hello');
   });
 
+  it('accepts a hello without a LAN address (an agent that cannot detect one)', () => {
+    const noLanIp = { ...hello, payload: { ...hello.payload, lanIp: null } };
+    expect(parseAgentToServerMessage(JSON.stringify(noLanIp)).ok).toBe(true);
+  });
+
   it('reports invalid JSON, envelopes and payloads with the request id when known', () => {
     expect(parseAgentToServerMessage('{nope')).toMatchObject({ ok: false, reason: 'invalid-json' });
     expect(parseAgentToServerMessage(JSON.stringify({ type: 'hello' }))).toMatchObject({

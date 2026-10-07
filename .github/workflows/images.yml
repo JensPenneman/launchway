@@ -19,7 +19,8 @@ on:
       version:
         description: >-
           Release tag to rebuild and publish, for example v0.2.0. Its version
-          tags and latest move to the new build. Leave empty for edge images.
+          tag moves to the new build; X.Y, X and latest only when no newer
+          release has them. Leave empty for edge images.
         required: false
         type: string
         default: ""
@@ -74,7 +75,25 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.version }}
+          # Releases need every tag to tell whether they are the newest one.
+          fetch-depth: ${{ inputs.version == '' && 1 || 0 }}
           persist-credentials: false
+
+      # A rebuild of an older release (for example for a base image fix) must
+      # not move latest, X.Y or X back to it.
+      - name: Check whether this is the newest release
+        id: newest
+        if: inputs.version != ''
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          newest() { git tag --list "$1" --sort=-v:refname | head -n 1; }
+          is() { if [ "$VERSION" = "$1" ]; then echo true; else echo false; fi; }
+          {
+            echo "latest=$(is "$(newest 'v[0-9]*.[0-9]*.[0-9]*')")"
+            echo "minor=$(is "$(newest "${VERSION%.*}.*")")"
+            echo "major=$(is "$(newest "${VERSION%%.*}.*")")"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
@@ -100,9 +119,9 @@ jobs:
           # The bare major tag is skipped while the major version is 0.
           tags: |
             type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.version != '' && !startsWith(inputs.version, 'v0.') }}
-            type=raw,value=latest,enable=${{ inputs.version != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' && steps.newest.outputs.minor == 'true' }}
+            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.version != '' && !startsWith(inputs.version, 'v0.') && steps.newest.outputs.major == 'true' }}
+            type=raw,value=latest,enable=${{ inputs.version != '' && steps.newest.outputs.latest == 'true' }}
             type=edge,branch=main,enable=${{ inputs.version == '' }}
             type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
           labels: |

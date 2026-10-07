@@ -99,6 +99,12 @@ describe('GitProvider (GitHub)', () => {
 
   it('verifies personal access tokens with GET /user', async () => {
     await expect(verifyPatToken(PAT)).resolves.toEqual({ login: 'octo', type: 'User' });
+    const classic = `ghp_${'c'.repeat(36)}`;
+    github.patTokens.set(classic, { login: 'octo', type: 'User' });
+    github.patScopes.set(classic, 'repo, read:org');
+    await expect(verifyPatToken(classic)).rejects.toMatchObject({ kind: 'forbidden' });
+    github.patScopes.set(classic, 'read:org');
+    await expect(verifyPatToken(classic)).resolves.toMatchObject({ login: 'octo' });
     await expect(verifyPatToken(`ghp_${'b'.repeat(36)}`)).rejects.toMatchObject({
       kind: 'unauthorized',
     });
@@ -135,17 +141,32 @@ describe('GitProvider (GitHub)', () => {
       const tokenCalls = () =>
         github.calls.filter((call) => call.endsWith('/access_tokens')).length;
 
-      const first = await provider.cloneCredentials('octo', 'trail');
+      await provider.listRepos(undefined, undefined, 10);
       await provider.listRepos(undefined, undefined, 10);
       expect(tokenCalls()).toBe(1);
-      expect(first.cloneUrl).toBe('https://github.com/octo/trail.git');
-      expect(first.authorization).toMatch(/^basic /);
 
       forgetInstallationTokens(appId);
       github.tokenLifetimeMs = 4 * 60 * 1000; // inside the renewal window
-      await provider.cloneCredentials('octo', 'trail');
-      await provider.cloneCredentials('octo', 'trail');
+      await provider.listRepos(undefined, undefined, 10);
+      await provider.listRepos(undefined, undefined, 10);
       expect(tokenCalls()).toBe(3);
+    });
+
+    it('hands nodes a fresh token limited to the repository and contents: read', async () => {
+      const provider = createInstallationProvider(
+        { appId, privateKey: testPrivateKey() },
+        installationId,
+      );
+      await provider.listRepos(undefined, undefined, 10);
+      const first = await provider.cloneCredentials('octo', 'trail');
+      const second = await provider.cloneCredentials('octo', 'trail');
+      expect(first.cloneUrl).toBe('https://github.com/octo/trail.git');
+      expect(first.authorization).toMatch(/^basic /);
+      expect(second.authorization).not.toBe(first.authorization);
+      expect(github.tokenRequests.slice(-2)).toEqual([
+        { repositories: ['trail'], permissions: { contents: 'read' } },
+        { repositories: ['trail'], permissions: { contents: 'read' } },
+      ]);
     });
   });
 });

@@ -145,6 +145,9 @@ export function createGitHubService(deps: Deps): GitHubService {
         if (error instanceof GitProviderError && error.kind === 'unauthorized') {
           throw invalidField('body.token', 'GitHub rejected this token');
         }
+        if (error instanceof GitProviderError && error.kind === 'forbidden') {
+          throw invalidField('body.token', error.message);
+        }
         throw toGitProblem(error);
       }
       const id = generateId('gh');

@@ -57,6 +57,10 @@ This is a summary of the security requirements in section 14 of
   node credentials and invitation tokens are stored as SHA-256 hashes and
   compared in constant time. Plaintext tokens are shown once.
 - Git credentials are passed to `git` per command and never written to disk.
+  A deploying node receives, per deployment, a fresh GitHub App token limited
+  to the app's repository and `contents: read`. With a personal access token
+  connection the node receives that token itself, so use a fine-grained,
+  read-only token; classic tokens with write scopes are refused.
 - Logs never contain secrets, tokens or `Authorization` headers; environment
   values are never logged.
 

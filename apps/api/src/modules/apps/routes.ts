@@ -31,7 +31,8 @@ const createApp = createRoute({
   operationId: 'createApp',
   tags: TAGS,
   summary: 'Create an app',
-  description: 'Links a repository of a GitHub connection to a node. Audited.',
+  description:
+    'Links a repository of a GitHub connection to a node. `trustedMounts: true` requires the admin role (403 otherwise). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { body: jsonBody(CreateAppInput) },
@@ -75,9 +76,10 @@ const updateApp = createRoute({
   tags: TAGS,
   summary: 'Update an app',
   description:
-    'Partial update. Changing the source or connection takes effect with the next deployment ' +
-    '(an `apps` change event carries `redeployRequired`). Moving to another node requires the app ' +
-    'to have no running or pending deployment. Audited.',
+    'Partial update. Changing the source, connection or trustedMounts takes effect with the next ' +
+    'deployment (an `apps` change event carries `redeployRequired`). Moving to another node ' +
+    'requires the app to have no running or pending deployment. Setting `trustedMounts` requires ' +
+    'the admin role (403 otherwise). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: AppParams, body: jsonBody(UpdateAppInput) },

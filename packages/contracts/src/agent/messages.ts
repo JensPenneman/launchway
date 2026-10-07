@@ -11,7 +11,7 @@ import {
 } from '../common.js';
 import { AppLogLine, LogLine, ServiceStatus } from '../deployments.js';
 import { AppId, DeploymentId, NodeId } from '../ids.js';
-import { DockerInfo, NODE_CREDENTIAL_PATTERN } from '../nodes.js';
+import { AllowedBindRoots, DockerInfo, NODE_CREDENTIAL_PATTERN } from '../nodes.js';
 import { z } from '../zod.js';
 import { AgentError, MessageId } from './protocol.js';
 
@@ -129,6 +129,13 @@ export type DeployRoute = z.infer<typeof DeployRoute>;
  * `routes`, labels, LAN publishing when `network.publishOnIp` is set), then runs
  * `docker compose -p launchway-<slug> ... build --pull`, `pull`, `up -d --wait --remove-orphans`.
  */
+/** Mount policy of one deployment; agents treat a missing policy as untrusted. */
+export const DeployPolicy = z.object({
+  trustedMounts: z.boolean().describe('App.trustedMounts'),
+  allowedBindRoots: AllowedBindRoots.describe("The target node's allowedBindRoots"),
+});
+export type DeployPolicy = z.infer<typeof DeployPolicy>;
+
 export const DeployPayload = z.object({
   deploymentId: DeploymentId,
   app: z.object({ id: AppId, slug: AppSlug }),
@@ -153,6 +160,7 @@ export const DeployPayload = z.object({
       'LAN IP to publish routed ports on; null on the edge node',
     ),
   }),
+  policy: DeployPolicy.optional(),
 });
 export type DeployPayload = z.infer<typeof DeployPayload>;
 

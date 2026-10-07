@@ -19,6 +19,7 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
       composeFiles: ['compose.yaml'],
       dockerfile: null,
       context: null,
+      trustedMounts: false,
     },
     clone: { cloneUrl: 'https://github.com/octo/trail.git', authorization: 'basic eA==' },
     env: { PLAIN: 'a', SECRET: 's3' },
@@ -29,6 +30,7 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
     ],
     proxyNetwork: 'launchway-proxy',
     nodeLanIp: '192.168.1.20',
+    nodeAllowedBindRoots: [],
     edgeNodeId: edge,
     ...overrides,
   };
@@ -71,6 +73,7 @@ describe('buildDeployPayload', () => {
           composeFiles: null,
           dockerfile: 'Dockerfile',
           context: '.',
+          trustedMounts: false,
         },
       }),
     );
@@ -81,6 +84,28 @@ describe('buildDeployPayload', () => {
     });
     expect(payload.env).toEqual({ PLAIN: 'a', SECRET: 's3' });
     expect(payload.build).toEqual({ kind: 'dockerfile', dockerfile: 'Dockerfile', context: '.' });
+  });
+
+  it('fills the mount policy from the app and its node', () => {
+    expect(buildDeployPayload(input()).policy).toEqual({
+      trustedMounts: false,
+      allowedBindRoots: [],
+    });
+    const trusted = buildDeployPayload(
+      input({
+        app: { ...input().app, trustedMounts: true },
+        nodeAllowedBindRoots: ['/srv/data', '/run/desktop/mnt/host/d/Backups'],
+      }),
+    );
+    expect(trusted.policy).toEqual({
+      trustedMounts: true,
+      allowedBindRoots: ['/srv/data', '/run/desktop/mnt/host/d/Backups'],
+    });
+  });
+
+  it('sends the node roots even for untrusted apps (the agent ignores them)', () => {
+    const payload = buildDeployPayload(input({ nodeAllowedBindRoots: ['/srv/data'] }));
+    expect(payload.policy).toEqual({ trustedMounts: false, allowedBindRoots: ['/srv/data'] });
   });
 
   it('rejects payloads violating the agent contract without echoing values', () => {

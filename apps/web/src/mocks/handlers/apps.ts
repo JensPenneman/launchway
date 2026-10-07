@@ -18,6 +18,7 @@ import { db } from '../db';
 import {
   API,
   guard,
+  guardTrustedMounts,
   now,
   paginate,
   parseBody,
@@ -156,6 +157,10 @@ export const appHandlers = [
     if (denied) return denied;
     const { data, error } = await parseBody(request, CreateAppInput);
     if (error) return error;
+    if (data.trustedMounts) {
+      const trustDenied = guardTrustedMounts();
+      if (trustDenied) return trustDenied;
+    }
     const slug = data.slug ?? slugify(data.name);
     if (db.apps.some((app) => app.slug === slug)) {
       return problem('conflict', `An app with the slug "${slug}" already exists.`);
@@ -172,6 +177,7 @@ export const appHandlers = [
       context: data.dockerfile ? (data.context ?? '.') : null,
       nodeId: data.nodeId,
       autoDeployReleases: data.autoDeployReleases,
+      trustedMounts: data.trustedMounts,
       activeDeploymentId: null,
       createdAt: now(),
       updatedAt: now(),
@@ -195,6 +201,10 @@ export const appHandlers = [
     if (!app) return problem('not-found');
     const { data, error } = await parseBody(request, UpdateAppInput);
     if (error) return error;
+    if (data.trustedMounts !== undefined) {
+      const trustDenied = guardTrustedMounts();
+      if (trustDenied) return trustDenied;
+    }
     const { composeFiles, dockerfile, context, ...rest } = data;
     Object.assign(app, rest, { updatedAt: now() });
     if (composeFiles) Object.assign(app, { composeFiles, dockerfile: null, context: null });

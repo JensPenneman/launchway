@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { DeployRoute } from '@launchway/contracts';
+import type { DeployPolicy, DeployRoute } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   type ComposeConfig,
@@ -8,15 +8,20 @@ import {
   parseComposeConfig,
 } from './compose-policy.js';
 
+const WORKSPACE = '/ws';
 const CHECKOUT = '/ws/apps/app_1/dep_1';
 const fixture = readFileSync(new URL('./fixtures/mailserver.config.json', import.meta.url), 'utf8');
+const trailFixture = readFileSync(new URL('./fixtures/trail.config.json', import.meta.url), 'utf8');
 
-function context(routes: DeployRoute[] = []): PolicyContext {
+function context(routes: DeployRoute[] = [], mountPolicy?: DeployPolicy): PolicyContext {
   return {
     projectName: 'launchway-mail',
     proxyNetwork: 'launchway-proxy',
     routes,
     isInsideCheckout: (path) => path === CHECKOUT || path.startsWith(`${CHECKOUT}/`),
+    projectDir: CHECKOUT,
+    workspaceRoot: WORKSPACE,
+    mountPolicy,
   };
 }
 
@@ -292,5 +297,162 @@ describe('evaluateComposePolicy', () => {
     expect(parseComposeConfig('not json')).toBeNull();
     expect(parseComposeConfig('{"services": {"a": {"privileged": "yes"}}}')).toBeNull();
     expect(parseComposeConfig('{}')).toBeNull();
+  });
+});
+
+describe('evaluateComposePolicy with trusted mounts', () => {
+  const ROOTS = ['/srv/data', '/run/desktop/mnt/host/d/Backups'];
+  const TRUSTED: DeployPolicy = { trustedMounts: true, allowedBindRoots: ROOTS };
+  const UNTRUSTED: DeployPolicy = { trustedMounts: false, allowedBindRoots: ROOTS };
+
+  function trail(): ComposeConfig {
+    const config = parseComposeConfig(trailFixture);
+    if (!config) throw new Error('fixture did not parse');
+    return config;
+  }
+
+  const trailContext = (mountPolicy?: DeployPolicy): PolicyContext => ({
+    ...context([], mountPolicy),
+    projectName: 'launchway-trail',
+  });
+
+  /** One service binding `source` (optionally with bind options) under `policy`. */
+  function bind(source: string, policy?: DeployPolicy, extra: Record<string, unknown> = {}) {
+    const config = withService('bad', {
+      image: 'x',
+      volumes: [{ type: 'bind', source, target: '/mnt', ...extra }],
+    });
+    return evaluateComposePolicy(config, context([], policy));
+  }
+
+  it('allows the Trail stack once trusted and reports what trust allowed', () => {
+    const result = evaluateComposePolicy(trail(), trailContext(TRUSTED));
+    expect(result.violations).toEqual([]);
+    expect(result.trustedMounts).toEqual([
+      'service app bind-mounts /run/desktop/mnt/host/d/Backups/trail',
+      'service app bind-mounts /srv/data/trail',
+      'volume pgdata uses external volume trail_pgdata',
+      'volume cache uses volume trail_cache',
+    ]);
+  });
+
+  it.each<[string, DeployPolicy | undefined]>([
+    ['without a policy (older servers)', undefined],
+    ['when the app is not trusted', UNTRUSTED],
+  ])('refuses the Trail stack %s, exactly as before', (_label, policy) => {
+    const result = evaluateComposePolicy(trail(), trailContext(policy));
+    expect(result.trustedMounts).toEqual([]);
+    expect(result.violations).toEqual([
+      'service "app": host bind mount "/run/desktop/mnt/host/d/Backups/trail" is not allowed (use a named volume)',
+      'service "app": host bind mount "/srv/data/trail" is not allowed (use a named volume)',
+      'volume "pgdata": external volumes are not allowed',
+      'volume "pgdata": custom volume name "trail_pgdata" is not allowed',
+      'volume "cache": custom volume name "trail_cache" is not allowed',
+    ]);
+  });
+
+  it.each([
+    ['the root itself', '/srv/data'],
+    ['a path below a root', '/srv/data/trail/backups'],
+    ['a path that normalizes below a root', '/srv/data/x/../trail'],
+    ['a Docker Desktop drive below /run (the root is deeper)', '/run/desktop/mnt/host/d/Backups/x'],
+    ['a relative path that resolves below a root', '../../../../srv/data/trail'],
+  ])('allows a trusted bind of %s', (_label, source) => {
+    expect(bind(source, TRUSTED).violations).toEqual([]);
+  });
+
+  it.each<[string, string, RegExp]>([
+    ['outside every root', '/srv/other', /outside the allowed bind-mount roots/],
+    ['a sibling sharing a prefix', '/srv/data-old', /outside the allowed bind-mount roots/],
+    ['escaping a root with ..', '/srv/data/../../etc', /outside the allowed bind-mount roots/],
+    ['a relative path into the checkout', './data', /inside the agent workspace/],
+    ['a relative path into the workspace', '../../..', /inside the agent workspace/],
+    ['the Docker socket', '/var/run/docker.sock', /Docker socket/],
+    ['the Docker socket below a root', '/srv/data/docker.sock', /Docker socket/],
+    ['the host root', '/', /host root directory/],
+    ['/etc', '/etc', /outside the allowed bind-mount roots/],
+    ['/run outside the Docker Desktop root', '/run/desktop/mnt/host/c', /outside the allowed/],
+    ['an empty source', '', /no source/],
+  ])('refuses a trusted bind %s', (_label, source, pattern) => {
+    const found = bind(source, TRUSTED).violations;
+    expect(found).toHaveLength(1);
+    expect(found[0]).toMatch(pattern);
+    expect(found[0]).toContain('allowed roots: /srv/data, /run/desktop/mnt/host/d/Backups');
+  });
+
+  it('shows the resolved path of relative sources', () => {
+    expect(bind('./data', TRUSTED).violations[0]).toContain(
+      `bind mount "./data" (resolved "${CHECKOUT}/data")`,
+    );
+  });
+
+  it.each<[string, string[], string, RegExp]>([
+    ['/etc', ['/etc'], '/etc/ssl', /below the protected path \/etc/],
+    ['/run', ['/run'], '/run/secrets', /below the protected path \/run/],
+    ['/proc', ['/proc'], '/proc/1', /below the protected path \/proc/],
+    ['/var/lib/docker', ['/var/lib'], '/var/lib/docker/volumes', /\/var\/lib\/docker can never/],
+    ['the workspace', ['/ws'], '/ws/agent', /inside the agent workspace/],
+  ])('keeps %s refused even when a root covers it', (_label, roots, source, pattern) => {
+    const found = bind(source, { trustedMounts: true, allowedBindRoots: roots }).violations;
+    expect(found.join('\n')).toMatch(pattern);
+  });
+
+  it.each(['shared', 'rshared', 'slave', 'rslave'])('refuses propagation %s', (propagation) => {
+    const found = bind('/srv/data/x', TRUSTED, { bind: { propagation } }).violations;
+    expect(found.join('\n')).toMatch(
+      new RegExp(`propagation ${propagation}, which is not allowed`),
+    );
+  });
+
+  it('allows private propagation and read-only binds', () => {
+    expect(
+      bind('/srv/data/x', TRUSTED, { read_only: true, bind: { propagation: 'rprivate' } })
+        .violations,
+    ).toEqual([]);
+  });
+
+  it('names the missing roots when the node has none', () => {
+    const found = bind('/srv/data', { trustedMounts: true, allowedBindRoots: [] }).violations;
+    expect(found[0]).toMatch(/outside the allowed bind-mount roots.*none configured on this node/);
+  });
+
+  it.each([
+    ['an external volume', { data: { external: true, name: 'trail_pgdata' } }],
+    ['an external volume without a name', { trail_pgdata: { external: true } }],
+    ['a custom volume name', { data: { name: 'trail_cache' } }],
+  ])('allows %s when trusted', (_label, volumes) => {
+    const config = { ...base(), volumes: { ...base().volumes, ...volumes } } as ComposeConfig;
+    expect(evaluateComposePolicy(config, context([], TRUSTED)).violations).toEqual([]);
+    expect(evaluateComposePolicy(config, context([], UNTRUSTED)).violations).not.toEqual([]);
+  });
+
+  it.each([
+    ['the database', { db: { external: true, name: 'launchway_db-data' } }],
+    ['the agent workspace', { a: { external: true, name: 'launchway-agent_agent-data' } }],
+    ['the Caddy data', { c: { name: 'launchway_caddy-data' } }],
+  ])('refuses the platform volume of %s even when trusted', (_label, volumes) => {
+    const config = { ...base(), volumes } as ComposeConfig;
+    expect(evaluateComposePolicy(config, context([], TRUSTED)).violations.join()).toMatch(
+      /belongs to the Launchway platform/,
+    );
+  });
+
+  it('keeps refusing everything else when trusted', () => {
+    const config = {
+      ...withService('bad', {
+        image: 'x',
+        privileged: true,
+        volumes: [{ type: 'npipe', source: 'x', target: 'y' }],
+      }),
+      volumes: {
+        v: { name: 'trail_v', driver_opts: { type: 'none', o: 'bind', device: '/srv/data' } },
+        p: { driver: 'local-persist' },
+      },
+    } as ComposeConfig;
+    const found = evaluateComposePolicy(config, context([], TRUSTED)).violations.join('\n');
+    expect(found).toMatch(/privileged is not allowed/);
+    expect(found).toMatch(/mount type npipe/);
+    expect(found).toMatch(/volumes backed by host paths/);
+    expect(found).toMatch(/volume driver "local-persist"/);
   });
 });

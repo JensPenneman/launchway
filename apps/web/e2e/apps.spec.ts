@@ -103,3 +103,16 @@ test('deletes an app after typing its slug', async ({ page }) => {
   await expect(page).toHaveURL(/\/apps$/);
   await expect(page.getByRole('row', { name: /Mail server/ })).toHaveCount(0);
 });
+
+test('shows trusted mounts and lets an admin turn them off', async ({ page }) => {
+  await page.goto(`/apps/${TRAIL_APP_ID}?tab=settings`);
+  await expect(page.getByText('trusted mounts', { exact: true })).toBeVisible();
+  const toggle = page.getByRole('switch', { name: 'Trusted mounts' });
+  await expect(toggle).toBeChecked();
+  await expect(page.getByText('Trust only apps whose source you control.')).toBeVisible();
+
+  await toggle.click();
+  await expect(page.getByText('Trusted mounts disabled')).toBeVisible();
+  await expect(toggle).not.toBeChecked();
+  await expect(page.getByText('trusted mounts', { exact: true })).toHaveCount(0);
+});

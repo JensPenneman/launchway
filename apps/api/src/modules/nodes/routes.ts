@@ -66,7 +66,9 @@ const updateNode = createRoute({
   path: '/nodes/{id}',
   operationId: 'updateNode',
   tags: TAGS,
-  summary: 'Rename a node',
+  summary: 'Update a node',
+  description:
+    'Renames the node and/or replaces its allowed bind-mount roots (daemon-side directories that apps with trustedMounts may bind-mount from). Requires the admin role. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('admin')],
   request: { params: NodeParams, body: jsonBody(UpdateNodeInput) },

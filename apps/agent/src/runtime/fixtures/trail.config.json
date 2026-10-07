@@ -1,0 +1,40 @@
+{
+  "name": "launchway-trail",
+  "networks": { "default": { "name": "launchway-trail_default", "ipam": {} } },
+  "services": {
+    "app": {
+      "command": null,
+      "entrypoint": null,
+      "image": "ghcr.io/example/trail:1",
+      "networks": { "default": null },
+      "volumes": [
+        {
+          "type": "bind",
+          "source": "/run/desktop/mnt/host/d/Backups/trail",
+          "target": "/backups",
+          "read_only": true,
+          "bind": {}
+        },
+        { "type": "bind", "source": "/srv/data/trail", "target": "/data", "bind": {} }
+      ]
+    },
+    "db": {
+      "command": null,
+      "entrypoint": null,
+      "image": "postgres:18-alpine",
+      "networks": { "default": null },
+      "volumes": [
+        {
+          "type": "volume",
+          "source": "pgdata",
+          "target": "/var/lib/postgresql/data",
+          "volume": {}
+        }
+      ]
+    }
+  },
+  "volumes": {
+    "pgdata": { "name": "trail_pgdata", "external": true },
+    "cache": { "name": "trail_cache" }
+  }
+}

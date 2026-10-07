@@ -1,6 +1,7 @@
-import { resolve } from 'node:path';
+import { posix, resolve } from 'node:path';
 import {
   DEFAULT_PROXY_NETWORK,
+  type DeployPolicy,
   type DeployRoute,
   RESERVED_SERVICE_NAMES,
 } from '@launchway/contracts';
@@ -19,6 +20,26 @@ export const ALLOWED_CAPABILITIES: readonly string[] = [
 const MOUNT_TYPES_ALLOWED = ['volume', 'tmpfs', 'image'];
 /** `driver_opts.type` values the local volume driver may mount (network filesystems and tmpfs). */
 const VOLUME_TYPES_ALLOWED = ['nfs', 'nfs4', 'cifs', 'smb3', 'tmpfs'];
+/**
+ * Host paths a trusted bind mount may not reach, unless it lies below an allowed root that is
+ * itself deeper than the protected path (Docker Desktop shares host drives below
+ * `/run/desktop/mnt/host`). `/` itself is always refused.
+ */
+export const PROTECTED_HOST_PATHS: readonly string[] = [
+  '/proc',
+  '/sys',
+  '/dev',
+  '/etc',
+  '/var/run',
+  '/run',
+];
+/** Host paths no bind mount may reach, whatever the allowed roots (Docker's own data). */
+const FORBIDDEN_HOST_PATHS: readonly string[] = ['/var/lib/docker'];
+/** Bind propagation modes that would leak mounts between the container and the host. */
+const PROPAGATION_REFUSED = ['shared', 'rshared', 'slave', 'rslave'];
+/** Compose projects of the platform itself; their volumes are never reused by apps. */
+const PLATFORM_VOLUME_PREFIXES = ['launchway_', 'launchway-agent_'];
+
 /** Namespace modes that stay inside the container (besides `service:<name>`). */
 const PRIVATE_NAMESPACE_MODES = ['private', 'shareable', 'none'];
 const NamespaceMode = z.string().nullish();
@@ -58,7 +79,15 @@ const Service = z.looseObject({
   container_name: z.string().nullish(),
   provider: z.unknown().optional(),
   use_api_socket: z.boolean().nullish(),
-  volumes: z.array(z.looseObject({ type: z.string(), source: z.string().nullish() })).nullish(),
+  volumes: z
+    .array(
+      z.looseObject({
+        type: z.string(),
+        source: z.string().nullish(),
+        bind: z.looseObject({ propagation: z.string().nullish() }).nullish(),
+      }),
+    )
+    .nullish(),
   networks: z.record(z.string(), z.unknown()).nullish(),
   ports: z.array(PortSpec).nullish(),
   env_file: z.array(z.union([z.string(), z.looseObject({ path: z.string() })])).nullish(),
@@ -114,6 +143,15 @@ export interface PolicyContext {
   routes: readonly DeployRoute[];
   /** True when an absolute path lies inside the checkout (symlinks resolved). */
   isInsideCheckout: (path: string) => boolean;
+  /** Compose project directory; relative bind sources are resolved against it. */
+  projectDir: string;
+  /** The agent workspace (LAUNCHWAY_WORKSPACE); never bind-mountable. */
+  workspaceRoot: string;
+  /**
+   * The deployment's mount policy (`DeployPayload.policy`). Missing or `trustedMounts: false`
+   * means untrusted: no bind mounts, external volumes or custom volume names.
+   */
+  mountPolicy?: DeployPolicy | undefined;
 }
 
 export interface DeclaredPort {
@@ -128,6 +166,8 @@ export interface PolicyResult {
   violations: string[];
   /** Host ports the app publishes itself (reported, not refused). */
   ports: DeclaredPort[];
+  /** Mounts allowed only because the app is trusted (reported in the deployment log). */
+  trustedMounts: string[];
 }
 
 const isExternal = (value: unknown) =>
@@ -139,6 +179,40 @@ const isOwnService = (value: string, services: Record<string, unknown>) =>
 const isAllowedSecurityOpt = (value: string) => /^no-new-privileges([:=]true)?$/i.test(value);
 /** Local build contexts are absolute after Compose resolved them; URLs and `target:` are remote. */
 const isLocalPath = (value: string) => value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value);
+
+/** True when `child` is `root` or below it; both absolute POSIX paths. */
+function isWithinPosix(root: string, child: string): boolean {
+  const rel = posix.relative(root, child);
+  return rel === '' || (rel !== '..' && !rel.startsWith('../') && !posix.isAbsolute(rel));
+}
+
+/**
+ * Why a trusted app may not bind-mount `source` (a daemon-side path; relative sources resolve
+ * against the project directory), or null when it lies below one of the allowed roots.
+ */
+function trustedBindRefusal(
+  source: string,
+  ctx: PolicyContext,
+  roots: readonly string[],
+): string | null {
+  const resolved = posix.resolve(ctx.projectDir, source);
+  if (source.includes('docker.sock') || resolved.includes('docker.sock')) {
+    return 'the Docker socket can never be mounted';
+  }
+  if (resolved === '/') return 'the host root directory can never be mounted';
+  if (isWithinPosix(posix.resolve(ctx.workspaceRoot), resolved)) {
+    return 'it lies inside the agent workspace';
+  }
+  const forbidden = FORBIDDEN_HOST_PATHS.find((path) => isWithinPosix(path, resolved));
+  if (forbidden) return `${forbidden} can never be mounted`;
+  const root = roots.find((candidate) => isWithinPosix(candidate, resolved));
+  if (!root) return 'it is outside the allowed bind-mount roots of this node';
+  const protectedPath = PROTECTED_HOST_PATHS.find((path) => isWithinPosix(path, resolved));
+  if (protectedPath && !(root !== protectedPath && isWithinPosix(protectedPath, root))) {
+    return `it lies below the protected path ${protectedPath}`;
+  }
+  return null;
+}
 
 function normalizeCapability(cap: string): string {
   return cap.toUpperCase().replace(/^CAP_/, '');
@@ -159,11 +233,20 @@ export function parseComposeConfig(json: string): ComposeConfig | null {
  * host mounts and namespaces, privileges, extra capabilities, files outside the checkout, foreign
  * volumes and networks, and the proxy network (only the generated override may attach it).
  * Published ports are allowed and returned so they can be reported.
+ *
+ * Trusted apps (`mountPolicy.trustedMounts`, an admin decision; ADR 0015) may also bind-mount
+ * paths below the node's allowed roots and use external volumes and custom volume names. The
+ * Docker socket, `/`, protected system paths, Docker's data, the agent workspace, mount
+ * propagation and the platform's own volumes stay refused.
  */
 export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext): PolicyResult {
   const violations: string[] = [];
   const ports: DeclaredPort[] = [];
+  const trustedMounts: string[] = [];
   const reject = (message: string) => violations.push(message);
+  const trusted = ctx.mountPolicy?.trustedMounts === true;
+  const roots = trusted ? (ctx.mountPolicy?.allowedBindRoots ?? []).map(posix.normalize) : [];
+  const rootList = `allowed roots: ${roots.length > 0 ? roots.join(', ') : 'none configured on this node'}`;
   const proxyNames = new Set([ctx.proxyNetwork, DEFAULT_PROXY_NETWORK]);
   const checkFile = (where: string, path: string) => {
     if (!isLocalPath(path) || !ctx.isInsideCheckout(resolve(path))) {
@@ -218,6 +301,23 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
       reject(`${at}: container_name "${service.container_name}" is reserved`);
     }
     for (const volume of service.volumes ?? []) {
+      if (volume.type === 'bind' && trusted) {
+        const source = volume.source ?? '';
+        const resolved = posix.resolve(ctx.projectDir, source);
+        const shown = resolved === source ? `"${source}"` : `"${source}" (resolved "${resolved}")`;
+        const refusal = source ? trustedBindRefusal(source, ctx, roots) : 'it has no source';
+        const propagation = volume.bind?.propagation;
+        if (refusal) {
+          reject(`${at}: bind mount ${shown} is not allowed: ${refusal} (${rootList})`);
+        } else if (propagation && PROPAGATION_REFUSED.includes(propagation)) {
+          reject(
+            `${at}: bind mount ${shown} uses propagation ${propagation}, which is not allowed`,
+          );
+        } else {
+          trustedMounts.push(`service ${name} bind-mounts ${resolved}`);
+        }
+        continue;
+      }
       if (!MOUNT_TYPES_ALLOWED.includes(volume.type)) {
         reject(
           volume.type === 'bind'
@@ -272,10 +372,21 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
 
   for (const [key, volume] of Object.entries(config.volumes ?? {})) {
     const at = `volume "${key}"`;
-    if (volume && isExternal(volume.external)) reject(`${at}: external volumes are not allowed`);
-    const name = volume?.name ?? `${ctx.projectName}_${key}`;
-    if (!name.startsWith(`${ctx.projectName}_`)) {
-      reject(`${at}: custom volume name "${name}" is not allowed`);
+    const external = volume !== null && isExternal(volume.external);
+    if (trusted) {
+      const name = volume?.name ?? (external ? key : `${ctx.projectName}_${key}`);
+      const own = name.startsWith(`${ctx.projectName}_`);
+      if (!own && PLATFORM_VOLUME_PREFIXES.some((prefix) => name.startsWith(prefix))) {
+        reject(`${at}: volume "${name}" belongs to the Launchway platform and is never allowed`);
+      } else if (external || !own) {
+        trustedMounts.push(`volume ${key} uses ${external ? 'external ' : ''}volume ${name}`);
+      }
+    } else {
+      if (external) reject(`${at}: external volumes are not allowed`);
+      const name = volume?.name ?? `${ctx.projectName}_${key}`;
+      if (!name.startsWith(`${ctx.projectName}_`)) {
+        reject(`${at}: custom volume name "${name}" is not allowed`);
+      }
     }
     const driver = volume?.driver;
     if (driver && driver !== 'local') reject(`${at}: volume driver "${driver}" is not allowed`);
@@ -342,5 +453,5 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
     }
   }
 
-  return { violations, ports };
+  return { violations, ports, trustedMounts };
 }

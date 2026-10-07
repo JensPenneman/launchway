@@ -150,6 +150,11 @@ resolves it to a commit SHA at deployment creation). Optional per app:
    namespaces and networks outside the project, host-path volume drivers and
    files outside the checkout; see `apps/agent/src/runtime/compose-policy.ts`.
    Reserved service names are only refused for routed services.)*
+   *Escape hatch: an admin can mark an app `trustedMounts`; it may then
+   bind-mount paths below its node's `allowedBindRoots` and use external
+   volumes and custom volume names. The Docker socket, `/`, system paths, the
+   agent workspace, mount propagation and the platform's volumes stay refused
+   ([ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md)).*
 3. Write `.env` (mode 0600) from the app's environment variables and the
    override file `compose.launchway.yaml`: attaches routed services to
    `launchway-proxy` with their aliases, adds the labels, and — when the app is

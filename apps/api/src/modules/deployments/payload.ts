@@ -21,6 +21,8 @@ export interface DeployPayloadInput {
     readonly composeFiles: readonly string[] | null;
     readonly dockerfile: string | null;
     readonly context: string | null;
+    /** `apps.trusted_mounts`. */
+    readonly trustedMounts: boolean;
   };
   readonly clone: CloneCredentials;
   /** Decrypted environment. */
@@ -30,6 +32,8 @@ export interface DeployPayloadInput {
   readonly proxyNetwork: string;
   /** LAN address of the target node. */
   readonly nodeLanIp: string | null;
+  /** `nodes.allowed_bind_roots` of the target node. */
+  readonly nodeAllowedBindRoots: readonly string[];
   /** `settings.edge_node_id`. */
   readonly edgeNodeId: NodeId | null;
 }
@@ -48,7 +52,8 @@ export class InvalidDeployPayloadError extends Error {
  * Builds the `deploy` request for the agent (spec sections 4 and 9). Routed ports are published
  * on the node's LAN IP only when the app does not run on the edge node, so the edge can reach it.
  * Without an edge node every app counts as local, the same rule the Caddyfile renderer applies
- * (it then reaches every app by its alias on the proxy network).
+ * (it then reaches every app by its alias on the proxy network). `policy` carries the mount trust:
+ * the app's admin decision plus the target node's allowed roots (ADR 0015); the agent enforces it.
  */
 export function buildDeployPayload(input: DeployPayloadInput): DeployPayload {
   const seen = new Set<string>();
@@ -82,6 +87,10 @@ export function buildDeployPayload(input: DeployPayloadInput): DeployPayload {
     network: {
       proxyNetwork: input.proxyNetwork,
       publishOnIp: onEdge ? null : input.nodeLanIp,
+    },
+    policy: {
+      trustedMounts: input.app.trustedMounts,
+      allowedBindRoots: [...input.nodeAllowedBindRoots],
     },
   };
   const parsed = DeployPayload.safeParse(candidate);

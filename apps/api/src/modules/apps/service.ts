@@ -13,6 +13,7 @@ import {
   type EnvVar,
   type EnvVarList,
   maskEnvVar,
+  roleAtLeast,
   type SetEnvVarsInput,
   SSE_EVENTS,
   type UpdateAppInput,
@@ -28,9 +29,9 @@ import {
   type AppTarget,
   type LogsRequest,
 } from '../../lib/agent-gateway.js';
-import type { RequestActor } from '../../lib/auth-context.js';
+import { effectiveRole, getActorPrincipal, type RequestActor } from '../../lib/auth-context.js';
 import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
-import { conflict, invalidField, notFound, ProblemError } from '../../lib/problem.js';
+import { conflict, forbidden, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
 import { announceStatus } from '../deployments/model.js';
@@ -74,6 +75,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     context: row.context,
     nodeId: row.nodeId,
     autoDeployReleases: row.autoDeployReleases,
+    trustedMounts: row.trustedMounts,
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -89,6 +91,18 @@ function toEnvVar(row: EnvVarRow, value: string): EnvVar {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   });
+}
+
+/**
+ * Trusted mounts are an explicit admin decision (ADR 0015): members may edit everything else of
+ * an app, but turning `trustedMounts` on or off needs the admin role.
+ */
+function assertMayChangeTrustedMounts(actor: RequestActor): void {
+  if (!roleAtLeast(effectiveRole(getActorPrincipal(actor)), 'admin')) {
+    throw forbidden(
+      'Only an admin can change trustedMounts: trusted apps may bind-mount host directories and reuse foreign volumes',
+    );
+  }
 }
 
 export interface AppsService {
@@ -233,6 +247,7 @@ export function createAppsService(deps: Deps): AppsService {
     async create(input, actor) {
       const slug = input.slug ?? deriveSlug(input.name);
       if (!slug) throw invalidField('body.slug', 'Cannot derive a slug from the name; provide one');
+      if (input.trustedMounts) assertMayChangeTrustedMounts(actor);
       await assertReferences(deps.db, input);
       const usesDockerfile = input.dockerfile !== undefined;
       let row: AppRow;
@@ -254,6 +269,7 @@ export function createAppsService(deps: Deps): AppsService {
               context: usesDockerfile ? (input.context ?? '.') : null,
               nodeId: input.nodeId,
               autoDeployReleases: input.autoDeployReleases,
+              trustedMounts: input.trustedMounts,
               createdAt: new Date(),
             })
             .returning();
@@ -265,6 +281,7 @@ export function createAppsService(deps: Deps): AppsService {
               slug,
               repository: `${created.repoOwner}/${created.repoName}`,
               nodeId: created.nodeId,
+              trustedMounts: created.trustedMounts,
             },
           });
           return created;
@@ -315,6 +332,7 @@ export function createAppsService(deps: Deps): AppsService {
     },
 
     async update(id, input, actor) {
+      if (input.trustedMounts !== undefined) assertMayChangeTrustedMounts(actor);
       await assertReferences(deps.db, input);
       const patch: Partial<AppRow> = {};
       if (input.name !== undefined) patch.name = input.name;
@@ -324,6 +342,7 @@ export function createAppsService(deps: Deps): AppsService {
       if (input.autoDeployReleases !== undefined) {
         patch.autoDeployReleases = input.autoDeployReleases;
       }
+      if (input.trustedMounts !== undefined) patch.trustedMounts = input.trustedMounts;
       if (input.composeFiles !== undefined) {
         Object.assign(patch, { composeFiles: input.composeFiles, dockerfile: null, context: null });
       } else if (input.dockerfile !== undefined) {
@@ -368,7 +387,13 @@ export function createAppsService(deps: Deps): AppsService {
         throw mapWriteError(error);
       }
       deps.events.publish({ topic: 'apps', action: 'updated', resourceId: id });
-      const runtimeKeys = ['composeFiles', 'dockerfile', 'context', 'connectionId'] as const;
+      const runtimeKeys = [
+        'composeFiles',
+        'dockerfile',
+        'context',
+        'connectionId',
+        'trustedMounts',
+      ] as const;
       if (runtimeKeys.some((key) => key in patch) && result.active) signalRedeploy(id, 'source');
       return toApp(result.after, result.active);
     },

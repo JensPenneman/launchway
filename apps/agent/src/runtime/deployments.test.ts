@@ -239,6 +239,34 @@ describe('DeploymentManager', () => {
     expect(fake.calls.some((c) => c.args.includes('build'))).toBe(false);
   });
 
+  it('applies the payload mount policy: trusted binds pass and are logged', async () => {
+    const bindConfig = () => ({
+      stdout: defaultConfig({
+        web: {
+          image: 'nginx',
+          networks: { default: null },
+          volumes: [{ type: 'bind', source: '/srv/data/trail', target: '/data', bind: {} }],
+        },
+      }),
+    });
+    const refused = fakeDocker();
+    refused.on.config = bindConfig;
+    manager(refused).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(results()[0]?.payload).toMatchObject({ error: { code: 'policy-violation' } });
+
+    messages = [];
+    const trusted = fakeDocker();
+    trusted.on.config = bindConfig;
+    manager(trusted).deploy(
+      'req-2',
+      payload({ policy: { trustedMounts: true, allowedBindRoots: ['/srv/data'] } }),
+    );
+    await waitFor(() => results().length === 1);
+    expect(results()[0]?.payload).toMatchObject({ outcome: 'succeeded' });
+    expect(logLines()).toContain('trusted mount: service web bind-mounts /srv/data/trail');
+  });
+
   it('fails with the last log lines when a command fails', async () => {
     const fake = fakeDocker();
     fake.on.build = (call) => {

@@ -155,6 +155,7 @@ export const platformHandlers = [
       agentVersion: null,
       protocolVersion: null,
       docker: null,
+      allowedBindRoots: [],
       lastSeenAt: null,
       joinedAt: null,
       createdAt: now(),
@@ -179,6 +180,7 @@ export const platformHandlers = [
     const node = db.nodes.find((item) => item.id === params.id);
     if (!node) return problem('not-found');
     Object.assign(node, data, { updatedAt: now() });
+    recordAudit('node.update', 'node', node.id, { fields: Object.keys(data) });
     db.emit('nodes', 'updated', node.id);
     return HttpResponse.json(node);
   }),

@@ -60,6 +60,7 @@ function toNode(row: NodeRow, edgeNodeId: NodeId | null): Node {
     agentVersion: row.agentVersion,
     protocolVersion: row.protocolVersion,
     docker: row.dockerInfo,
+    allowedBindRoots: row.allowedBindRoots,
     lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
     joinedAt: row.joinedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -149,20 +150,19 @@ export function createNodesService(deps: NodesDeps): NodesService {
     },
 
     async update(id, input, actor) {
+      const patch: Partial<Pick<NodeRow, 'name' | 'allowedBindRoots'>> = {};
+      if (input.name !== undefined) patch.name = input.name;
+      if (input.allowedBindRoots !== undefined) patch.allowedBindRoots = input.allowedBindRoots;
       let row: NodeRow;
       try {
         row = await deps.db.transaction(async (tx) => {
           const before = await loadRow(tx, id, true);
-          const [after] = await tx
-            .update(nodes)
-            .set({ name: input.name })
-            .where(eq(nodes.id, id))
-            .returning();
+          const [after] = await tx.update(nodes).set(patch).where(eq(nodes.id, id)).returning();
           if (!after) throw notFound(`Node ${id} does not exist`);
           await recordAudit(tx, actor, {
             action: 'node.update',
             target: { type: 'node', id },
-            summary: diffSummary(before, after, ['name']),
+            summary: diffSummary(before, after, Object.keys(patch)),
           });
           return after;
         });

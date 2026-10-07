@@ -102,6 +102,7 @@ function AppDetail() {
             ) : (
               <StatusBadge tone="neutral">not running</StatusBadge>
             )}
+            {data.trustedMounts && <StatusBadge tone="warning">trusted mounts</StatusBadge>}
           </span>
         }
       />

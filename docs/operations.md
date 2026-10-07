@@ -275,6 +275,43 @@ refuses the stored credential, the agent joins again with the token. Whoever
 can read the agent's volume can act as that node, and the agent is
 root-equivalent on its machine: protect both.
 
+### Trusted mounts (bind mounts and existing volumes)
+
+The Compose policy refuses host bind mounts, `external: true` volumes and
+custom volume names. To run a stack that needs them (for example one that
+bind-mounts a backup folder and reuses an existing database volume):
+
+1. As an admin, open the node and add its **Allowed bind-mount roots**, one
+   absolute directory per line, or `PATCH /api/v1/nodes/{id}` with
+   `{"allowedBindRoots": ["/srv/backups"]}`.
+2. As an admin, open the app's **Settings → Mounts** and turn on **Trusted
+   mounts**, or `PATCH /api/v1/apps/{id}` with `{"trustedMounts": true}`.
+3. Deploy again. The deployment log lists each mount that trust allowed; a
+   refused mount names the node's allowed roots.
+
+Roots and bind sources are paths **as the Docker daemon sees them**, which is
+not always the path on the machine:
+
+- On Linux it is the host path, e.g. `/srv/backups`.
+- On Windows with Docker Desktop (WSL 2), a Windows drive is mounted below
+  `/run/desktop/mnt/host/<drive letter in lower case>/`: `D:\Backups\trail`
+  is `/run/desktop/mnt/host/d/Backups/trail`. Use that form both as the root
+  and in the Compose file. To check a path, list it from a container:
+
+  ```powershell
+  docker run --rm -v /run/desktop/mnt/host/d/Backups:/probe alpine ls /probe
+  ```
+
+To reuse an existing volume, declare it `external: true` with its real name
+(`docker volume ls` lists the names), for example
+`volumes: { pgdata: { external: true, name: trail_pgdata } }`.
+
+Even trusted apps cannot mount the Docker socket, `/`, `/proc`, `/sys`,
+`/dev`, `/etc`, `/var/run` or `/run` (except below a deeper allowed root such
+as Docker Desktop's drive path), Docker's data directory, the agent workspace
+or the platform's own volumes, and cannot use `shared`/`slave` mount
+propagation. See [ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md).
+
 ## Upgrade
 
 In the install directory:

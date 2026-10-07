@@ -1,6 +1,6 @@
 import { type App, DisplayName, UpdateAppInput } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { Loader2, TriangleAlert } from 'lucide-react';
 import { useState } from 'react';
 import { updateApp } from '@/api/apps';
 import { connectionsQuery } from '@/api/github';
@@ -8,6 +8,7 @@ import { keys } from '@/api/keys';
 import { useApiMutation } from '@/api/mutation';
 import { nodesQuery } from '@/api/nodes';
 import { Field } from '@/components/field';
+import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -21,6 +22,7 @@ import {
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
+import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
 
 export function SettingsTab({ app }: { app: App }) {
@@ -60,137 +62,193 @@ export function SettingsTab({ app }: { app: App }) {
   const nameError = fieldError(DisplayName, name);
 
   return (
-    <form
-      className="flex flex-col gap-6"
-      onSubmit={(event) => {
-        event.preventDefault();
-        save.mutate();
-      }}
-    >
-      <Card>
-        <CardHeader>
-          <CardTitle>General</CardTitle>
-          <CardDescription>
-            The slug <code className="font-mono">{app.slug}</code> names containers and networks and
-            cannot change.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Field label="Name" error={nameError}>
-            <Input value={name} onChange={(event) => setName(event.target.value)} />
-          </Field>
-          <Field label="Description">
-            <Textarea
-              rows={2}
-              value={description}
-              onChange={(event) => setDescription(event.target.value)}
-            />
-          </Field>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Source</CardTitle>
-          <CardDescription>
-            {app.repository.owner}/{app.repository.name}; changes apply to the next deployment.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Field label="GitHub connection">
-            <Select value={connectionId} onValueChange={setConnectionId}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(connections.data?.items ?? []).map((connection) => (
-                  <SelectItem key={connection.id} value={connection.id}>
-                    {connection.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label="Build from">
-            <Select value={sourceKind} onValueChange={setSourceKind}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="compose">Compose files</SelectItem>
-                <SelectItem value="dockerfile">Dockerfile</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          {sourceKind === 'compose' ? (
-            <Field label="Compose files" description="One path per line, merged in order.">
+    <div className="flex flex-col gap-6">
+      <form
+        className="flex flex-col gap-6"
+        onSubmit={(event) => {
+          event.preventDefault();
+          save.mutate();
+        }}
+      >
+        <Card>
+          <CardHeader>
+            <CardTitle>General</CardTitle>
+            <CardDescription>
+              The slug <code className="font-mono">{app.slug}</code> names containers and networks
+              and cannot change.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Field label="Name" error={nameError}>
+              <Input value={name} onChange={(event) => setName(event.target.value)} />
+            </Field>
+            <Field label="Description">
               <Textarea
-                rows={3}
-                className="font-mono"
-                value={composeFiles}
-                onChange={(event) => setComposeFiles(event.target.value)}
+                rows={2}
+                value={description}
+                onChange={(event) => setDescription(event.target.value)}
               />
             </Field>
-          ) : (
-            <div className="grid gap-4 sm:grid-cols-2">
-              <Field label="Dockerfile">
-                <Input
-                  className="font-mono"
-                  value={dockerfile}
-                  onChange={(event) => setDockerfile(event.target.value)}
-                />
-              </Field>
-              <Field label="Build context">
-                <Input
-                  className="font-mono"
-                  value={context}
-                  onChange={(event) => setContext(event.target.value)}
-                />
-              </Field>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+          </CardContent>
+        </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Runtime</CardTitle>
-        </CardHeader>
-        <CardContent className="flex flex-col gap-4">
-          <Field label="Node" description="Moving an app takes effect with the next deployment.">
-            <Select value={nodeId} onValueChange={setNodeId}>
-              <SelectTrigger className="w-full">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {(nodes.data?.items ?? []).map((node) => (
-                  <SelectItem key={node.id} value={node.id}>
-                    {node.name} ({node.status})
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-          <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
-            <div>
-              <Label htmlFor="settings-auto-deploy">Deploy new releases automatically</Label>
-              <p className="text-xs text-muted-foreground">
-                Each published GitHub release starts a deployment.
-              </p>
+        <Card>
+          <CardHeader>
+            <CardTitle>Source</CardTitle>
+            <CardDescription>
+              {app.repository.owner}/{app.repository.name}; changes apply to the next deployment.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Field label="GitHub connection">
+              <Select value={connectionId} onValueChange={setConnectionId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(connections.data?.items ?? []).map((connection) => (
+                    <SelectItem key={connection.id} value={connection.id}>
+                      {connection.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <Field label="Build from">
+              <Select value={sourceKind} onValueChange={setSourceKind}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="compose">Compose files</SelectItem>
+                  <SelectItem value="dockerfile">Dockerfile</SelectItem>
+                </SelectContent>
+              </Select>
+            </Field>
+            {sourceKind === 'compose' ? (
+              <Field label="Compose files" description="One path per line, merged in order.">
+                <Textarea
+                  rows={3}
+                  className="font-mono"
+                  value={composeFiles}
+                  onChange={(event) => setComposeFiles(event.target.value)}
+                />
+              </Field>
+            ) : (
+              <div className="grid gap-4 sm:grid-cols-2">
+                <Field label="Dockerfile">
+                  <Input
+                    className="font-mono"
+                    value={dockerfile}
+                    onChange={(event) => setDockerfile(event.target.value)}
+                  />
+                </Field>
+                <Field label="Build context">
+                  <Input
+                    className="font-mono"
+                    value={context}
+                    onChange={(event) => setContext(event.target.value)}
+                  />
+                </Field>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Runtime</CardTitle>
+          </CardHeader>
+          <CardContent className="flex flex-col gap-4">
+            <Field label="Node" description="Moving an app takes effect with the next deployment.">
+              <Select value={nodeId} onValueChange={setNodeId}>
+                <SelectTrigger className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(nodes.data?.items ?? []).map((node) => (
+                    <SelectItem key={node.id} value={node.id}>
+                      {node.name} ({node.status})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </Field>
+            <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+              <div>
+                <Label htmlFor="settings-auto-deploy">Deploy new releases automatically</Label>
+                <p className="text-xs text-muted-foreground">
+                  Each published GitHub release starts a deployment.
+                </p>
+              </div>
+              <Switch
+                id="settings-auto-deploy"
+                checked={autoDeploy}
+                onCheckedChange={setAutoDeploy}
+              />
             </div>
-            <Switch
-              id="settings-auto-deploy"
-              checked={autoDeploy}
-              onCheckedChange={setAutoDeploy}
-            />
+          </CardContent>
+        </Card>
+
+        <Button type="submit" className="self-start" disabled={!input.success || save.isPending}>
+          {save.isPending && <Loader2 className="animate-spin" />}
+          Save settings
+        </Button>
+      </form>
+      <TrustedMountsCard app={app} />
+    </div>
+  );
+}
+
+/**
+ * The admin-only trust switch. It saves on its own (only `trustedMounts`), so the settings form
+ * of a member never sends it.
+ */
+function TrustedMountsCard({ app }: { app: App }) {
+  const isAdmin = useCan('admin');
+  const toggle = useApiMutation((trustedMounts: boolean) => updateApp(app.id, { trustedMounts }), {
+    invalidate: [keys.apps],
+    success: (updated) =>
+      updated.trustedMounts
+        ? 'Trusted mounts enabled; they apply to the next deployment'
+        : 'Trusted mounts disabled; they apply to the next deployment',
+  });
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Mounts</CardTitle>
+        <CardDescription>
+          Bind mounts, external volumes and custom volume names are refused unless an admin trusts
+          this app.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+          <div>
+            <Label htmlFor="settings-trusted-mounts">Trusted mounts</Label>
+            <p className="text-xs text-muted-foreground">
+              Allows bind mounts below the node's allowed bind-mount roots, external volumes and
+              custom volume names.{!isAdmin && ' Only an admin can change this.'}
+            </p>
           </div>
-        </CardContent>
-      </Card>
-
-      <Button type="submit" className="self-start" disabled={!input.success || save.isPending}>
-        {save.isPending && <Loader2 className="animate-spin" />}
-        Save settings
-      </Button>
-    </form>
+          <Switch
+            id="settings-trusted-mounts"
+            checked={app.trustedMounts}
+            disabled={!isAdmin || toggle.isPending}
+            onCheckedChange={(checked) => toggle.mutate(checked)}
+          />
+        </div>
+        {isAdmin && (
+          <Alert>
+            <TriangleAlert />
+            <AlertDescription>
+              A trusted app can read and change host files below those roots and other projects'
+              volumes, and anyone who can change its repository or Compose files gets the same
+              access. Trust only apps whose source you control.
+            </AlertDescription>
+          </Alert>
+        )}
+      </CardContent>
+    </Card>
   );
 }

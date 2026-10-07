@@ -1,4 +1,5 @@
 import { type DockerInfo, NODE_STATUSES } from '@launchway/contracts';
+import { sql } from 'drizzle-orm';
 import { inet, integer, jsonb, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 
@@ -17,6 +18,8 @@ export const nodes = pgTable(
     agentVersion: text('agent_version'),
     protocolVersion: integer('protocol_version'),
     dockerInfo: jsonb('docker_info').$type<DockerInfo>(),
+    /** Daemon-side directories trusted apps may bind-mount from (admin-controlled). */
+    allowedBindRoots: text('allowed_bind_roots').array().notNull().default(sql`'{}'::text[]`),
     /** Long-lived node credential (`lwya_...`), issued on join; rotate by replacing. */
     credentialHash: text('credential_hash'),
     credentialIssuedAt: tz('credential_issued_at'),

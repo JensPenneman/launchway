@@ -51,6 +51,16 @@ export function guard(minimum: UserRole): HttpResponse<string> | null {
   return null;
 }
 
+/** Like the API: only admins may change `App.trustedMounts`. */
+export function guardTrustedMounts(): HttpResponse<string> | null {
+  const role = db.role();
+  if (role && roleAtLeast(role, 'admin')) return null;
+  return problem(
+    'forbidden',
+    'Only an admin can change trustedMounts: trusted apps may bind-mount host directories and reuse foreign volumes',
+  );
+}
+
 /** Parses the JSON body with a contract schema; the error is a `validation-failed` problem. */
 export async function parseBody<T>(
   request: Request,

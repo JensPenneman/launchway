@@ -591,4 +591,87 @@ describe('apps and deployments against PostgreSQL', () => {
     const move = await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { nodeId: otherNode }));
     expect(move.status).toBe(409);
   });
+
+  it('lets only admins set trusted mounts and node roots, audits them and sends the policy', async () => {
+    const roots = ['/srv/backups', '/run/desktop/mnt/host/d/Backups'];
+    const nodeId = await insertNode('192.168.1.40');
+
+    const memberRoots = await api.request(
+      `/api/v1/nodes/${nodeId}`,
+      json('PATCH', { allowedBindRoots: roots }),
+    );
+    expect(memberRoots.status).toBe(403);
+    const setRoots = await adminApi.request(
+      `/api/v1/nodes/${nodeId}`,
+      json('PATCH', { allowedBindRoots: roots }),
+    );
+    expect(setRoots.status).toBe(200);
+    expect(await setRoots.json()).toMatchObject({ allowedBindRoots: roots });
+    const nodeRead = await (await api.request(`/api/v1/nodes/${nodeId}`)).json();
+    expect(nodeRead).toMatchObject({ allowedBindRoots: roots });
+    const [nodeAudit] = await db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.action, 'node.update'), eq(auditEvents.targetId, nodeId)));
+    expect(nodeAudit?.actorId).toBe(admin.user.id);
+    expect(nodeAudit?.summary).toEqual({ allowedBindRoots: { from: [], to: roots } });
+
+    const app = await createTestApp(nodeId);
+    expect(app.trustedMounts).toBe(false);
+    const memberTrust = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { trustedMounts: true }),
+    );
+    expect(memberTrust.status).toBe(403);
+    expect(await memberTrust.json()).toMatchObject({ type: 'forbidden' });
+
+    const trust = await adminApi.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { trustedMounts: true }),
+    );
+    expect(trust.status).toBe(200);
+    expect(await trust.json()).toMatchObject({ trustedMounts: true });
+    expect(await (await api.request(`/api/v1/apps/${app.id}`)).json()).toMatchObject({
+      trustedMounts: true,
+    });
+    const [appAudit] = await db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.action, 'app.update'), eq(auditEvents.targetId, app.id)));
+    expect(appAudit?.summary).toEqual({ trustedMounts: { from: false, to: true } });
+
+    // Members keep editing everything else of a trusted app.
+    const renamed = await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { name: 'Trail' }));
+    expect(renamed.status).toBe(200);
+
+    gateway.connect(nodeId);
+    const deployment = await deploy(app.id, 'v1.0.0');
+    const sent = gateway.deployed.find((d) => d.payload.deploymentId === deployment.id);
+    expect(sent?.payload.policy).toEqual({ trustedMounts: true, allowedBindRoots: roots });
+
+    const created = await adminApi.request(
+      '/api/v1/apps',
+      json('POST', {
+        name: unique('Trusted'),
+        connectionId: connection.id,
+        repository: app.repository,
+        nodeId: otherNode,
+        trustedMounts: true,
+      }),
+    );
+    expect(created.status).toBe(201);
+    const createdApp = (await created.json()) as App;
+    expect(createdApp.trustedMounts).toBe(true);
+    const [createAudit] = await db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.action, 'app.create'), eq(auditEvents.targetId, createdApp.id)));
+    expect(createAudit?.summary).toMatchObject({ trustedMounts: true });
+
+    gateway.connect(otherNode);
+    const untrusted = await createTestApp(otherNode);
+    const plain = await deploy(untrusted.id, 'v1.0.0');
+    const plainSent = gateway.deployed.find((d) => d.payload.deploymentId === plain.id);
+    expect(plainSent?.payload.policy).toEqual({ trustedMounts: false, allowedBindRoots: [] });
+  });
 });

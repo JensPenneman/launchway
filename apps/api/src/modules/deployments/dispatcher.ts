@@ -110,7 +110,7 @@ export function createDispatcher(deps: Deps): Dispatcher {
     const connection = await getConnection(deps.db, app.connectionId);
     const clone = await providerFor(deps, connection).cloneCredentials(app.repoOwner, app.repoName);
     const [node] = await deps.db
-      .select({ lanIp: nodes.lanIp })
+      .select({ lanIp: nodes.lanIp, allowedBindRoots: nodes.allowedBindRoots })
       .from(nodes)
       .where(eq(nodes.id, deployment.nodeId));
     const appRoutes = await deps.db
@@ -129,6 +129,7 @@ export function createDispatcher(deps: Deps): Dispatcher {
       ),
       proxyNetwork: deps.config.proxyNetwork,
       nodeLanIp: node?.lanIp ?? null,
+      nodeAllowedBindRoots: node?.allowedBindRoots ?? [],
       edgeNodeId,
     });
   }

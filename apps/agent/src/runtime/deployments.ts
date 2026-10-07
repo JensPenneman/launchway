@@ -510,11 +510,15 @@ class DeploymentRun {
       proxyNetwork: payload.network.proxyNetwork,
       routes: payload.routes,
       isInsideCheckout: (path) => isInsideReal(root, path),
+      projectDir: source.projectDir,
+      workspaceRoot: workspace.root,
+      mountPolicy: payload.policy,
     });
     if (policy.violations.length > 0) {
       for (const violation of policy.violations) this.#system(`policy: ${violation}`);
       throw new PolicyError(`Compose policy violation: ${policy.violations.join('; ')}`);
     }
+    for (const mount of policy.trustedMounts) this.#system(`trusted mount: ${mount}`);
     for (const port of policy.ports) {
       this.#system(
         `service ${port.service} publishes ${port.hostIp ? `${port.hostIp}:` : ''}${port.hostPort ?? '(ephemeral)'} -> ${port.containerPort}/${port.protocol}`,

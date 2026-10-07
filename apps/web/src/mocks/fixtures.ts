@@ -214,6 +214,7 @@ export function createNodes(): Node[] {
       agentVersion: '0.1.0',
       protocolVersion: 1,
       docker: docker(8, 32, 'x86_64'),
+      allowedBindRoots: ['/srv/data', '/run/desktop/mnt/host/d/Backups'],
       lastSeenAt: ago(0.2),
       joinedAt: ago(60 * 24 * 40),
       createdAt: ago(60 * 24 * 40),
@@ -230,6 +231,7 @@ export function createNodes(): Node[] {
       agentVersion: '0.1.0',
       protocolVersion: 1,
       docker: { ...docker(4, 8, 'aarch64'), kernelVersion: '6.12.43+deb13-arm64' },
+      allowedBindRoots: [],
       lastSeenAt: ago(0.3),
       joinedAt: ago(60 * 24 * 20),
       createdAt: ago(60 * 24 * 20),
@@ -246,6 +248,7 @@ export function createNodes(): Node[] {
       agentVersion: '0.1.0',
       protocolVersion: 1,
       docker: { ...docker(4, 4, 'aarch64'), operatingSystem: 'Raspberry Pi OS' },
+      allowedBindRoots: [],
       lastSeenAt: ago(60 * 7),
       joinedAt: ago(60 * 24 * 10),
       createdAt: ago(60 * 24 * 10),
@@ -339,7 +342,12 @@ export const NOTES_APP_ID = fixedId('app', 2);
 export const MAIL_APP_ID = fixedId('app', 3);
 
 export function createApps(): App[] {
-  const base = { connectionId: APP_CONNECTION_ID, context: null, autoDeployReleases: false };
+  const base = {
+    connectionId: APP_CONNECTION_ID,
+    context: null,
+    autoDeployReleases: false,
+    trustedMounts: false,
+  };
   return [
     {
       ...base,
@@ -352,6 +360,7 @@ export function createApps(): App[] {
       dockerfile: null,
       nodeId: EDGE_NODE_ID,
       autoDeployReleases: true,
+      trustedMounts: true,
       activeDeploymentId: fixedId('dep', 2),
       createdAt: ago(60 * 24 * 30),
       updatedAt: ago(60 * 24),

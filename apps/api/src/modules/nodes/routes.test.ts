@@ -30,6 +30,7 @@ describe('nodes routes (authorization and validation)', () => {
       for (const [path, init] of [
         ['/api/v1/nodes', json('POST', { name: 'nuc' })],
         [`/api/v1/nodes/${id}`, json('PATCH', { name: 'nuc' })],
+        [`/api/v1/nodes/${id}`, json('PATCH', { allowedBindRoots: ['/srv/data'] })],
         [`/api/v1/nodes/${id}`, json('DELETE')],
         [`/api/v1/nodes/${id}/join-token`, json('POST')],
         [`/api/v1/nodes/${id}/credential/rotate`, json('POST')],
@@ -47,6 +48,24 @@ describe('nodes routes (authorization and validation)', () => {
     const res = await app.request('/api/v1/nodes', json('POST', { name: '', extra: true }));
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ type: 'validation-failed' });
+  });
+
+  it.each([
+    [['/'], 'body.allowedBindRoots.0'],
+    [['srv/data'], 'body.allowedBindRoots.0'],
+    [['/srv/../etc'], 'body.allowedBindRoots.0'],
+    [['/srv/data/'], 'body.allowedBindRoots.0'],
+    [['/srv', '/srv'], 'body.allowedBindRoots'],
+    [Array.from({ length: 33 }, (_, i) => `/srv/r${i}`), 'body.allowedBindRoots'],
+  ])('refuses allowed bind roots %j', async (roots, path) => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
+    const res = await app.request(
+      `/api/v1/nodes/${id}`,
+      json('PATCH', { allowedBindRoots: roots }),
+    );
+    expect(res.status).toBe(400);
+    const problem = (await res.json()) as { errors: { path: string }[] };
+    expect(problem.errors.map((e) => e.path)).toContain(path);
   });
 });
 

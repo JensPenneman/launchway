@@ -95,6 +95,10 @@ This is a summary of the security requirements in section 14 of
   project (only `none` or `service:<name>`), no networks or volumes named
   outside the project, no security options besides `no-new-privileges`, and no
   capabilities outside a small allow-list.
+- Host bind mounts, external volumes and custom volume names are allowed only
+  for apps an admin marked `trustedMounts`, and bind mounts only below the
+  node's admin-set allowed roots (never the Docker socket, `/`, system paths
+  or the agent workspace; ADR 0015).
 
 ### Network exposure
 

@@ -34,6 +34,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
+import { BindRootsCard } from '@/features/nodes/bind-roots-card';
 import { JoinInstructions } from '@/features/nodes/join-instructions';
 import { useCan } from '@/hooks/use-me';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
@@ -241,6 +242,7 @@ function NodeDetail() {
             </CardContent>
           </Card>
         )}
+        <BindRootsCard key={data.allowedBindRoots.join('\n')} node={data} editable={isAdmin} />
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Apps on this node</CardTitle>

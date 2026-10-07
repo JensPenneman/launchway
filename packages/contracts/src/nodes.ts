@@ -11,6 +11,54 @@ export const NODE_JOIN_TOKEN_TTL_SECONDS = 15 * 60;
 export const NODE_CREDENTIAL_PREFIX = 'lwya_';
 export const NODE_CREDENTIAL_PATTERN = /^lwya_[0-9A-Za-z]{43}$/;
 
+/** Upper bound of `Node.allowedBindRoots`. */
+export const MAX_ALLOWED_BIND_ROOTS = 32;
+
+/**
+ * A directory below which trusted apps on the node may bind-mount host paths: an absolute,
+ * normalized POSIX path as the Docker daemon sees it (`/srv/data`, or on Docker Desktop
+ * `/run/desktop/mnt/host/d/Backups`). `/` itself, `.`/`..` segments, empty segments and a
+ * trailing slash are refused.
+ */
+export const BindRoot = z
+  .string()
+  .max(1024)
+  .refine((path) => path.startsWith('/'), 'Must be an absolute path (start with /)')
+  .refine((path) => path !== '/', 'The root directory / cannot be an allowed root')
+  .refine((path) => !path.endsWith('/'), 'Remove the trailing slash')
+  .refine(
+    (path) =>
+      !path
+        .split('/')
+        .slice(1)
+        .some((segment) => segment === '..'),
+    'Must not contain .. segments',
+  )
+  .refine(
+    (path) =>
+      !path
+        .split('/')
+        .slice(1)
+        .some((segment) => segment === '' || segment === '.'),
+    'Must not contain empty or . segments',
+  )
+  .refine(
+    (path) => ![...path].some((char) => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127),
+    'Must not contain control characters',
+  )
+  .openapi({ example: '/srv/data' });
+export type BindRoot = z.infer<typeof BindRoot>;
+
+export const AllowedBindRoots = z
+  .array(BindRoot)
+  .max(MAX_ALLOWED_BIND_ROOTS)
+  .refine((roots) => new Set(roots).size === roots.length, 'Roots must be unique')
+  .openapi({
+    description:
+      'Host directories (daemon-side absolute paths) that apps with trustedMounts may bind-mount from. Admin only.',
+    example: ['/srv/data', '/run/desktop/mnt/host/d/Backups'],
+  });
+
 export const NODE_STATUSES = ['pending', 'online', 'offline'] as const;
 export const NodeStatus = z.enum(NODE_STATUSES).openapi('NodeStatus', {
   description: 'pending: never joined; online: heartbeat within 45 s; offline: otherwise',
@@ -47,6 +95,7 @@ export const Node = z
     agentVersion: z.string().nullable(),
     protocolVersion: z.number().int().nullable(),
     docker: DockerInfo.nullable(),
+    allowedBindRoots: AllowedBindRoots,
     lastSeenAt: Timestamp.nullable(),
     joinedAt: Timestamp.nullable(),
     createdAt: Timestamp,
@@ -61,7 +110,11 @@ export type NodeList = z.infer<typeof NodeList>;
 export const CreateNodeInput = z.strictObject({ name: DisplayName }).openapi('CreateNodeInput');
 export type CreateNodeInput = z.infer<typeof CreateNodeInput>;
 
-export const UpdateNodeInput = z.strictObject({ name: DisplayName }).openapi('UpdateNodeInput');
+/** Changing `allowedBindRoots` requires the admin role (as does every node change). */
+export const UpdateNodeInput = z
+  .strictObject({ name: DisplayName.optional(), allowedBindRoots: AllowedBindRoots.optional() })
+  .refine((value) => Object.keys(value).length > 0, 'Provide at least one field')
+  .openapi('UpdateNodeInput');
 export type UpdateNodeInput = z.infer<typeof UpdateNodeInput>;
 
 export const NodeJoinToken = z

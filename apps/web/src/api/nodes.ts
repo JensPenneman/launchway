@@ -1,4 +1,10 @@
-import { CreatedNode, Node, NodeJoinToken, NodeList } from '@launchway/contracts';
+import {
+  CreatedNode,
+  Node,
+  NodeJoinToken,
+  NodeList,
+  type UpdateNodeInput,
+} from '@launchway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';
@@ -23,6 +29,11 @@ export function createNode(name: string) {
 
 export function renameNode(id: string, name: string) {
   return request(nodePath(id), { method: 'PATCH', body: { name }, schema: Node });
+}
+
+/** Partial update; `allowedBindRoots` replaces the whole list (admin only). */
+export function updateNode(id: string, input: UpdateNodeInput) {
+  return request(nodePath(id), { method: 'PATCH', body: input, schema: Node });
 }
 
 export function deleteNode(id: string) {

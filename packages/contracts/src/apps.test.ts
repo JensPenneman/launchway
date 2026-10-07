@@ -24,6 +24,7 @@ describe('app source', () => {
   it('defaults to compose.yaml when neither compose files nor a Dockerfile are given', () => {
     const input = CreateAppInput.parse(base);
     expect(input.autoDeployReleases).toBe(false);
+    expect(input.trustedMounts).toBe(false);
     expect(resolveAppSource(input)).toEqual({ kind: 'compose', composeFiles: ['compose.yaml'] });
   });
 

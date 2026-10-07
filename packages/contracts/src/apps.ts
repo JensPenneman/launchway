@@ -86,6 +86,12 @@ function checkSourceXor(value: SourceFields, ctx: z.RefinementCtx): void {
   }
 }
 
+/** The admin decision that lets an app's Compose project use host bind mounts and foreign volumes. */
+export const TrustedMounts = z.boolean().openapi({
+  description:
+    "Allows bind mounts below the node's allowedBindRoots, external volumes and custom volume names. Setting it requires the admin role.",
+});
+
 export const App = z
   .object({
     id: AppId,
@@ -103,6 +109,7 @@ export const App = z
     context: RelativePath.nullable().openapi({ description: 'Build context for dockerfile' }),
     nodeId: NodeId,
     autoDeployReleases: z.boolean(),
+    trustedMounts: TrustedMounts,
     activeDeploymentId: DeploymentId.nullable(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
@@ -130,6 +137,7 @@ export const CreateAppInput = z
     context: RelativePath.optional(),
     nodeId: NodeId,
     autoDeployReleases: z.boolean().default(false),
+    trustedMounts: TrustedMounts.default(false),
   })
   .superRefine(checkSourceXor)
   .openapi('CreateAppInput', {
@@ -148,6 +156,7 @@ export const UpdateAppInput = z
     context: RelativePath.optional(),
     nodeId: NodeId.optional(),
     autoDeployReleases: z.boolean().optional(),
+    trustedMounts: TrustedMounts.optional(),
   })
   .superRefine((value, ctx) => {
     checkSourceXor(value, ctx);

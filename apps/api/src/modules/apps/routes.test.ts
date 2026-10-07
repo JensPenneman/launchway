@@ -147,6 +147,44 @@ describe('apps, deployments and github routes: validation', () => {
   });
 });
 
+describe('trusted mounts', () => {
+  const valid = {
+    name: 'Trail',
+    connectionId: ghId,
+    repository: { owner: 'octo', name: 'trail' },
+    nodeId: generateId('node'),
+  };
+
+  it.each([
+    ['POST', '/api/v1/apps', { ...valid, trustedMounts: true }],
+    ['PATCH', `/api/v1/apps/${appId}`, { trustedMounts: true }],
+    ['PATCH', `/api/v1/apps/${appId}`, { trustedMounts: false }],
+  ])('%s %s refuses members with a clear 403', async (method, path, body) => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('member')) }));
+    const res = await app.request(path, request(method, body));
+    expect(res.status).toBe(403);
+    const problem = (await res.json()) as { type: string; detail: string };
+    expect(problem.type).toBe('forbidden');
+    expect(problem.detail).toMatch(/Only an admin can change trustedMounts/);
+  });
+
+  it('caps admins acting through a write-scoped token at member', async () => {
+    const principal = testPrincipal('admin');
+    const token = {
+      kind: 'token' as const,
+      user: principal.user,
+      tokenId: generateId('tok'),
+      scopes: ['write' as const],
+    };
+    const app = createApp(createTestDeps({ auth: fixedAuth(token) }));
+    const res = await app.request(
+      `/api/v1/apps/${appId}`,
+      request('PATCH', { trustedMounts: true }),
+    );
+    expect(res.status).toBe(403);
+  });
+});
+
 describe('github webhook route', () => {
   it('is public but rejects deliveries without GitHub headers', async () => {
     const res = await createApp(createTestDeps()).request('/api/v1/webhooks/github', {

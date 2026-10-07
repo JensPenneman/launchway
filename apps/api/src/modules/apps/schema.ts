@@ -32,6 +32,8 @@ export const apps = pgTable(
       .notNull()
       .references(() => nodes.id, { onDelete: 'restrict' }),
     autoDeployReleases: boolean('auto_deploy_releases').notNull().default(false),
+    /** Admin decision: bind mounts below the node's allowed roots and foreign volumes. */
+    trustedMounts: boolean('trusted_mounts').notNull().default(false),
     ...timestamps(),
   },
   (t) => [

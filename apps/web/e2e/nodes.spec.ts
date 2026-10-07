@@ -29,3 +29,18 @@ test('shows node details with Docker facts', async ({ page }) => {
   await page.getByRole('alertdialog').getByRole('button', { name: 'Rotate' }).click();
   await expect(page.getByText('New credential delivered to the agent')).toBeVisible();
 });
+
+test('edits the allowed bind-mount roots of a node', async ({ page }) => {
+  await page.goto(`/nodes/${EDGE_NODE_ID}`);
+  const roots = page.getByLabel('Roots');
+  await expect(roots).toHaveValue('/srv/data\n/run/desktop/mnt/host/d/Backups');
+  await expect(page.getByText('/run/desktop/mnt/host/<drive>')).toBeVisible();
+
+  await roots.fill('/srv/data\nbackups');
+  await expect(page.getByText('backups: Must be an absolute path (start with /)')).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save roots' })).toBeDisabled();
+
+  await roots.fill('/srv/data\n/mnt/backups');
+  await page.getByRole('button', { name: 'Save roots' }).click();
+  await expect(page.getByText('Allowed bind-mount roots saved')).toBeVisible();
+});

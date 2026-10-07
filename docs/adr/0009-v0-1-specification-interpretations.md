@@ -31,10 +31,10 @@ interpretations contradicts the specification; they narrow it.
      `cancelled`.
    - The agent prunes old checkouts itself after reporting a result and keeps
      the last two, since the checkouts live on the node (§4, step 5).
-   - `SLIPWAY_SERVER_URL` is a base URL; the agent appends `/api/agent/ws`.
+   - `LAUNCHWAY_SERVER_URL` is a base URL; the agent appends `/api/agent/ws`.
 3. **Local node bootstrap.** The installer generates
-   `SLIPWAY_LOCAL_JOIN_TOKEN` and passes it to the API, and to the bundled
-   agent as `SLIPWAY_JOIN_TOKEN`. The API accepts it once, only from the
+   `LAUNCHWAY_LOCAL_JOIN_TOKEN` and passes it to the API, and to the bundled
+   agent as `LAUNCHWAY_JOIN_TOKEN`. The API accepts it once, only from the
    Docker network, for the local edge node. It has no 15-minute expiry.
 4. **Problem types (§10).** RFC 9457 `type` values are the bare stable slugs,
    as relative URI references: `"type": "not-found"`.
@@ -46,14 +46,14 @@ interpretations contradicts the specification; they narrow it.
    stored as a SHA-256 hash; each session also has a separate public `sess_…`
    ID. Join tokens, node credentials, invitation tokens and API tokens are
    likewise stored hashed.
-8. **Keys (§13, §14).** Subkeys are derived from `SLIPWAY_SECRET_KEY` with
+8. **Keys (§13, §14).** Subkeys are derived from `LAUNCHWAY_SECRET_KEY` with
    HKDF-SHA256, with separate `info` labels for secret encryption and cookie
    signing. Ciphertexts have the format `v1.<iv>.<ciphertext>.<tag>`
    (base64url), with optional additional authenticated data that binds a
    value to its owning record.
-9. **Extra configuration (§13).** `SLIPWAY_ACME_EMAIL` is the default ACME
-   e-mail and also feeds the Caddy bootstrap file. `SLIPWAY_LOCAL_JOIN_TOKEN`
-   is described in point 3. `SLIPWAY_WEB_ROOT` is the directory of the built
+9. **Extra configuration (§13).** `LAUNCHWAY_ACME_EMAIL` is the default ACME
+   e-mail and also feeds the Caddy bootstrap file. `LAUNCHWAY_LOCAL_JOIN_TOKEN`
+   is described in point 3. `LAUNCHWAY_WEB_ROOT` is the directory of the built
    UI (image default `/app/web`).
 10. **Supporting tables (§2).** Besides the listed entities, the schema stores
     deployment log lines and GitHub webhook deliveries (replay protection).
@@ -72,8 +72,8 @@ interpretations contradicts the specification; they narrow it.
     `superseded` before it becomes `running`, in one transaction.
 15. **Reserved names on the proxy network (§3).** Compose registers every
     service name as a DNS alias on each network a service joins. App slugs
-    `slipway`, `caddy`, `db` and `agent` and routed service names `slipway`,
-    `slipway-agent`, `caddy` and `db` are therefore rejected by the contracts,
+    `launchway`, `caddy`, `db` and `agent` and routed service names `launchway`,
+    `launchway-agent`, `caddy` and `db` are therefore rejected by the contracts,
     so an app cannot capture traffic meant for the platform.
 16. **Trusted proxies in the bundled compose file (§13).** The API default
     remains `10.210.0.0/24`, but `deploy/compose.yaml` trusts only Caddy's fixed
@@ -82,13 +82,13 @@ interpretations contradicts the specification; they narrow it.
 17. **Image builds (§12).** `pnpm deploy` runs with
     `--config.inject-workspace-packages=true` in the Dockerfiles only. pnpm 11
     makes deploys self-contained only with injected workspace packages, while
-    development keeps them symlinked for the `@slipway/source` live types.
+    development keeps them symlinked for the `@launchway/source` live types.
 
 ## Consequences
 
 - A crashed container does not change the state of a `running` deployment;
   the agent reports it through `app.status`.
-- The protocol additions are part of the `@slipway/contracts` schemas, so the
+- The protocol additions are part of the `@launchway/contracts` schemas, so the
   API and the agent cannot disagree about them.
 - The local join token never leaves the host and works only from the Docker
   network, so it needs no expiry; once used, it cannot register another node.

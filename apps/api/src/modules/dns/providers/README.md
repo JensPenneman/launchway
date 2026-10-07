@@ -1,6 +1,6 @@
 # DNS providers
 
-Slipway talks to DNS hosts through one interface, `DnsProvider` (`types.ts`). Each provider
+Launchway talks to DNS hosts through one interface, `DnsProvider` (`types.ts`). Each provider
 kind is a registry entry (`DnsProviderDefinition`) in `registry.ts`:
 
 | Field | Purpose |
@@ -40,7 +40,7 @@ with a record carrying an `instruction` for the user. It does not run the contra
 - `cloudflare`: API token with `Zone:Read` and `DNS:Edit`. Zones and A/AAAA/CNAME/TXT records,
   `proxied`, custom TTLs (`1` = automatic). `verifyCredentials` calls `/user/tokens/verify` and
   then lists zones, so a token without zone access is rejected when the account is added.
-- `manual`: no credentials. Slipway shows which records to create and only verifies them.
+- `manual`: no credentials. Launchway shows which records to create and only verifies them.
 
 Tests use the in-memory provider in `apps/api/test/support/memory-dns.ts`; register it under a
 unique kind with `dnsProviders.register(memoryProviderDefinition(kind, state))`.

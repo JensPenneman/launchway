@@ -1,6 +1,6 @@
-# Contributing to Slipway
+# Contributing to Launchway
 
-Thank you for helping. Slipway is pre-1.0 and changes quickly. The
+Thank you for helping. Launchway is pre-1.0 and changes quickly. The
 specification of the first release is
 [docs/architecture.md](docs/architecture.md); design questions are settled
 there or in an [architecture decision record](docs/adr/).
@@ -28,7 +28,7 @@ corepack enable          # activates the pnpm version pinned in package.json
 pnpm install             # installs dependencies and the Git hooks
 docker compose -f compose.dev.yaml up -d
 cp apps/api/.env.example apps/api/.env
-echo "SLIPWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
+echo "LAUNCHWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
 pnpm dev
 ```
 
@@ -99,7 +99,7 @@ feat(agent)!: require agent protocol version 2
 `feat` and `fix` commits and breaking changes determine the next version;
 before 1.0, a breaking change raises the minor version. The changelog lists
 `feat`, `fix`, `perf`, `revert` and `docs` commits, so write the summary for
-the people who run Slipway.
+the people who run Launchway.
 
 ## Git hooks
 
@@ -144,7 +144,7 @@ migration that has been merged to `main`; add a new one instead.
   are not committed. After changing a route or a schema, run
   `pnpm openapi:generate` and `pnpm typecheck`.
 - Problem `type` slugs are stable: add new ones, never rename existing ones.
-- Agent protocol messages are defined in `@slipway/contracts`. Additive
+- Agent protocol messages are defined in `@launchway/contracts`. Additive
   changes stay compatible because unknown message types are ignored; an
   incompatible change needs a new protocol version
   ([ADR 0004](docs/adr/0004-agent-outbound-websocket.md)).
@@ -154,7 +154,7 @@ migration that has been merged to `main`; add a new one instead.
 - Versions are exact. pnpm reads its settings from `pnpm-workspace.yaml`, and
   versions shared by several packages are defined once in its `catalog`.
 - Add a dependency only to the package that uses it, for example
-  `pnpm --filter @slipway/api add <name>`.
+  `pnpm --filter @launchway/api add <name>`.
 - pnpm holds back versions younger than its minimum release age, and runs
   install scripts only for packages allowed in `allowBuilds`.
 - TypeScript is deliberately pinned to 5.9.3; do not upgrade it to 7.x
@@ -166,8 +166,8 @@ migration that has been merged to `main`; add a new one instead.
 Releases are automated with release-please. It keeps a release pull request
 open that collects the changelog from the Conventional Commits on `main`.
 Merging that pull request tags `vX.Y.Z`, publishes the GitHub Release and
-builds the multi-arch, signed images `ghcr.io/jenspenneman/slipway` and
-`ghcr.io/jenspenneman/slipway-agent`. Every merge to `main` also publishes
+builds the multi-arch, signed images `ghcr.io/jenspenneman/launchway` and
+`ghcr.io/jenspenneman/launchway-agent`. Every merge to `main` also publishes
 `edge` images. Rebuilding an older release (Images workflow, `version` input)
 moves `latest`, `X.Y` and `X` only when no newer release has them.
 
@@ -179,10 +179,10 @@ One-time repository settings, checked before a release is announced:
 
 - **Private vulnerability reporting** is on (Settings → Code security), so
   the form [SECURITY.md](SECURITY.md) links to exists.
-- **Package visibility:** GHCR creates `slipway` and `slipway-agent` as
+- **Package visibility:** GHCR creates `launchway` and `launchway-agent` as
   private packages on their first push. Make both public (Package settings →
   Change visibility) and link them to the repository; check with
-  `docker logout ghcr.io && docker manifest inspect ghcr.io/jenspenneman/slipway:edge`.
+  `docker logout ghcr.io && docker manifest inspect ghcr.io/jenspenneman/launchway:edge`.
 - **Release pull request CI:** a pull request opened with `GITHUB_TOKEN`
   starts no workflows. Store a GitHub App or fine-grained token with
   `contents` and `pull-requests` write access as the `RELEASE_PLEASE_TOKEN`

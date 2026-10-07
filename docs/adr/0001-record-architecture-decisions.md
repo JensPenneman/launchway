@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Slipway is built by several contributors, people and automated agents, working
+Launchway is built by several contributors, people and automated agents, working
 in parallel against one specification, [architecture.md](../architecture.md).
 That document describes *what* v0.1 is. It does not record *why* a choice was
 made, which alternatives were rejected, or how an ambiguous point was settled

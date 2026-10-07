@@ -45,13 +45,13 @@ in the images.
   `TypeError: Cannot read properties of undefined (reading 'createKeywordTypeNode')`.
   The workspace therefore pins TypeScript 5.9.3. We revisit this when
   `openapi-typescript` supports TypeScript 7.
-- **Shared configuration:** `@slipway/tsconfig` enables `strict`,
+- **Shared configuration:** `@launchway/tsconfig` enables `strict`,
   `noUncheckedIndexedAccess`, `exactOptionalPropertyTypes`,
   `verbatimModuleSyntax` and `erasableSyntaxOnly`, with `NodeNext` resolution
   for Node packages and `Bundler` for the web app. Packages are connected with
   project references.
 - **Live types:** workspace packages export `src/*.ts` under the custom
-  condition `@slipway/source` and compiled `dist/` by default. Vite, Vitest
+  condition `@launchway/source` and compiled `dist/` by default. Vite, Vitest
   and tsx enable the condition in development; production builds and Docker
   images resolve `dist/`. Type checking goes through the project references.
 
@@ -61,7 +61,7 @@ in the images.
   in `.npmrc` are not read by pnpm 11.
 - One fast tool and one configuration for linting and formatting, at the cost
   of rules that only exist in larger plugin ecosystems.
-- Changes to `@slipway/contracts` reach the API, the agent and the UI
+- Changes to `@launchway/contracts` reach the API, the agent and the UI
   immediately in development. Because development and production resolve
   different files, the `exports` maps must list every entry point for both.
 - `erasableSyntaxOnly` rules out enums, namespaces and parameter properties,

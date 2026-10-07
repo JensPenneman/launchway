@@ -1,9 +1,9 @@
-# Slipway
+# Launchway
 
-[![CI](https://github.com/JensPenneman/slipway/actions/workflows/ci.yml/badge.svg)](https://github.com/JensPenneman/slipway/actions/workflows/ci.yml)
+[![CI](https://github.com/JensPenneman/launchway/actions/workflows/ci.yml/badge.svg)](https://github.com/JensPenneman/launchway/actions/workflows/ci.yml)
 
-Slipway is a self-hosted deployment platform. Link a GitHub repository, pick a
-release, and Slipway builds it, runs it on one of your machines, gives it a
+Launchway is a self-hosted deployment platform. Link a GitHub repository, pick a
+release, and Launchway builds it, runs it on one of your machines, gives it a
 domain with TLS, and keeps DNS pointed at your home connection. Everything is
 reachable through a REST API; the web UI is only a client of that API.
 
@@ -25,7 +25,7 @@ reachable through a REST API; the web UI is only a client of that API.
   deployed the same way, from a small repository with a Compose file that
   pulls the upstream images.
 - **Compose is the runtime contract.** An app repository carries a Compose
-  file, or only a `Dockerfile`. Slipway adds routing, networks, environment
+  file, or only a `Dockerfile`. Launchway adds routing, networks, environment
   and lifecycle; it does not define an app manifest of its own.
 - **Multi-node by design.** The control plane manages nodes, and each node
   runs an agent that owns Docker on that machine. A new installation runs the
@@ -38,7 +38,7 @@ reachable through a REST API; the web UI is only a client of that API.
 
 ## Features in v0.1
 
-- **Deployments from GitHub.** Connect through a GitHub App that Slipway
+- **Deployments from GitHub.** Connect through a GitHub App that Launchway
   creates for you (with signed, deduplicated webhooks), or through a
   fine-grained personal access token. Deploy a release, a branch or a commit;
   every deployment is pinned to a commit SHA, one deployment per app runs at a
@@ -90,32 +90,32 @@ hosts. See
      ▼                                     │
 ┌──────────── edge node ───────────────────┼───────────────────────────────────┐
 │                                          │                                   │
-│  caddy ◀── Caddyfile via admin API ── slipway (API + web UI) ──▶ PostgreSQL  │
+│  caddy ◀── Caddyfile via admin API ── launchway (API + web UI) ──▶ PostgreSQL│
 │    │                                            ▲                            │
-│    │ slipway-proxy network                      │ WebSocket                  │
+│    │ launchway-proxy network                    │ WebSocket                  │
 │    ├──▶ app containers on this node             │                            │
 │    └──▶ <lan-ip>:<port> on other nodes          │                            │
 │                                                 │                            │
-│  slipway-agent ── Docker socket ── Docker       │                            │
+│  launchway-agent ── Docker socket ── Docker     │                            │
 │        └────────────────────────────────────────┘                            │
 └──────────────────────────────────────────────────────────────────────────────┘
-┌──────── node 2 ───────────┐   Agents connect outbound over WebSocket,
-│  slipway-agent ── Docker  │   so nodes behind NAT or on other networks
-└───────────────────────────┘   need no inbound port for the agent.
+┌──────── node 2 ─────────────┐   Agents connect outbound over WebSocket,
+│  launchway-agent ── Docker  │   so nodes behind NAT or on other networks
+└─────────────────────────────┘   need no inbound port for the agent.
 ```
 
 | Component | Source | Runs as |
 |---|---|---|
-| Control plane API | `apps/api` | Container `slipway`. Serves the API at `/api/v1` and the web UI at `/`. |
-| Web UI | `apps/web` | Static files built into the `slipway` image; same origin as the API. |
-| Node agent | `apps/agent` | Container `slipway-agent` on every node, with access to the Docker socket. |
+| Control plane API | `apps/api` | Container `launchway`. Serves the API at `/api/v1` and the web UI at `/`. |
+| Web UI | `apps/web` | Static files built into the `launchway` image; same origin as the API. |
+| Node agent | `apps/agent` | Container `launchway-agent` on every node, with access to the Docker socket. |
 | Edge proxy | `caddy:2-alpine` | Container on the edge node; the only owner of ports 80 and 443. |
 | Database | `postgres:18-alpine` | Container on the control-plane node. |
 
 To deploy, the API resolves the chosen release to a commit and sends a
 `deploy` message to the agent of the app's node. The agent clones that
 commit, checks the Compose policy, adds an override file that attaches the
-routed services to the `slipway-proxy` network, then builds and starts the
+routed services to the `launchway-proxy` network, then builds and starts the
 project with `docker compose`, streaming every line of output back. Once the
 deployment is `running`, the API supersedes the previous one and loads a new
 Caddyfile into the edge.
@@ -131,31 +131,31 @@ Docker Desktop on macOS or Windows. To serve public domains, forward TCP ports
 Linux and macOS:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.sh | sh -s -- --email you@example.com
+curl -fsSL https://raw.githubusercontent.com/JensPenneman/launchway/main/deploy/install.sh | sh -s -- --email you@example.com
 ```
 
 Windows (Docker Desktop, PowerShell):
 
 ```powershell
-$env:SLIPWAY_ACME_EMAIL = 'you@example.com'
-irm https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.ps1 | iex
+$env:LAUNCHWAY_ACME_EMAIL = 'you@example.com'
+irm https://raw.githubusercontent.com/JensPenneman/launchway/main/deploy/install.ps1 | iex
 ```
 
 The e-mail address is used for the Let's Encrypt account. The installer
-checks Docker, creates the `slipway-proxy` network (`10.210.0.0/24`), writes
-an `.env` file with generated secrets (`SLIPWAY_SECRET_KEY`,
-`POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN`, `SLIPWAY_SETUP_TOKEN`),
+checks Docker, creates the `launchway-proxy` network (`10.210.0.0/24`), writes
+an `.env` file with generated secrets (`LAUNCHWAY_SECRET_KEY`,
+`POSTGRES_PASSWORD`, `LAUNCHWAY_LOCAL_JOIN_TOKEN`, `LAUNCHWAY_SETUP_TOKEN`),
 pulls the images, starts the stack with `docker compose up -d --wait` and
 prints a one-time setup link on port 3000. Open it and create the owner
 account; setup refuses to run without the token in that link.
 
-`install.sh` accepts `--dir` (install directory; `/opt/slipway` when run as
-root on Linux, otherwise `~/slipway`), `--email`, `--port` (host port of the
+`install.sh` accepts `--dir` (install directory; `/opt/launchway` when run as
+root on Linux, otherwise `~/launchway`), `--email`, `--port` (host port of the
 API and UI, default `3000`) and `--version`. To read the script before
 running it, download it first, then run
 `sh install.sh --email you@example.com`.
 
-Keep the `.env` file safe: without `SLIPWAY_SECRET_KEY`, the encrypted secrets
+Keep the `.env` file safe: without `LAUNCHWAY_SECRET_KEY`, the encrypted secrets
 in the database cannot be recovered. Upgrades, backups and adding nodes are
 covered in [docs/operations.md](docs/operations.md).
 
@@ -187,7 +187,7 @@ corepack enable                            # or install pnpm 11 yourself
 pnpm install                               # also installs the Git hooks
 docker compose -f compose.dev.yaml up -d   # PostgreSQL 18 on localhost:5432
 cp apps/api/.env.example apps/api/.env
-echo "SLIPWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
+echo "LAUNCHWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
 pnpm dev
 ```
 
@@ -195,7 +195,7 @@ pnpm dev
   `/api/openapi.json` and interactive docs at `/api/docs`.
 - Web UI dev server: <http://localhost:5173>, which proxies `/api` to the API.
 
-The development database uses `slipway` as user, password and database name.
+The development database uses `launchway` as user, password and database name.
 `pnpm check` runs linting, type checking, knip and the unit tests. Read
 [docs/development.md](docs/development.md) for the code conventions and
 [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow.
@@ -204,12 +204,12 @@ The development database uses `slipway` as user, password and database name.
 
 ```text
 apps/
-  api/          @slipway/api         Control plane: Hono on Node 24, Drizzle ORM, PostgreSQL
-  agent/        @slipway/agent       Node agent: clones, checks, builds and runs Compose projects
-  web/          @slipway/web         Web UI: React 19, Vite, TanStack Router and Query, Tailwind CSS v4
+  api/          @launchway/api       Control plane: Hono on Node 24, Drizzle ORM, PostgreSQL
+  agent/        @launchway/agent     Node agent: clones, checks, builds and runs Compose projects
+  web/          @launchway/web       Web UI: React 19, Vite, TanStack Router and Query, Tailwind CSS v4
 packages/
-  contracts/    @slipway/contracts   Zod schemas and types shared by the API, the agent and the UI
-  tsconfig/     @slipway/tsconfig    Shared TypeScript configuration
+  contracts/    @launchway/contracts Zod schemas and types shared by the API, the agent and the UI
+  tsconfig/     @launchway/tsconfig  Shared TypeScript configuration
 deploy/                              Production Compose files, Caddyfile, .env.example, installers
 docs/                                Architecture, development and operations guides, ADRs
 compose.dev.yaml                     PostgreSQL for local development
@@ -231,5 +231,5 @@ compose.dev.yaml                     PostgreSQL for local development
 
 ## License
 
-Slipway is licensed under the [Apache License 2.0](LICENSE).
+Launchway is licensed under the [Apache License 2.0](LICENSE).
 Copyright 2026 Jens Penneman.

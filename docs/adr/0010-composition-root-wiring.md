@@ -33,7 +33,7 @@ which domains it serves, and the background jobs need a start order.
    deployment twice.
 3. **Agent tokens are not API credentials.** The global `authenticate`
    middleware also runs for `GET /api/agent/ws`. The API token resolver
-   treats `Authorization: Bearer slpn_…` / `slpa_…` as anonymous instead of
+   treats `Authorization: Bearer lwyn_…` / `lwya_…` as anonymous instead of
    answering 401, and the agent socket checks those tokens itself. Before this,
    every agent was refused.
 4. **Start order.** Migrations, then `Deps`, then the HTTP app; then
@@ -45,10 +45,10 @@ which domains it serves, and the background jobs need a start order.
    starting inside their modules, guarded by `config.env !== 'test'`, as their
    author built them.
 5. **The bundled agent can always rejoin.** The local bootstrap token
-   (`SLIPWAY_LOCAL_JOIN_TOKEN`) has no expiry and stays valid after use, as the
+   (`LAUNCHWAY_LOCAL_JOIN_TOKEN`) has no expiry and stays valid after use, as the
    nodes module implements it. When the server refuses an agent's stored
    credential (HTTP 401 on the upgrade, or close code `unauthorized`) and the
-   agent has `SLIPWAY_JOIN_TOKEN`, it joins again with that token. This
+   agent has `LAUNCHWAY_JOIN_TOKEN`, it joins again with that token. This
    recovers the local node after a database restore into a new installation.
    For other nodes the one-time join token was used up, so nothing changes for
    them. This narrows ADR 0009, point 3: the bootstrap token is accepted more

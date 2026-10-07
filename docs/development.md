@@ -1,6 +1,6 @@
 # Development guide
 
-How to work on Slipway: setup, commands, how the workspace fits together, and the conventions
+How to work on Launchway: setup, commands, how the workspace fits together, and the conventions
 every module follows. The architecture contract is [architecture.md](architecture.md); decisions
 are recorded in [adr/](adr/).
 
@@ -16,9 +16,9 @@ are recorded in [adr/](adr/).
 
 ```sh
 pnpm install                                   # also installs the git hooks (lefthook)
-docker compose -f compose.dev.yaml up -d       # PostgreSQL 18 on localhost:5432 (slipway/slipway)
+docker compose -f compose.dev.yaml up -d       # PostgreSQL 18 on localhost:5432 (launchway/launchway)
 cp apps/api/.env.example apps/api/.env
-echo "SLIPWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
+echo "LAUNCHWAY_SECRET_KEY=$(openssl rand -base64 32)" >> apps/api/.env
 pnpm dev                                       # API on :3000, web UI on :5173 (proxies /api)
 ```
 
@@ -32,9 +32,9 @@ pnpm dev                                       # API on :3000, web UI on :5173 (
 `queued`. To run one against your local API (it needs Docker):
 
 1. In the UI, open Nodes → Add node and copy the join token.
-2. `cp apps/agent/.env.example apps/agent/.env`, then set `SLIPWAY_SERVER_URL=ws://localhost:3000`
-   and `SLIPWAY_JOIN_TOKEN` to the copied token.
-3. `pnpm --filter @slipway/agent dev`. The agent stores its node credential and the checkouts in
+2. `cp apps/agent/.env.example apps/agent/.env`, then set `LAUNCHWAY_SERVER_URL=ws://localhost:3000`
+   and `LAUNCHWAY_JOIN_TOKEN` to the copied token.
+3. `pnpm --filter @launchway/agent dev`. The agent stores its node credential and the checkouts in
    `apps/agent/.workspace/` (git-ignored).
 
 ## Commands
@@ -47,14 +47,14 @@ pnpm dev                                       # API on :3000, web UI on :5173 (
 | `pnpm typecheck` | `tsc` for every package (project references) |
 | `pnpm test` | Unit tests (Vitest), per package |
 | `pnpm test:integration` | Integration tests: the API against PostgreSQL (Testcontainers, or `TEST_DATABASE_URL`) and a Caddy container; the agent against the local Docker daemon (pulls `traefik/whoami`) |
-| `pnpm test:e2e` | Playwright smoke tests of the web UI against its mock API (`pnpm --filter @slipway/web exec playwright install chromium` once) |
+| `pnpm test:e2e` | Playwright smoke tests of the web UI against its mock API (`pnpm --filter @launchway/web exec playwright install chromium` once) |
 | `pnpm knip` | Unused files, exports and dependencies |
 | `pnpm check` | lint + typecheck + knip + unit tests (run before pushing; the pre-push hook runs typecheck + unit tests) |
 | `pnpm db:generate` | drizzle-kit: next SQL migration from the schema (see the rule below) |
 | `pnpm db:migrate` | Apply migrations to `DATABASE_URL` |
 | `pnpm openapi:generate` | Export the OpenAPI document and regenerate the web client types |
 
-Single package: `pnpm --filter @slipway/api test`, `pnpm --filter @slipway/web dev`, ...
+Single package: `pnpm --filter @launchway/api test`, `pnpm --filter @launchway/web dev`, ...
 
 ## How the workspace fits together
 
@@ -67,7 +67,7 @@ apps/web             React SPA; API client generated from the OpenAPI document
 ```
 
 - **Live types.** Workspace packages export their TypeScript sources under the custom export
-  condition `@slipway/source` and compiled `dist/` otherwise. Vite, Vitest and tsx run with that
+  condition `@launchway/source` and compiled `dist/` otherwise. Vite, Vitest and tsx run with that
   condition, so a change in `packages/contracts` is visible immediately without rebuilding.
   Type checking goes through TypeScript project references (`tsc -b` builds `contracts` first
   when needed). Production code and Docker images use `dist/`.
@@ -166,7 +166,7 @@ Rules:
 
 - Every route has an `operationId` (camelCase verb + noun; it becomes the client method name), a
   tag, a summary, `security` (`AUTHENTICATED` or `PUBLIC`) and documented problem responses.
-- Request and response schemas come from `@slipway/contracts`. Do not declare ad-hoc Zod
+- Request and response schemas come from `@launchway/contracts`. Do not declare ad-hoc Zod
   schemas in route files, except for module-internal ones (as `health` does).
 - Return API shapes with ISO timestamps (`date.toISOString()`); map database rows in one
   `to<Entity>(row)` function per entity.
@@ -207,7 +207,7 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
   the SQL and commit it together with the files under `apps/api/drizzle/meta/` in the same change
   (CI fails when the schema and the committed migrations differ). Never edit or delete a migration
   that was merged to `main`; add a new one. To try a schema quickly, apply it to a throwaway
-  database with `pnpm --filter @slipway/api exec drizzle-kit push` (never against shared data).
+  database with `pnpm --filter @launchway/api exec drizzle-kit push` (never against shared data).
 
 ### Errors
 
@@ -224,9 +224,9 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 ### Authentication and authorization
 
 - `c.var.principal` is set for every request by `Deps.auth` (an `AuthResolver`). The server uses
-  `createAuthResolver` (`modules/auth/resolver.ts`): a bearer `slp_...` token (hashed lookup,
-  expiry, scopes, `lastUsedAt`) takes precedence over the `slipway_session` cookie (hashed token,
-  30-day sliding expiry). Join tokens and node credentials (`slpn_...`, `slpa_...`) are left to the
+  `createAuthResolver` (`modules/auth/resolver.ts`): a bearer `lwy_...` token (hashed lookup,
+  expiry, scopes, `lastUsedAt`) takes precedence over the `launchway_session` cookie (hashed token,
+  30-day sliding expiry). Join tokens and node credentials (`lwyn_...`, `lwya_...`) are left to the
   agent socket, which checks them itself. Unit tests keep `anonymousAuthResolver` or `fixedAuth`.
 - Unsafe requests that carry the session cookie must send `Sec-Fetch-Site: same-origin`/`none` or
   an `Origin` equal to the platform origin (`lib/csrf.ts`); browsers do this, scripts should use
@@ -252,8 +252,8 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 ### Secrets and tokens
 
 - `deps.secrets.encrypt(plaintext, context)` / `decrypt(ciphertext, context)`: AES-256-GCM with a
-  key derived from `SLIPWAY_SECRET_KEY`. Always pass a context naming the owning record.
-- `generateToken(prefix)` creates `slp_` / `slpn_` / `slpa_` / `slpi_` tokens (43 base62
+  key derived from `LAUNCHWAY_SECRET_KEY`. Always pass a context naming the owning record.
+- `generateToken(prefix)` creates `lwy_` / `lwyn_` / `lwya_` / `lwyi_` tokens (43 base62
   characters). Store `hashToken(token)`, show `tokenHint(token)`, and compare with `safeEqual`.
 
 ### Pagination, streaming and WebSockets
@@ -316,19 +316,19 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 - Data comes from the resource modules in `src/api` (`apps`, `auth`, `domains`, `github`,
   `nodes`, `platform`, `users`): TanStack Query `queryOptions` and mutations around one
   `request()` helper that sends the session cookie, turns problem documents into `ApiError` and
-  parses every response with its `@slipway/contracts` schema (`ContractDriftError` on mismatch;
+  parses every response with its `@launchway/contracts` schema (`ContractDriftError` on mismatch;
   [ADR 0013](adr/0013-web-ui-data-layer.md)). `useApiMutation` adds toasts and invalidation.
   Query keys have one root per resource; `keysForTopic()` maps each `/events` topic to the keys
   to refresh. The client generated from the OpenAPI document (`src/lib/api/client.ts`) is used
   for the health probe only.
 - Streams use the hooks in `src/api/events.ts`: `useLiveEvents` (change feed),
   `useDeploymentLogStream` and `useAppLogStream`.
-- `pnpm --filter @slipway/web dev:mock` runs the UI against the MSW mock API; mock users sign in
+- `pnpm --filter @launchway/web dev:mock` runs the UI against the MSW mock API; mock users sign in
   with the password `correct horse battery staple` (see `apps/web/README.md` for the
   scenarios).
 - UI building blocks are shadcn/ui components in `src/components/ui` (add more with
   `pnpm dlx shadcn@latest add <component>` from `apps/web`). Forms use react-hook-form + the
-  contracts schemas. To use `@slipway/contracts` in the UI, add it as a dependency. Vite already
+  contracts schemas. To use `@launchway/contracts` in the UI, add it as a dependency. Vite already
   resolves it from source.
 
 ### Agent
@@ -339,7 +339,7 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
   without showing up in the process list), and never log environment values. Child processes get
   an allow-listed environment only.
 - The runtime lives in `apps/agent/src/runtime`: checkout, Compose file resolution, the policy
-  (`compose-policy.ts`), the `compose.slipway.yaml` override, the per-app deployment queue, log
+  (`compose-policy.ts`), the `compose.launchway.yaml` override, the per-app deployment queue, log
   streams and the outbox that re-sends results after a reconnect.
 - Protocol changes start in `packages/contracts/src/agent`. Breaking changes bump
   `AGENT_PROTOCOL_VERSION`. Requests are answered with replies echoing the request `id`; a request
@@ -353,7 +353,7 @@ The v0.1 modules are merged and wired. Known gaps and follow-ups, grouped by are
 - Every Caddyfile the API pushes repeats the global options block (`admin
   unix//run/caddy-admin/admin.sock|0222`, `email`, `cert_issuer acme`; see `renderEdge`). Without
   `admin`, Caddy moves its admin API to localhost and, with `--resume`, keeps that state across
-  restarts. The listener follows `SLIPWAY_CADDY_ADMIN_URL`: a `unix://` URL renders the socket, an
+  restarts. The listener follows `LAUNCHWAY_CADDY_ADMIN_URL`: a `unix://` URL renders the socket, an
   `http://` URL (development and tests only) renders `0.0.0.0:<port>`. Never use a TCP admin
   address where app containers share Caddy's network.
 - Routed services join the proxy network when they are deployed, so a new route of a running app

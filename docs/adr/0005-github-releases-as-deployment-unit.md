@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Slipway must always be able to say what is running: a version that a person
+Launchway must always be able to say what is running: a version that a person
 chose, with release notes, that does not move underneath a deployment
 ([architecture.md](../architecture.md) §1, §4). Branch heads move; commit SHAs
 are exact but mean little to people. GitHub offers several ways to integrate:
@@ -23,7 +23,7 @@ create an app; others only want to paste a token.
   `ref` as well. The API resolves every ref to a commit SHA when it creates
   the deployment, so a deployment records exactly what it ran.
 - Per app, `autoDeployReleases: true` deploys every published release.
-- Preferred connection: a GitHub App that Slipway creates through the manifest
+- Preferred connection: a GitHub App that Launchway creates through the manifest
   flow (§8). The API exchanges the returned `code`
   (`POST /app-manifests/{code}/conversions`) and stores `appId`, `clientId`,
   `clientSecret`, `privateKey` and `webhookSecret` encrypted. The user installs
@@ -44,7 +44,7 @@ create an app; others only want to paste a token.
 
 ## Consequences
 
-- Everything Slipway deploys has a repository, third-party software included
+- Everything Launchway deploys has a repository, third-party software included
   (a small repository with a Compose file), so its configuration is versioned
   and reviewed like code.
 - Each installation owns its GitHub App; no shared app or intermediary service
@@ -54,6 +54,6 @@ create an app; others only want to paste a token.
 - Moving a tag or a branch later does not change what an existing deployment
   ran. Deploying the new state is a new deployment.
 - The GitHub App's private key and secrets are encrypted with a key derived
-  from `SLIPWAY_SECRET_KEY` (ADR 0009).
+  from `LAUNCHWAY_SECRET_KEY` (ADR 0009).
 - Another Git host means another `GitProvider` implementation; that is
   deliberately left for later (§15).

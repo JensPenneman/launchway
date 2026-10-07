@@ -17,14 +17,14 @@ contract package already holds the Zod schema of every request and response.
 
 - Resource modules in `apps/web/src/api` call the API through one `request()`
   helper. It sends the session cookie, turns problem documents into
-  `ApiError`, and parses every response with the `@slipway/contracts` schema
+  `ApiError`, and parses every response with the `@launchway/contracts` schema
   for that endpoint. A response that does not match raises
   `ContractDriftError`. Request bodies are typed with the contract input
   types.
 - The openapi-fetch client generated from the OpenAPI document stays in
   `src/lib/api` and is used for the health probe. `pnpm openapi:generate`
   still runs before the web build and type check.
-- An MSW mock of the whole API (`VITE_API_MOCK=1`, `pnpm --filter @slipway/web
+- An MSW mock of the whole API (`VITE_API_MOCK=1`, `pnpm --filter @launchway/web
   dev:mock`) backs the Playwright smoke tests; production builds contain no
   mock code.
 - At integration, a script compared every call of the resource modules with

@@ -19,19 +19,19 @@ the network. Polling adds latency and cannot stream logs.
 
 ## Decision
 
-- The agent dials `<SLIPWAY_SERVER_URL>/api/agent/ws` and keeps the WebSocket
-  open: `wss://<public url>` on remote nodes, `ws://slipway:3000` on the
+- The agent dials `<LAUNCHWAY_SERVER_URL>/api/agent/ws` and keeps the WebSocket
+  open: `wss://<public url>` on remote nodes, `ws://launchway:3000` on the
   control-plane host. The agent never listens on a port.
 - The upgrade request carries
   `Authorization: Bearer <join token or node credential>`. A new node presents
-  its one-time join token (`slpn_…`, valid for 15 minutes, created in the UI).
-  The server answers with a long-lived node credential (`slpa_…`) in
-  `hello.ok`; the agent stores it in `/var/lib/slipway/agent/credentials.json`
+  its one-time join token (`lwyn_…`, valid for 15 minutes, created in the UI).
+  The server answers with a long-lived node credential (`lwya_…`) in
+  `hello.ok`; the agent stores it in `/var/lib/launchway/agent/credentials.json`
   (mode `0600`) and uses it from then on. The server keeps only SHA-256 hashes
   of both and compares them in constant time. Credentials can be rotated and
   revoked in the UI; upgrades without a valid token are rejected.
 - Messages are JSON text frames `{ id, type, payload }`. Each type has a Zod
-  schema in `@slipway/contracts` (`agent/*`), validated on both sides. A reply
+  schema in `@launchway/contracts` (`agent/*`), validated on both sides. A reply
   echoes the `id` of its request.
 - Agent to server: `hello`, `heartbeat`, `deployment.progress`,
   `deployment.log`, `deployment.result`, `app.status`, `logs.chunk`,

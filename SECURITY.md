@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Report vulnerabilities privately through GitHub:
-<https://github.com/JensPenneman/slipway/security/advisories/new>
+<https://github.com/JensPenneman/launchway/security/advisories/new>
 
 Do not report security problems in public issues, pull requests or
 discussions.
@@ -21,7 +21,7 @@ Reporters are credited in the published advisory unless they prefer not to be.
 
 ## Supported versions
 
-Slipway is pre-1.0. Security fixes are made for the latest minor release only;
+Launchway is pre-1.0. Security fixes are made for the latest minor release only;
 upgrade to receive them.
 
 | Version | Supported |
@@ -43,14 +43,14 @@ This is a summary of the security requirements in section 14 of
 - **Deployed apps are trusted code.** The Compose policy limits what an app
   can request from Docker, but it is not a sandbox. Deploy only repositories
   you trust.
-- **`SLIPWAY_SECRET_KEY` protects every secret at rest.** Anyone holding both
+- **`LAUNCHWAY_SECRET_KEY` protects every secret at rest.** Anyone holding both
   the key and a database dump can decrypt the stored secrets.
 
 ### Secrets and credentials
 
 - Secrets (environment variable values, DNS provider credentials, the GitHub
   App's private key and secrets) are encrypted with AES-256-GCM, with a random
-  IV and a key derived from `SLIPWAY_SECRET_KEY`. Secrets are never returned in
+  IV and a key derived from `LAUNCHWAY_SECRET_KEY`. Secrets are never returned in
   clear text after creation; only environment variables not marked `secret`
   are returned.
 - Passwords are hashed with argon2id. API tokens, session tokens, join tokens,
@@ -66,7 +66,7 @@ This is a summary of the security requirements in section 14 of
 
 ### Authentication and authorization
 
-- Sessions use the cookie `slipway_session` (HttpOnly, SameSite=Lax, Secure
+- Sessions use the cookie `launchway_session` (HttpOnly, SameSite=Lax, Secure
   when served over HTTPS), are stored server-side, are replaced on login
   (no session fixation) and can be revoked.
 - Sign-in with passkeys (WebAuthn) or passwords. Setup, login, passkey and
@@ -101,11 +101,11 @@ This is a summary of the security requirements in section 14 of
 - Agents connect outbound to the control plane; a node exposes no agent port.
 - Agent WebSocket upgrades require a valid join token or node credential.
   v0.1 does not restrict them by network (see the roadmap), and the bundled
-  agent's bootstrap token (`SLIPWAY_LOCAL_JOIN_TOKEN`) does not expire, so
+  agent's bootstrap token (`LAUNCHWAY_LOCAL_JOIN_TOKEN`) does not expire, so
   keep `.env` secret.
 - PostgreSQL is reachable only on an internal Docker network shared with the
   API. Caddy's admin API listens only on a unix socket that the `caddy` and
-  `slipway` containers share; app containers cannot reach it.
+  `launchway` containers share; app containers cannot reach it.
 - Port 3000 serves plain HTTP for the first setup, which requires the
   installer's one-time setup token. Do not expose it to the internet; use the
   platform's HTTPS URL once it works, and bind port 3000 to loopback then
@@ -114,7 +114,7 @@ This is a summary of the security requirements in section 14 of
 ### Containers and supply chain
 
 - Platform containers drop the capabilities they do not need and run with
-  `no-new-privileges`. The `slipway` container runs as a non-root user on a
+  `no-new-privileges`. The `launchway` container runs as a non-root user on a
   read-only root filesystem; the agent runs as root because it owns the
   Docker socket.
 - Release images for `amd64` and `arm64` are signed with cosign (keyless) and
@@ -129,15 +129,15 @@ This is a summary of the security requirements in section 14 of
 To verify the signature of an image:
 
 ```sh
-cosign verify ghcr.io/jenspenneman/slipway:<tag> \
+cosign verify ghcr.io/jenspenneman/launchway:<tag> \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
-  --certificate-identity-regexp '^https://github\.com/JensPenneman/slipway/'
+  --certificate-identity-regexp '^https://github\.com/JensPenneman/launchway/'
 ```
 
-The same command works for `ghcr.io/jenspenneman/slipway-agent`.
+The same command works for `ghcr.io/jenspenneman/launchway-agent`.
 
 ## Out of scope
 
-- Vulnerabilities in apps deployed with Slipway, or in their upstream images.
+- Vulnerabilities in apps deployed with Launchway, or in their upstream images.
 - Findings that require root or Docker socket access on a node, which already
   grants full control of that node.

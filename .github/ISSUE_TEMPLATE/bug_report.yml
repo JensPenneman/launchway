@@ -1,20 +1,20 @@
 name: Bug report
-description: Something in Slipway does not work as expected.
+description: Something in Launchway does not work as expected.
 labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
         Thanks for reporting a problem. Please search the existing issues first.
-        Security vulnerabilities do not belong here: report them privately through a [security advisory](https://github.com/JensPenneman/slipway/security/advisories/new).
+        Security vulnerabilities do not belong here: report them privately through a [security advisory](https://github.com/JensPenneman/launchway/security/advisories/new).
 
   - type: input
     id: version
     attributes:
-      label: Slipway version
+      label: Launchway version
       description: |
         The image tag you run, for example `0.2.0`. For `edge` images, add the commit from the `org.opencontainers.image.revision` label:
-        `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ghcr.io/jenspenneman/slipway:edge`
+        `docker image inspect --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}' ghcr.io/jenspenneman/launchway:edge`
       placeholder: 0.2.0
     validations:
       required: true
@@ -82,6 +82,6 @@ body:
     attributes:
       label: Logs
       description: |
-        Relevant output of `docker compose logs slipway slipway-agent` or of the deployment log.
-        **Redact secrets before posting**: API tokens (`slp_...`), node join tokens and credentials, passwords, session cookies, `SLIPWAY_SECRET_KEY`, database URLs with passwords, DNS provider credentials, GitHub App keys and environment variable values.
+        Relevant output of `docker compose logs launchway launchway-agent` or of the deployment log.
+        **Redact secrets before posting**: API tokens (`lwy_...`), node join tokens and credentials, passwords, session cookies, `LAUNCHWAY_SECRET_KEY`, database URLs with passwords, DNS provider credentials, GitHub App keys and environment variable values.
       render: text

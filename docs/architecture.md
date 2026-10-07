@@ -1,7 +1,7 @@
-# Slipway — architecture
+# Launchway — architecture
 
-Slipway is a self-hosted deployment platform: link a GitHub repository, pick a
-release, and Slipway builds it, runs it on one of your machines, gives it a
+Launchway is a self-hosted deployment platform: link a GitHub repository, pick a
+release, and Launchway builds it, runs it on one of your machines, gives it a
 domain with TLS, and keeps DNS pointed at your home connection. Everything is
 reachable through a REST API; the web UI is only a client of that API.
 
@@ -11,7 +11,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 ([LICENSE](../LICENSE)).
 
 > Naming: the project, packages, labels and environment variables all use the
-> name **Slipway** (`slipway`, `SLIPWAY_*`, `@slipway/*`). Never describe the
+> name **Launchway** (`launchway`, `LAUNCHWAY_*`, `@launchway/*`). Never describe the
 > project by comparing it to a commercial hosting product.
 
 ## 1. Principles
@@ -24,8 +24,8 @@ decisions do not block them. The project is licensed under Apache-2.0
    software (a mail server, a media tool) is deployed the same way: a small
    repository with a Compose file that pulls the upstream images.
 3. **Compose is the runtime contract.** An app repository carries a Compose
-   file (or just a `Dockerfile`, for which Slipway synthesizes a one-service
-   Compose file). Slipway adds routing, networks, environment and lifecycle;
+   file (or just a `Dockerfile`, for which Launchway synthesizes a one-service
+   Compose file). Launchway adds routing, networks, environment and lifecycle;
    it does not invent a new app manifest.
 4. **Multi-node from day one, one node today.** The control plane manages
    *nodes*; each node runs an *agent* that owns Docker on that machine. The
@@ -47,14 +47,14 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **Passkey** | WebAuthn credential of a user. |
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
-| **GitHubConnection** | How Slipway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
+| **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
 | **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug`. |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app. Has a state machine and logs. |
 | **Node** | A machine running the agent. Reports Docker info, LAN IP, architecture, health. One node is the `edge` (runs Caddy). |
 | **DnsProviderAccount** | Credentials for one DNS provider (kind + encrypted credentials). |
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
-| **Domain** | A fully-qualified name Slipway serves (`trail.example.com`). Optionally bound to a zone so Slipway manages its record. |
+| **Domain** | A fully-qualified name Launchway serves (`trail.example.com`). Optionally bound to a zone so Launchway manages its record. |
 | **Route** | What a domain serves: an app service port, an external host:port, or a redirect. Options: `protected` (forward auth), `compress`, `hsts`. |
 | **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth upstream, edge node. |
 | **AuditEvent** | Who changed what, when, from where. Written for every mutation. |
@@ -84,7 +84,7 @@ simply a new deployment of an older ref (images are cached, so it is fast).
                     ▼                                        ▲
  ┌──────────────────────────────── edge node ────────────────┼──────────────────┐
  │  Caddy (edge)  ◀── Caddyfile via admin API ──  API (control plane)  ─▶ PostgreSQL│
- │     │ slipway-proxy network                        ▲  ws                      │
+ │     │ launchway-proxy network                      ▲  ws                      │
  │     ├──▶ app containers (same node)                │                          │
  │     └──▶ <lan-ip>:<port> of apps on other nodes    │                          │
  │  Agent (node 1) ── docker socket ── Docker ────────┘                          │
@@ -98,19 +98,19 @@ Components and where they run:
 
 | Component | Package | Runs as | Notes |
 |---|---|---|---|
-| Control plane API | `apps/api` | container `slipway` | Hono on Node 24. Serves the built UI as static files at `/`, the API at `/api/v1`, OpenAPI at `/api/openapi.json`, docs at `/api/docs`. |
-| Web UI | `apps/web` | built into the `slipway` image | React SPA. Same origin as the API — no CORS. |
-| Node agent | `apps/agent` | container `slipway-agent` on every node | Mounts the Docker socket and a workspace volume. Clones, builds, runs Compose projects, streams logs. |
+| Control plane API | `apps/api` | container `launchway` | Hono on Node 24. Serves the built UI as static files at `/`, the API at `/api/v1`, OpenAPI at `/api/openapi.json`, docs at `/api/docs`. |
+| Web UI | `apps/web` | built into the `launchway` image | React SPA. Same origin as the API — no CORS. |
+| Node agent | `apps/agent` | container `launchway-agent` on every node | Mounts the Docker socket and a workspace volume. Clones, builds, runs Compose projects, streams logs. |
 | Edge proxy | `caddy:2-alpine` | container on the edge node | Config pushed by the API through the admin API (`POST /load`, `text/caddyfile`). Persists its last config and resumes on restart. |
 | Database | `postgres:18-alpine` | container on the control-plane node | Drizzle ORM; migrations run at API start. |
 
-Docker networks: the installer creates the external network `slipway-proxy`
+Docker networks: the installer creates the external network `launchway-proxy`
 (default subnet `10.210.0.0/24`, Caddy fixed at `10.210.0.2`). Every routed app
 service is attached to it under the alias `<app-slug>-<service>`. Compose
-project names are `slipway-<app-slug>`. Containers carry labels
-`slipway.app`, `slipway.deployment`, `slipway.service`.
+project names are `launchway-<app-slug>`. Containers carry labels
+`launchway.app`, `launchway.deployment`, `launchway.service`.
 
-The control plane itself (`deploy/compose.yaml`: `slipway`, `slipway-agent`,
+The control plane itself (`deploy/compose.yaml`: `launchway`, `launchway-agent`,
 `caddy`, `db`) is installed by `deploy/install.sh` (Linux/macOS) or
 `deploy/install.ps1` (Windows with Docker Desktop). Upgrades pull newer images
 of the same compose file. The API listens on `0.0.0.0:3000` inside the
@@ -125,7 +125,7 @@ An app points at `owner/repo` through a GitHubConnection and declares:
 
 - `composeFiles`: list of paths relative to the repository root
   (default `["compose.yaml"]`; Compose merges them in order), **or**
-- `dockerfile` + `context` when there is no Compose file. Slipway then
+- `dockerfile` + `context` when there is no Compose file. Launchway then
   synthesizes `services: { app: { build: {context, dockerfile} } }`.
 - `nodeId`: the node that runs it (v0.1 placement = explicit choice).
 
@@ -137,7 +137,7 @@ resolves it to a commit SHA at deployment creation). Optional per app:
 ### What the agent does for one deployment
 
 1. `git clone --depth 1 --branch <ref>` (or fetch a SHA) into
-   `/var/lib/slipway/apps/<appId>/<deploymentId>`. Credentials are passed with
+   `/var/lib/launchway/apps/<appId>/<deploymentId>`. Credentials are passed with
    `-c http.extraHeader="Authorization: basic <token>"`, never written to disk.
    *(v0.1 passes the same setting through the `GIT_CONFIG_*` environment of
    the `git` process, which keeps it out of the process list.)*
@@ -151,14 +151,14 @@ resolves it to a commit SHA at deployment creation). Optional per app:
    files outside the checkout; see `apps/agent/src/runtime/compose-policy.ts`.
    Reserved service names are only refused for routed services.)*
 3. Write `.env` (mode 0600) from the app's environment variables and the
-   override file `compose.slipway.yaml`: attaches routed services to
-   `slipway-proxy` with their aliases, adds the labels, and — when the app is
+   override file `compose.launchway.yaml`: attaches routed services to
+   `launchway-proxy` with their aliases, adds the labels, and — when the app is
    not on the edge node — publishes each routed service port on the node's
    LAN IP so the edge can reach it. *(While no edge node is set, every app
    counts as on the edge. Routes are applied here, so a route added to a
    running app takes effect with its next deployment;
    [ADR 0011](adr/0011-domain-activation-and-edge-rules.md).)*
-4. `docker compose -p slipway-<slug> --project-directory <dir> -f … build --pull`
+4. `docker compose -p launchway-<slug> --project-directory <dir> -f … build --pull`
    then `pull`, then `up -d --wait --remove-orphans`. Every line of output is
    streamed as a log line.
 5. Report the result: per service the container ID, state, health and
@@ -174,7 +174,7 @@ Rollback = redeploy an older ref. Stop/remove an app = `compose down`
 - **Caddy** is the only owner of ports 80/443(+udp) on the edge node. The API
   renders a Caddyfile from the active routes and loads it through the admin
   API (`/adapt` to validate, then `/load`), over a unix socket shared only by
-  the `caddy` and `slipway` containers. Per route:
+  the `caddy` and `launchway` containers. Per route:
 
   ```caddy
   trail.example.com {
@@ -186,9 +186,9 @@ Rollback = redeploy an older ref. Stop/remove an app = `compose down`
   ```
 
   The platform's own domain (`Setting.publicUrl`) is rendered the same way with
-  upstream `slipway:3000`. `(gate)` is `forward_auth <Setting.forwardAuthUrl>`
+  upstream `launchway:3000`. `(gate)` is `forward_auth <Setting.forwardAuthUrl>`
   — an existing passkey gate such as oauth2-proxy + Pocket ID, deployed as a
-  normal Slipway app and reachable on `slipway-proxy`.
+  normal Launchway app and reachable on `launchway-proxy`.
 - **Certificates**: Let's Encrypt through Caddy (`email`, `cert_issuer acme`
   so no fallback CA is tried — the zone's CAA may allow only Let's Encrypt).
   A route is only rendered once its domain passed the **DNS preflight**
@@ -228,7 +228,7 @@ export interface DnsProvider {
   credentials so the UI renders the "add provider account" form generically.
 - v0.1 providers: `cloudflare` (API token; zones, A/AAAA/CNAME/TXT records,
   `proxied`) and `manual` (no API — the UI shows the records the user must
-  create and Slipway only verifies them).
+  create and Launchway only verifies them).
 - Adding a provider = one file in `apps/api/src/modules/dns/providers/` plus a
   registry entry and a contract test against the interface.
 - Record types in v0.1: `A`, `AAAA`, `CNAME`, `TXT` (TXT for future ACME DNS-01
@@ -242,12 +242,12 @@ export interface DnsProvider {
   (registration from the account page, discoverable credentials, sign-in
   without typing an e-mail). Both are available; passkeys are the preferred
   path and the UI leads with them.
-- **Sessions**: opaque ID in cookie `slipway_session`
+- **Sessions**: opaque ID in cookie `launchway_session`
   (HttpOnly, SameSite=Lax, `Secure` when served over HTTPS), stored in
   PostgreSQL, 30-day sliding expiry, revocable from the account page.
 - **CSRF**: cookie-authenticated mutating requests must carry an `Origin` /
   `Sec-Fetch-Site` that matches the platform origin. Bearer requests are exempt.
-- **API tokens**: `slp_` + 32 random bytes (base62). SHA-256 hash at rest,
+- **API tokens**: `lwy_` + 32 random bytes (base62). SHA-256 hash at rest,
   plaintext returned once. Scopes: `read`, `write`, `admin`; optional expiry;
   last-used timestamp.
 - **Roles**: `owner` (everything, cannot be removed), `admin` (everything
@@ -262,7 +262,7 @@ export interface DnsProvider {
 
 ## 8. GitHub integration
 
-- **GitHub App (preferred)**: Slipway creates its own GitHub App through the
+- **GitHub App (preferred)**: Launchway creates its own GitHub App through the
   *manifest flow*: the UI posts a manifest to
   `https://github.com/settings/apps/new?state=…`, GitHub redirects back with a
   `code`, the API exchanges it (`POST /app-manifests/{code}/conversions`) and
@@ -284,20 +284,20 @@ export interface DnsProvider {
 
 ## 9. Node agent
 
-- Image `ghcr.io/jenspenneman/slipway-agent`. Runs with `/var/run/docker.sock`
-  and a named volume at `/var/lib/slipway`. Needs the `docker` CLI with the
+- Image `ghcr.io/jenspenneman/launchway-agent`. Runs with `/var/run/docker.sock`
+  and a named volume at `/var/lib/launchway`. Needs the `docker` CLI with the
   Compose plugin inside the image, plus `git`.
 - **Join**: the UI creates a node and shows a one-time join token
-  (`slpn_…`, 15-minute validity) and a ready-made `docker run …` / compose
+  (`lwyn_…`, 15-minute validity) and a ready-made `docker run …` / compose
   snippet. The agent connects to `wss://<publicUrl>/api/agent/ws` (or an
   internal URL on the same host) with the join token; the server replies with
   a long-lived node credential that the agent persists in
-  `/var/lib/slipway/agent/credentials.json` (mode 0600). Credentials can be
+  `/var/lib/launchway/agent/credentials.json` (mode 0600). Credentials can be
   rotated and revoked from the UI. *(v0.1: the bundled agent's bootstrap token
   stays valid, and an agent whose stored credential is refused joins again
   with its join token; [ADR 0010](adr/0010-composition-root-wiring.md).)*
 - **Protocol**: JSON messages `{ id, type, payload }` over WebSocket, schemas
-  in `@slipway/contracts` (`agent/*`). Agent → server: `hello`, `heartbeat`
+  in `@launchway/contracts` (`agent/*`). Agent → server: `hello`, `heartbeat`
   (15 s), `deployment.progress`, `deployment.log`, `deployment.result`,
   `app.status`, `logs.chunk`, `logs.end`. Server → agent: `hello.ok`,
   `deploy`, `stop`, `remove`, `status`, `logs.start`, `logs.stop`. Request
@@ -334,7 +334,7 @@ export interface DnsProvider {
 - Streams use Server-Sent Events: `GET /deployments/{id}/logs?follow=true`,
   `GET /apps/{id}/logs?service=&follow=true`, `GET /events` (platform-wide
   change feed the UI uses to refresh).
-- Authentication: session cookie **or** `Authorization: Bearer slp_…`.
+- Authentication: session cookie **or** `Authorization: Bearer lwy_…`.
 - Health: `GET /api/health/live` (process up) and `/api/health/ready`
   (database reachable).
 - Resource overview (all under `/api/v1`):
@@ -384,8 +384,8 @@ connections, DNS provider accounts, platform settings) · audit log.
 - **Releases**: release-please (GitHub Action) opens a release PR from the
   conventional commits; merging it tags `vX.Y.Z`, publishes the GitHub
   Release with the changelog, and triggers the image workflow: multi-arch
-  (`amd64`, `arm64`) images `ghcr.io/jenspenneman/slipway` and
-  `ghcr.io/jenspenneman/slipway-agent`, with SBOM and provenance attestations,
+  (`amd64`, `arm64`) images `ghcr.io/jenspenneman/launchway` and
+  `ghcr.io/jenspenneman/launchway-agent`, with SBOM and provenance attestations,
   signed with cosign (keyless). `main` also publishes `:edge` images.
 - **Security automation**: CodeQL, Dependabot (grouped weekly updates, incl.
   GitHub Actions and Docker base images), Trivy scan of built images, secret
@@ -401,34 +401,34 @@ connections, DNS provider accounts, platform settings) · audit log.
 
 ## 13. Configuration
 
-API (`slipway` container):
+API (`launchway` container):
 
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | — | PostgreSQL connection string |
-| `SLIPWAY_SECRET_KEY` | — | 32 bytes, base64. AES-256-GCM key for secrets at rest; also derives the cookie signing key. Generated by the installer. |
-| `SLIPWAY_LISTEN` | `0.0.0.0:3000` | Bind address |
-| `SLIPWAY_PUBLIC_URL` | (from settings) | Overrides `Setting.publicUrl` (useful before setup) |
-| `SLIPWAY_CADDY_ADMIN_URL` | `unix:///run/caddy-admin/admin.sock` | Edge admin API (`http://` only for development) |
-| `SLIPWAY_PROXY_NETWORK` | `slipway-proxy` | Shared Docker network name |
-| `SLIPWAY_TRUSTED_PROXIES` | `10.210.0.2/32` | CIDRs whose `X-Forwarded-*` are trusted (only Caddy; never the app subnet) |
+| `LAUNCHWAY_SECRET_KEY` | — | 32 bytes, base64. AES-256-GCM key for secrets at rest; also derives the cookie signing key. Generated by the installer. |
+| `LAUNCHWAY_LISTEN` | `0.0.0.0:3000` | Bind address |
+| `LAUNCHWAY_PUBLIC_URL` | (from settings) | Overrides `Setting.publicUrl` (useful before setup) |
+| `LAUNCHWAY_CADDY_ADMIN_URL` | `unix:///run/caddy-admin/admin.sock` | Edge admin API (`http://` only for development) |
+| `LAUNCHWAY_PROXY_NETWORK` | `launchway-proxy` | Shared Docker network name |
+| `LAUNCHWAY_TRUSTED_PROXIES` | `10.210.0.2/32` | CIDRs whose `X-Forwarded-*` are trusted (only Caddy; never the app subnet) |
 | `LOG_LEVEL` | `info` | pino level |
 
-Agent (`slipway-agent` container):
+Agent (`launchway-agent` container):
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `SLIPWAY_SERVER_URL` | — | `wss://…` or `ws://slipway:3000` on the same host |
-| `SLIPWAY_JOIN_TOKEN` | — | One-time join token (first start only) |
-| `SLIPWAY_NODE_LAN_IP` | auto | LAN address other nodes/the edge use to reach this node |
-| `SLIPWAY_WORKSPACE` | `/var/lib/slipway` | Checkouts, credentials |
+| `LAUNCHWAY_SERVER_URL` | — | `wss://…` or `ws://launchway:3000` on the same host |
+| `LAUNCHWAY_JOIN_TOKEN` | — | One-time join token (first start only) |
+| `LAUNCHWAY_NODE_LAN_IP` | auto | LAN address other nodes/the edge use to reach this node |
+| `LAUNCHWAY_WORKSPACE` | `/var/lib/launchway` | Checkouts, credentials |
 | `DOCKER_HOST` | `unix:///var/run/docker.sock` | Docker daemon |
 
 ## 14. Security requirements (checklist for reviewers)
 
 - Secrets (env var values, provider credentials, GitHub private key/secrets,
   node credentials) encrypted with AES-256-GCM, random IV, key from
-  `SLIPWAY_SECRET_KEY`; never returned in clear text after creation (env vars:
+  `LAUNCHWAY_SECRET_KEY`; never returned in clear text after creation (env vars:
   `secret: true` masks the value; non-secret ones are returned).
 - Passwords argon2id; tokens and node credentials hashed (SHA-256) at rest;
   constant-time comparisons.
@@ -450,7 +450,7 @@ Agent (`slipway-agent` container):
 Blue/green deployments with health-gated switch · build cache / image registry
 shared between nodes · placement by labels and resources · per-app managed
 volumes with scheduled encrypted backups · metrics and alerts · OIDC login
-(sign in to Slipway with an external IdP) · preview deployments from pull
+(sign in to Launchway with an external IdP) · preview deployments from pull
 requests · a CLI · TCP/UDP routing at the edge (Caddy L4) · Cloudflare Tunnel
 as an alternative to port forwarding · a host-native agent (no container) for
 machines without Docker Desktop · other Git hosts.

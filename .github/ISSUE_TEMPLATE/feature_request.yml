@@ -1,11 +1,11 @@
 name: Feature request
-description: Suggest a new capability or an improvement for Slipway.
+description: Suggest a new capability or an improvement for Launchway.
 labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for the suggestion. Please search the existing issues first, and check the "Deliberately later" list in [docs/architecture.md](https://github.com/JensPenneman/slipway/blob/main/docs/architecture.md).
+        Thanks for the suggestion. Please search the existing issues first, and check the "Deliberately later" list in [docs/architecture.md](https://github.com/JensPenneman/launchway/blob/main/docs/architecture.md).
 
   - type: textarea
     id: problem
@@ -19,7 +19,7 @@ body:
     id: proposal
     attributes:
       label: Proposed solution
-      description: How should Slipway behave? Everything in the UI must also be possible through the API, so describe the API side as well when you can.
+      description: How should Launchway behave? Everything in the UI must also be possible through the API, so describe the API side as well when you can.
     validations:
       required: true
 

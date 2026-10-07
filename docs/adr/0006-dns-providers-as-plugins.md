@@ -8,7 +8,7 @@ Accepted
 
 ## Context
 
-Slipway serves domains from a home connection whose public IPv4 can change
+Launchway serves domains from a home connection whose public IPv4 can change
 ([architecture.md](../architecture.md) §5, §6). Keeping app domains pointed at
 it means writing DNS records, and people host their zones with different
 providers, some of which have no API. Provider specifics must not leak into
@@ -26,7 +26,7 @@ domains, routes or the UI.
   Credentials are stored encrypted in `DnsProviderAccount`.
 - v0.1 ships two providers: `cloudflare` (API token; zones; `A`, `AAAA`,
   `CNAME` and `TXT` records; `proxied`) and `manual` (no API: the UI shows the
-  records to create, and Slipway only verifies them).
+  records to create, and Launchway only verifies them).
 - Adding a provider means one file in `apps/api/src/modules/dns/providers/`,
   a registry entry and the shared contract test, which every provider must
   pass against the interface.
@@ -45,11 +45,11 @@ domains, routes or the UI.
   test defines what a working provider is.
 - The credentials form is generated from the schema, so the schema's field
   descriptions are the help text users see.
-- With the `manual` provider, Slipway cannot update the anchor record; dynamic
+- With the `manual` provider, Launchway cannot update the anchor record; dynamic
   DNS needs a provider with an API.
 - Standard DNS forbids a CNAME at a zone apex. An apex domain depends on the
   provider flattening the CNAME (Cloudflare does) or needs an `A` record that
-  is maintained outside Slipway.
+  is maintained outside Launchway.
 - Dynamic DNS tracks IPv4 in v0.1. `AAAA` records can be managed but do not
   follow a changing address.
 - `TXT` records are supported for domain verification and a future ACME DNS-01

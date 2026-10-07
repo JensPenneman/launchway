@@ -14,7 +14,7 @@ features that are deliberately out of scope for v0.1 are listed in
   are not restricted to the Docker networks (§14). The local bootstrap token is
   likewise accepted from anywhere that reaches the API ([ADR 0010](adr/0010-composition-root-wiring.md)).
 - Revoking the `local` node's credential is undone at the next API start:
-  `ensureLocalNode` re-arms `SLIPWAY_LOCAL_JOIN_TOKEN`, which never expires.
+  `ensureLocalNode` re-arms `LAUNCHWAY_LOCAL_JOIN_TOKEN`, which never expires.
   Persist a "bootstrap disabled" flag on revoke (schema change) and re-arm only
   a node that never joined; document removing the token from `.env` after the
   first join.
@@ -122,7 +122,7 @@ features that are deliberately out of scope for v0.1 are listed in
 - Passkey registration and sign-in are not covered by Playwright; add a test
   with a CDP virtual authenticator.
 - The audit log's `since`/`until` filters are not exposed.
-- `@slipway/contracts` brings all of Zod and zod-to-openapi into the bundle
+- `@launchway/contracts` brings all of Zod and zod-to-openapi into the bundle
   (about 120 kB gzip); a browser entry without the OpenAPI extension would
   shrink it.
 - Run the integration-time check that compares the UI's API calls with the

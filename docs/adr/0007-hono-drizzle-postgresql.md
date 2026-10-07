@@ -12,7 +12,7 @@ The API is the single source of truth ([architecture.md](../architecture.md)
 §1): the UI, the agent and scripts all use it. It therefore needs a
 machine-readable contract from which the UI client is generated, and every
 external input must be validated at run time (§14). The project is
-TypeScript end to end, and the Zod schemas in `@slipway/contracts` are shared
+TypeScript end to end, and the Zod schemas in `@launchway/contracts` are shared
 by the API, the agent and the UI. The control plane is one container that
 needs durable, transactional storage for users, sessions, deployments, logs
 and audit events, with schema upgrades that need no manual steps. A framework

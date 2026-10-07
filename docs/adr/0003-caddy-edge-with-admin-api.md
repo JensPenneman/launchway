@@ -20,11 +20,11 @@ local Docker host, and would give the proxy access to the Docker socket.
 ## Decision
 
 - Caddy (`caddy:2-alpine`) is the only process bound to ports 80 and 443
-  (plus 443/UDP for HTTP/3) on the edge node. Its address on `slipway-proxy`
+  (plus 443/UDP for HTTP/3) on the edge node. Its address on `launchway-proxy`
   is `10.210.0.2`.
 - The API is the only writer of the edge configuration. It renders a complete
   Caddyfile from the settings and the active routes: the platform's own domain
-  (`Setting.publicUrl`, upstream `slipway:3000`), app routes (upstream
+  (`Setting.publicUrl`, upstream `launchway:3000`), app routes (upstream
   `<slug>-<service>:<port>` on the edge node, `<node.lanIp>:<publishedPort>`
   elsewhere), `external` routes and redirects. Per route it adds
   `import gate` when `protected`, `encode zstd gzip` when `compress`, and
@@ -38,10 +38,10 @@ local Docker host, and would give the proxy access to the Docker socket.
   is down. The bootstrap Caddyfile in `deploy/` holds only global options and
   is read when nothing was loaded yet.
 - The admin API listens on a unix socket, `/run/caddy-admin/admin.sock`, in
-  the `caddy-admin` volume that only the `caddy` and `slipway` containers
+  the `caddy-admin` volume that only the `caddy` and `launchway` containers
   mount. It never listens on a TCP port. *(Amended during the v0.1 review: the
   first version listened on `0.0.0.0:2019`, which every app container on
-  `slipway-proxy` could reach.)*
+  `launchway-proxy` could reach.)*
 - Certificates come from Let's Encrypt only: the global options set `email`
   and `cert_issuer acme`, so Caddy tries no fallback CA (the zone's CAA records
   may allow only Let's Encrypt).
@@ -51,7 +51,7 @@ local Docker host, and would give the proxy access to the Docker socket.
   that cannot validate.
 - Forward authentication is one snippet, `(gate)`, defined as
   `forward_auth <Setting.forwardAuthUrl>`. The gate itself is deployed as a
-  normal Slipway app on `slipway-proxy`.
+  normal Launchway app on `launchway-proxy`.
 
 ## Consequences
 
@@ -62,8 +62,8 @@ local Docker host, and would give the proxy access to the Docker socket.
   rendered file can be inspected through the API.
 - The edge keeps serving while the API is stopped or being upgraded.
 - The admin API has no authentication. Only processes that can open the
-  socket file (the `caddy` and `slipway` containers) can change the edge
-  configuration; app containers on `slipway-proxy` cannot reach it.
+  socket file (the `caddy` and `launchway` containers) can change the edge
+  configuration; app containers on `launchway-proxy` cannot reach it.
 - Certificates live in the `caddy-data` volume, which must be backed up.
 - A new domain is not served until its DNS is correct, unless forced.
 - Only HTTP and HTTPS are routed in v0.1. Apps that need other protocols

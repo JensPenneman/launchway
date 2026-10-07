@@ -69,6 +69,8 @@ export class FakeGitHub {
   readonly tokenRequests: unknown[] = [];
   /** `X-OAuth-Scopes` reported for classic tokens: token -> scopes. */
   readonly patScopes = new Map<string, string>();
+  /** Repository requests to answer with 502 before behaving normally (GitHub outages). */
+  failRepoRequests = 0;
   /** Lifetime of issued installation tokens. */
   tokenLifetimeMs = 60 * 60 * 1000;
   readonly calls: string[] = [];
@@ -224,6 +226,10 @@ export class FakeGitHub {
         : json(200, { total_count: all.length, repositories: slice }, headers);
     }
 
+    if (path.startsWith('/repos/') && this.failRepoRequests > 0) {
+      this.failRepoRequests -= 1;
+      return json(502, { message: 'Server Error' });
+    }
     m = /^\/repos\/([^/]+)\/([^/]+)\/(.+)$/.exec(path);
     const repo = m ? this.repo(m[1] ?? '', m[2] ?? '') : undefined;
     if (!m || !repo || method !== 'GET') return json(404, { message: 'Not Found' });

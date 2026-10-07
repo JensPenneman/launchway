@@ -42,7 +42,8 @@
 
 .NOTES
     When compose.yaml and the Caddyfile are not next to this script, they are
-    downloaded from GitHub; $env:SLIPWAY_REF selects the Git ref (default: main).
+    downloaded from GitHub; $env:SLIPWAY_REF selects the Git ref (default: the
+    release tag vX.Y.Z for a release version, main for latest and edge).
 #>
 [CmdletBinding()]
 param(
@@ -322,7 +323,10 @@ param(
                 }
             }
         } else {
-            $ref = if ($env:SLIPWAY_REF) { $env:SLIPWAY_REF } else { 'main' }
+            # A pinned release gets the compose file and Caddyfile it was released with.
+            $ref = 'main'
+            if ($env:SLIPWAY_REF) { $ref = $env:SLIPWAY_REF }
+            elseif ($Version -match '^\d+\.\d+\.\d+$') { $ref = "v$Version" }
             if ($ref -notmatch '^[A-Za-z0-9._/][A-Za-z0-9._/-]*$') {
                 throw "Invalid SLIPWAY_REF '$ref'."
             }

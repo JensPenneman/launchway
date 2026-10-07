@@ -59,7 +59,8 @@ Options:
 
 Environment: SLIPWAY_DIR, SLIPWAY_ACME_EMAIL, SLIPWAY_PORT and SLIPWAY_VERSION
 stand in for the options above. SLIPWAY_REF selects the Git ref compose.yaml and
-the Caddyfile are downloaded from (default: main).
+the Caddyfile are downloaded from (default: the release tag vX.Y.Z for a release
+version, main for latest and edge).
 
 Running the installer again keeps the existing .env with its secrets; only the
 values passed as options (or through the variables above) change.
@@ -272,7 +273,12 @@ install_files() {
       done
     fi
   else
-    ref=${SLIPWAY_REF:-main}
+    # A pinned release gets the compose file and Caddyfile it was released with.
+    default_ref=main
+    case $version in
+      [0-9]*.[0-9]*.[0-9]*) default_ref=v$version ;;
+    esac
+    ref=${SLIPWAY_REF:-$default_ref}
     case $ref in
       '' | -* | *[!A-Za-z0-9._/-]*) die "Invalid SLIPWAY_REF '$ref'." ;;
     esac

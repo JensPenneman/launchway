@@ -5,9 +5,10 @@ release, and Slipway builds it, runs it on one of your machines, gives it a
 domain with TLS, and keeps DNS pointed at your home connection. Everything is
 reachable through a REST API; the web UI is only a client of that API.
 
-This document is the contract between the people (and agents) building the
-pieces. It describes the first release (v0.1). Later ideas are listed at the
-end so that today's decisions do not block them.
+This document is the design contract of the code base. It describes the
+first release (v0.1). Later ideas are listed at the end so that today's
+decisions do not block them. The project is licensed under Apache-2.0
+([LICENSE](../LICENSE)).
 
 > Naming: the project, packages, labels and environment variables all use the
 > name **Slipway** (`slipway`, `SLIPWAY_*`, `@slipway/*`). Never describe the
@@ -453,11 +454,3 @@ volumes with scheduled encrypted backups · metrics and alerts · OIDC login
 requests · a CLI · TCP/UDP routing at the edge (Caddy L4) · Cloudflare Tunnel
 as an alternative to port forwarding · a host-native agent (no container) for
 machines without Docker Desktop · other Git hosts.
-
-## 16. Open questions for the owner
-
-1. Keep the Windows laptop as it is (Docker Desktop, platform in containers)
-   or move it to Linux? Both work; Linux is the better long-term server.
-2. License: Apache-2.0 proposed.
-3. Project name: *Slipway* is the working name; renaming is a search/replace.
-4. Platform URL: `deploy.example.com` proposed.

@@ -1,5 +1,5 @@
 import { generateId, type UpdateSettingsResult } from '@launchway/contracts';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { createApp } from '../../src/app.js';
@@ -62,7 +62,10 @@ describe('settings against PostgreSQL', () => {
     const [audit] = await db
       .select()
       .from(auditEvents)
-      .where(eq(auditEvents.action, 'settings.update'));
+      // Other suites update settings too; only this test's admin counts.
+      .where(
+        and(eq(auditEvents.action, 'settings.update'), eq(auditEvents.actorId, admin.user.id)),
+      );
     expect(audit).toMatchObject({
       actorType: 'user',
       actorId: admin.user.id,

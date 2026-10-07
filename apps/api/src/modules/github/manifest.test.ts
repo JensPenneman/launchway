@@ -31,7 +31,7 @@ describe('GitHub App manifest', () => {
         deployments: 'write',
         pull_requests: 'read',
       },
-      default_events: ['release', 'pull_request'],
+      default_events: ['release', 'push', 'pull_request'],
       public: false,
     });
   });

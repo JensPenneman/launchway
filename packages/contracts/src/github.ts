@@ -16,6 +16,7 @@ export type GitHubConnectionKind = z.infer<typeof GitHubConnectionKind>;
 export const GITHUB_WEBHOOK_EVENTS = [
   'ping',
   'release',
+  'push',
   'pull_request',
   'installation',
   'installation_repositories',
@@ -31,7 +32,7 @@ export const GITHUB_APP_PERMISSIONS = {
   deployments: 'write',
   pull_requests: 'read',
 } as const;
-export const GITHUB_APP_EVENTS = ['release', 'pull_request'] as const;
+export const GITHUB_APP_EVENTS = ['release', 'push', 'pull_request'] as const;
 /** How long the capabilities of a connection are cached by the API. */
 export const GITHUB_CAPABILITIES_TTL_MS = 5 * 60 * 1000;
 /** Release polling interval for PAT connections with autoDeployReleases. */

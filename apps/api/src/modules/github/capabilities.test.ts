@@ -12,12 +12,15 @@ describe('missingGrants', () => {
     expect(missingGrants(legacy, ['release'])).toEqual([
       'deployments: write',
       'pull_requests: read',
+      'event: push',
       'event: pull_request',
     ]);
-    expect(missingGrants({ ...full, deployments: 'read' }, ['release', 'pull_request'])).toEqual([
-      'deployments: write',
-    ]);
-    expect(missingGrants({ ...full, contents: 'write' }, ['pull_request', 'release'])).toEqual([]);
+    expect(
+      missingGrants({ ...full, deployments: 'read' }, ['release', 'push', 'pull_request']),
+    ).toEqual(['deployments: write']);
+    expect(
+      missingGrants({ ...full, contents: 'write' }, ['pull_request', 'push', 'release']),
+    ).toEqual([]);
   });
 });
 
@@ -47,7 +50,7 @@ describe('appCapabilities', () => {
       deployments: false,
       pullRequests: false,
       events: ['release'],
-      missing: ['deployments: write', 'pull_requests: read', 'event: pull_request'],
+      missing: ['deployments: write', 'pull_requests: read', 'event: push', 'event: pull_request'],
       pendingApproval: false,
       settingsUrl: 'https://github.com/settings/apps/launchway-lvj/permissions',
       installationSettingsUrl: 'https://github.com/organizations/acme/settings/installations/99',
@@ -64,7 +67,7 @@ describe('appCapabilities', () => {
           slug: 'launchway-lvj',
           owner: { login: 'acme', type: 'Organization' },
           permissions: full,
-          events: ['release', 'pull_request'],
+          events: ['release', 'push', 'pull_request'],
         },
         installation: { id: 99, account: null, permissions: legacy, events: ['release'] },
       },
@@ -81,7 +84,12 @@ describe('appCapabilities', () => {
     const caps = appCapabilities(
       id,
       {
-        app: { slug: 'x', owner: null, permissions: full, events: ['pull_request', 'release'] },
+        app: {
+          slug: 'x',
+          owner: null,
+          permissions: full,
+          events: ['pull_request', 'push', 'release'],
+        },
         installation: null,
       },
       at,
@@ -89,7 +97,7 @@ describe('appCapabilities', () => {
     expect(caps).toMatchObject({
       deployments: true,
       pullRequests: true,
-      events: ['pull_request', 'release'],
+      events: ['pull_request', 'push', 'release'],
       missing: [],
       pendingApproval: false,
       installationSettingsUrl: null,

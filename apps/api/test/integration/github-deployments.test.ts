@@ -12,7 +12,7 @@ import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { createDatabase, type Database } from '../../src/db/client.js';
-import { deployments, githubConnections, nodes, users } from '../../src/db/schema.js';
+import { deployments, githubConnections, nodes, previews, users } from '../../src/db/schema.js';
 import type { Deps } from '../../src/deps.js';
 import { createDeploymentsMirror } from '../../src/modules/github/deployments-mirror.js';
 import { secretContext } from '../../src/modules/github/providers.js';
@@ -112,7 +112,7 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
       deployments: false,
       pullRequests: false,
       events: ['release'],
-      missing: ['deployments: write', 'pull_requests: read', 'event: pull_request'],
+      missing: ['deployments: write', 'pull_requests: read', 'event: push', 'event: pull_request'],
       pendingApproval: false,
       settingsUrl: `https://github.com/settings/apps/${fakeApp.slug}/permissions`,
       installationSettingsUrl: `https://github.com/settings/installations/${installationId}`,
@@ -121,7 +121,7 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
 
     // The owner updates the app; the installation has not approved it yet. Cached until refresh.
     fakeApp.permissions = FULL;
-    fakeApp.events = ['release', 'pull_request'];
+    fakeApp.events = ['release', 'push', 'pull_request'];
     fakeApp.installationPermissions = { contents: 'read', metadata: 'read' };
     fakeApp.installationEvents = ['release'];
     const calls = github.calls.length;
@@ -133,11 +133,11 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
     });
 
     fakeApp.installationPermissions = FULL;
-    fakeApp.installationEvents = ['release', 'pull_request'];
+    fakeApp.installationEvents = ['release', 'push', 'pull_request'];
     expect(await capabilities(connectionId, true)).toMatchObject({
       deployments: true,
       pullRequests: true,
-      events: ['pull_request', 'release'],
+      events: ['pull_request', 'push', 'release'],
       missing: [],
       pendingApproval: false,
     });
@@ -214,6 +214,81 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
     await api.request(`/api/v1/apps/${app.id}/deployments`, json('POST', { ref: 'v1.0.0' }));
     await mirror.idle();
     expect(github.deployments.length).toBe(before);
+    stop();
+  });
+
+  it('mirrors a preview deployment to its transient environment with the preview URL', async () => {
+    const mirror = createDeploymentsMirror(deps);
+    const stop = mirror.start();
+    const appRes = await api.request(
+      '/api/v1/apps',
+      json('POST', {
+        name: `Previewed ${ghAppId}`,
+        connectionId,
+        repository: { owner: 'octo', name: repoName },
+        nodeId,
+      }),
+    );
+    expect(appRes.status).toBe(201);
+    const app = (await appRes.json()) as App;
+    const hostname = `previewed-${ghAppId}-pr-7.preview.example.com`;
+    const [preview] = await db
+      .insert(previews)
+      .values({
+        appId: app.id,
+        prNumber: 7,
+        prTitle: 'Try a thing',
+        headSha: sha('ghd-pr-7'),
+        branch: 'feat/thing',
+        hostname,
+        status: 'deploying',
+      })
+      .returning();
+    const [row] = await db
+      .insert(deployments)
+      .values({
+        appId: app.id,
+        nodeId,
+        ref: sha('ghd-pr-7'),
+        commitSha: sha('ghd-pr-7'),
+        trigger: 'preview',
+        previewId: preview?.id ?? null,
+        environmentName: 'preview/pr-7',
+        createdAt: new Date(),
+      })
+      .returning();
+    if (!row) throw new Error('no deployment');
+    deps.events.publish({
+      topic: 'deployments',
+      action: 'created',
+      resourceId: row.id,
+      data: { appId: app.id, status: 'queued', previewId: row.previewId },
+    });
+    await mirror.idle();
+    const mirrored = github.deployments.find(
+      (d) => (d.body as { description?: string }).description === `Launchway deployment ${row.id}`,
+    );
+    expect(mirrored?.body).toMatchObject({
+      ref: sha('ghd-pr-7'),
+      environment: 'preview/pr-7',
+      production_environment: false,
+      transient_environment: true,
+    });
+
+    await db
+      .update(deployments)
+      .set({ status: 'running', startedAt: new Date() })
+      .where(eq(deployments.id, row.id));
+    deps.events.publish({
+      topic: 'deployments',
+      action: 'updated',
+      resourceId: row.id,
+      data: { appId: app.id, status: 'running', previewId: row.previewId },
+    });
+    await mirror.idle();
+    expect(mirrored?.statuses).toEqual([
+      expect.objectContaining({ state: 'success', environment_url: `https://${hostname}` }),
+    ]);
     stop();
   });
 

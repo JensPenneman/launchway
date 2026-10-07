@@ -4,8 +4,10 @@ import {
   type DeploymentStatus,
   isInProgressStatus,
   type PlatformEvent,
+  PRODUCTION_ENVIRONMENT,
+  type PreviewId,
 } from '@launchway/contracts';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';
 import { forgetInstallationTokens } from '../../lib/git-provider.js';
@@ -13,6 +15,7 @@ import { apps } from '../apps/schema.js';
 import { recordGitHubDeploymentId } from '../deployments/model.js';
 import { deployments } from '../deployments/schema.js';
 import { domains } from '../domains/schema.js';
+import { previews } from '../previews/schema.js';
 import { routes } from '../routes/schema.js';
 import { createSettingsService } from '../settings/service.js';
 import {
@@ -53,10 +56,9 @@ export function githubDeploymentState(status: DeploymentStatus): GitHubDeploymen
   }
 }
 
-export const PRODUCTION_ENVIRONMENT = 'production';
 const PREVIEW_ENVIRONMENT_PREFIX = 'preview/';
 
-/** GitHub environment of a deployment: `production`, or `preview/<previewKey>` for previews. */
+/** GitHub environment of a deployment: `production`, or `preview/pr-<n>` for previews. */
 export function githubEnvironment(environmentName: string | null | undefined) {
   const environment = environmentName?.trim() || PRODUCTION_ENVIRONMENT;
   const preview = environment.startsWith(PREVIEW_ENVIRONMENT_PREFIX);
@@ -76,7 +78,7 @@ export interface MirrorSnapshot {
     readonly status: DeploymentStatus;
     readonly statusMessage: string | null;
     readonly githubDeploymentId: number | null;
-    /** Set by preview deployments (`preview/<previewKey>`); null means production. */
+    /** `production`, or `preview/pr-<n>` for previews; null is treated as production. */
     readonly environmentName: string | null;
   };
   readonly app: {
@@ -96,14 +98,32 @@ export interface MirrorStore {
   saveGitHubDeploymentId(id: DeploymentId, githubDeploymentId: number): Promise<void>;
 }
 
-/** Reads `environmentName` when the deployments table has it (preview deployments). */
-function environmentNameOf(row: object): string | null {
-  const value = (row as { environmentName?: unknown }).environmentName;
-  return typeof value === 'string' && value !== '' ? value : null;
-}
-
 export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>): MirrorStore {
   const settings = createSettingsService(deps);
+
+  /** A preview's own host, or the hostname of the app's oldest production route. */
+  async function environmentUrlOf(
+    appId: AppId,
+    previewId: PreviewId | null,
+  ): Promise<string | null> {
+    if (previewId) {
+      const [preview] = await deps.db
+        .select({ hostname: previews.hostname })
+        .from(previews)
+        .where(eq(previews.id, previewId));
+      return preview ? `https://${preview.hostname}` : null;
+    }
+    const [route] = await deps.db
+      .select({ hostname: domains.hostname })
+      .from(routes)
+      .innerJoin(domains, eq(domains.id, routes.domainId))
+      .leftJoin(previews, eq(previews.routeId, routes.id))
+      .where(and(eq(routes.appId, appId), eq(routes.targetKind, 'app'), isNull(previews.id)))
+      .orderBy(asc(routes.createdAt), asc(routes.id))
+      .limit(1);
+    return route ? `https://${route.hostname}` : null;
+  }
+
   return {
     async load(id) {
       const [row] = await deps.db
@@ -113,13 +133,7 @@ export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>
         .innerJoin(githubConnections, eq(githubConnections.id, apps.connectionId))
         .where(eq(deployments.id, id));
       if (!row) return null;
-      const [route] = await deps.db
-        .select({ hostname: domains.hostname })
-        .from(routes)
-        .innerJoin(domains, eq(domains.id, routes.domainId))
-        .where(and(eq(routes.appId, row.app.id), eq(routes.targetKind, 'app')))
-        .orderBy(asc(routes.createdAt), asc(routes.id))
-        .limit(1);
+      const environmentUrl = await environmentUrlOf(row.deployment.appId, row.deployment.previewId);
       return {
         deployment: {
           id: row.deployment.id,
@@ -128,7 +142,7 @@ export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>
           status: row.deployment.status,
           statusMessage: row.deployment.statusMessage,
           githubDeploymentId: row.deployment.githubDeploymentId,
-          environmentName: environmentNameOf(row.deployment),
+          environmentName: row.deployment.environmentName,
         },
         app: {
           repoOwner: row.app.repoOwner,
@@ -136,7 +150,7 @@ export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>
           githubDeployments: row.app.githubDeployments,
         },
         connection: row.connection,
-        environmentUrl: route ? `https://${route.hostname}` : null,
+        environmentUrl,
         publicUrl: (await settings.get()).effectivePublicUrl,
       };
     },

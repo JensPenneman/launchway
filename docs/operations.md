@@ -248,6 +248,15 @@ as one app (here with the slug `login`) and is wired up like this:
    app has to be redeployed before the edge can reach the service.
 4. Redeploy the app if asked, then mark routes as protected.
 
+Over the API, step 1 is `PATCH /api/v1/apps/{id}` with `proxyServices`
+(admin role) and step 3 is `PATCH /api/v1/settings` with `forwardAuthTarget`
+(`{appId, service, port, uri}`). `forwardAuthTarget` and `forwardAuthUrl`
+exclude each other: set the one you do not use to `null`. The answer carries
+`hints` (`redeploy-required`, `gate-unreachable`). While the target cannot be
+reached (app deleted, app not on the edge node), protected routes are not
+served. Nodes need the matching agent version before services without a route
+are attached.
+
 Admins can add **extra Caddy directives** to a route (route editor → Extra
 Caddy directives). They go verbatim inside the site block, after the option
 directives and before the upstream, and Caddy checks them when you save. For
@@ -272,6 +281,17 @@ request_header -X-API-KEY
 `extraDirectives` (`PATCH /api/v1/routes/{id}`, admin role). The answer
 lists `warnings` when Caddy could not be reached and only the structural
 check ran.
+
+## Platform variables
+
+Every deployment writes these variables into the app's environment, next to
+the variables you set: `LAUNCHWAY_APP` (slug), `LAUNCHWAY_APP_ID`,
+`LAUNCHWAY_DEPLOYMENT_ID`, `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA`,
+`LAUNCHWAY_COMMIT_SHA_SHORT` and `LAUNCHWAY_NODE` (node name). The
+`LAUNCHWAY_` prefix is reserved: the API refuses app variables that start with
+it. They reach the containers the same way as your own variables: a
+single-`Dockerfile` app gets them in its environment, and Compose files can
+reference them like any other variable (for example `${LAUNCHWAY_REF}`).
 
 ## Add a node
 

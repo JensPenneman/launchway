@@ -36,7 +36,7 @@ reachable through a REST API; the web UI is only a client of that API.
   encrypted at rest, and there are no external services besides GitHub, your
   DNS provider and Let's Encrypt.
 
-## Features in v0.1
+## Features
 
 - **Deployments from GitHub.** Connect through a GitHub App that Launchway
   creates for you (with signed, deduplicated webhooks), or through a
@@ -48,7 +48,9 @@ reachable through a REST API; the web UI is only a client of that API.
 - **Compose runtime.** One or more Compose files, or a single `Dockerfile`.
   Before anything runs, the node's agent checks the configuration against a
   policy: no host bind mounts, no privileged containers, no host network or
-  PID namespace, no capabilities outside a small allow-list.
+  PID namespace, no capabilities outside a small allow-list. An admin can
+  trust an app (`trustedMounts`) to bind-mount paths below roots the admin
+  allowed on its node (`allowedBindRoots`).
 - **Rollback** by redeploying an older release; images cached on the node
   make it fast.
 - **Live logs.** Deployment output and container logs stream to the UI and
@@ -57,7 +59,10 @@ reachable through a REST API; the web UI is only a client of that API.
   from your routes, with Let's Encrypt certificates and a DNS check before a
   domain is served. A route points at an app service, an external
   `host:port` or a redirect, with optional forward authentication,
-  compression and HSTS.
+  compression and HSTS. The forward-auth gate can be an external URL or a
+  service of one of your apps, attached to the proxy network without a
+  public route (`proxyServices`); admins can add extra Caddy directives to a
+  route, checked by Caddy when saved.
 - **DNS management.** Cloudflare and manual providers behind a plugin
   interface. An anchor hostname follows your public IPv4 (dynamic DNS); app
   domains are CNAME records pointing at it.
@@ -69,7 +74,8 @@ reachable through a REST API; the web UI is only a client of that API.
   `viewer`), invitations, scoped API tokens, rate limits and an audit log of
   every change.
 - **Environment variables** per app, encrypted at rest. Values marked secret
-  are never returned by the API.
+  are never returned by the API. Every deployment also gets `LAUNCHWAY_APP`,
+  `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA` and the other platform variables.
 - **API first.** REST under `/api/v1`, an OpenAPI 3.1 document and
   interactive API docs. The web UI is a client of that API and validates every
   response against the shared contract schemas.

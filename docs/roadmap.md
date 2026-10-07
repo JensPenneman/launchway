@@ -58,6 +58,11 @@ features that are deliberately out of scope for v0.1 are listed in
   `DEPLOYMENT_TRIGGERS` (with a migration) if the distinction matters.
 - Webhook deliveries of apps whose installation was removed still pass the
   signature check; their release events fail to resolve the ref (logged).
+- Members can still change the source of a trusted app (connection,
+  repository, Compose files), which inherits the admin's mount trust
+  ([ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md)).
+  Consider requiring the admin role for source changes while `trustedMounts`
+  is on.
 
 ## Agent
 
@@ -82,6 +87,13 @@ features that are deliberately out of scope for v0.1 are listed in
   different content then). Run them against the exact checked document, and
   move the service schema to an allow-list of known keys so new Compose
   features fail closed.
+- Trusted apps may bind-mount below the node's allowed roots, but local-driver
+  volumes with `o=bind` or a `device` below such a root are still refused.
+- Compose also gives every service its bare service name as an alias on the
+  proxy network, so two apps with a service called `app` both answer to `app`
+  there. Only the `<slug>-<service>` aliases are checked for collisions; set
+  the proxy network aliases explicitly in the generated override (or attach
+  through a network-scoped alias only).
 
 ## Nodes and edge
 
@@ -95,6 +107,13 @@ features that are deliberately out of scope for v0.1 are listed in
 - `forward_auth` copies only the `X-Auth-Request-User`, `-Email` and `-Groups`
   headers (oauth2-proxy style). Other gates may need other headers or a login
   redirect (`handle_errors`).
+- The `redeploy-required` hint after a forward-auth target change is judged
+  from configuration (routes, `proxyServices`, the previous target), not from
+  the containers on the node. Recording the attached services per deployment
+  (or the networks in `ServiceStatus`) would make it exact.
+- A forward-auth target on an app that is not on the edge node keeps protected
+  routes offline (fail closed). Supporting it needs the gate port published on
+  the LAN like routed ports.
 - Without Caddy (development), every relevant change logs an edge load error
   and failed loads are retried with backoff (up to every 5 minutes); log an
   unreachable admin API at `warn`.
@@ -129,6 +148,8 @@ features that are deliberately out of scope for v0.1 are listed in
   OpenAPI document in CI ([ADR 0013](adr/0013-web-ui-data-layer.md)).
 - The API tokens tab is shown from `member` up, while the API also lets
   viewers create read-only tokens.
+- No Playwright test covers the forward-auth radio (external URL or app
+  service) or the extra-directives editor yet.
 
 ## Operations and delivery
 
@@ -145,3 +166,9 @@ features that are deliberately out of scope for v0.1 are listed in
 - Trivy only reports (SARIF) after the images are pushed and signed, for
   amd64 only. Add a gating scan (`exit-code: 1` on fixable CRITICAL) to the
   CI image build.
+- Dependabot ignores `msw` major updates because `@vitest/mocker` only
+  accepts msw 2. Drop the ignore in `.github/dependabot.yml` and upgrade once
+  vitest accepts msw 3.
+- `pnpm-workspace.yaml` overrides `esbuild` under `@esbuild-kit/core-utils`
+  (pulled in by drizzle-kit 0.31) to clear an advisory. Remove the override
+  when moving to drizzle-kit 1.x, which drops `@esbuild-kit`.

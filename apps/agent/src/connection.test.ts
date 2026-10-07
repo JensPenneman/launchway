@@ -28,10 +28,14 @@ interface Harness {
   sockets: WebSocket[];
 }
 
-async function startServer(refuse: (authorization?: string) => boolean = () => false) {
+async function startServer(
+  refuse: (authorization?: string) => boolean = () => false,
+  autoPong = true,
+) {
   const server = new WebSocketServer({
     port: 0,
     host: '127.0.0.1',
+    autoPong,
     verifyClient: (info, done) => done(!refuse(info.req.headers.authorization), 401),
   });
   await new Promise<void>((resolve) => server.once('listening', () => resolve()));
@@ -120,6 +124,35 @@ describe('AgentConnection', () => {
     await waitFor(() => connection.connected);
     expect(harness.authorizations).toEqual([`Bearer ${joinToken}`]);
     expect(tokens.token()).toBe(credential);
+  });
+
+  it('reconnects when the server stops answering (half-open socket)', async () => {
+    // Without pongs and replies the agent hears nothing after hello.ok.
+    const harness = await startServer(() => false, false);
+    const connection = new AgentConnection({
+      url: harness.url,
+      logger,
+      token: () => credential,
+      hello: async () => ({
+        protocolVersion: AGENT_PROTOCOL_VERSION,
+        agentVersion: '0.1.0',
+        hostname: 'test-node',
+        platform: { os: 'linux', arch: 'amd64' },
+        lanIp: null,
+        docker: null,
+        dockerError: null,
+      }),
+      onHelloOk: async () => {},
+      onRequest: () => {},
+      backoff: { initialMs: 10, maxMs: 50 },
+    });
+    cleanups.push(async () => {
+      await connection.stop();
+      await new Promise<void>((resolve) => harness.server.close(() => resolve()));
+    });
+    connection.start();
+    await waitFor(() => harness.sockets.length >= 2);
+    expect(harness.received.filter((m) => m.type === 'hello').length).toBeGreaterThanOrEqual(2);
   });
 
   it('joins with the join token, stores the credential, heartbeats and answers requests', async () => {

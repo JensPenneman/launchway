@@ -58,6 +58,9 @@ export class AgentConnection {
   #stopped = true;
   #reconnectTimer: NodeJS.Timeout | undefined;
   #heartbeatTimer: NodeJS.Timeout | undefined;
+  #heartbeatIntervalMs = 0;
+  /** Last frame (message or pong) from the server; a silent peer means a half-open socket. */
+  #lastFrameAt = 0;
   #handshakeTimer: NodeJS.Timeout | undefined;
 
   constructor(options: AgentConnectionOptions) {
@@ -117,7 +120,11 @@ export class AgentConnection {
         socket.close(1011, 'hello failed');
       });
     });
+    socket.on('pong', () => {
+      this.#lastFrameAt = Date.now();
+    });
     socket.on('message', (data, isBinary) => {
+      this.#lastFrameAt = Date.now();
       if (isBinary) {
         this.#log.warn('ignoring binary frame');
         return;
@@ -187,6 +194,8 @@ export class AgentConnection {
     this.#ready = true;
     this.#attempt = 0;
     clearInterval(this.#heartbeatTimer);
+    this.#heartbeatIntervalMs = payload.heartbeatIntervalMs;
+    this.#lastFrameAt = Date.now();
     this.#heartbeatTimer = setInterval(() => this.#heartbeat(), payload.heartbeatIntervalMs);
     this.#log.info(
       { nodeId: payload.nodeId, serverVersion: payload.serverVersion },
@@ -196,6 +205,19 @@ export class AgentConnection {
   }
 
   #heartbeat(): void {
+    const socket = this.#socket;
+    if (!socket) return;
+    // TCP alone may take ~15 minutes to notice a vanished peer (NAT expiry, dropped link).
+    if (Date.now() - this.#lastFrameAt > 2.5 * this.#heartbeatIntervalMs) {
+      this.#log.warn('no answer from the control plane; reconnecting');
+      socket.terminate();
+      return;
+    }
+    try {
+      socket.ping();
+    } catch {
+      // Closing already; the close event reconnects.
+    }
     this.send({
       id: randomUUID(),
       type: 'heartbeat',

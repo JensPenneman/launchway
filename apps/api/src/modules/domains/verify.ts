@@ -100,6 +100,8 @@ export async function observeDns(
 export interface DnsCheckResult {
   readonly ok: boolean;
   readonly message: string;
+  /** The lookup itself failed (timeout, SERVFAIL): says nothing about the records. */
+  readonly inconclusive?: boolean;
 }
 
 function describe(observed: ObservedRecords): string {
@@ -147,7 +149,11 @@ export function evaluateDns(
     };
   }
   if (context.lookupError && observed.a.length + observed.cname.length === 0) {
-    return { ok: false, message: `DNS lookup of ${hostname} failed (${context.lookupError})` };
+    return {
+      ok: false,
+      inconclusive: true,
+      message: `DNS lookup of ${hostname} failed (${context.lookupError})`,
+    };
   }
   const want =
     expected.type === 'CNAME' ? `a CNAME to ${expected.value}` : `an A record ${expected.value}`;

@@ -269,6 +269,15 @@ describe('DNS accounts, zones, records and domains against PostgreSQL', () => {
     expect(active.status).toBe('active');
     expect((await service.verify(domain.id, actor)).status).toBe('active');
 
+    // A resolver failure says nothing about the records: the domain stays active.
+    const timingOut: DnsLookup = {
+      resolveCname: () => Promise.reject(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })),
+      resolve4: () => Promise.reject(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })),
+      resolve6: () => Promise.reject(Object.assign(new Error('timeout'), { code: 'ETIMEOUT' })),
+    };
+    const flaky = createDomainsService(deps, { resolver: timingOut });
+    expect(await flaky.verify(domain.id, actor)).toMatchObject({ ok: false, status: 'active' });
+
     const audit = await db
       .select({ action: auditEvents.action, actorType: auditEvents.actorType })
       .from(auditEvents)
@@ -278,6 +287,7 @@ describe('DNS accounts, zones, records and domains against PostgreSQL', () => {
       'domain.verify',
       'domain.verify',
       'domain.activate',
+      'domain.verify',
       'domain.verify',
     ]);
     expect(events).toContain('domains.updated');

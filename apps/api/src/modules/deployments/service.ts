@@ -7,11 +7,12 @@ import {
   type DeploymentLogsQuery,
   type DeploymentPage,
   type DeploymentTrigger,
+  IN_PROGRESS_DEPLOYMENT_STATUSES,
   isInProgressStatus,
   type ServiceStatus,
   SSE_EVENTS,
 } from '@slipway/contracts';
-import { and, asc, desc, eq, gt, lt, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
@@ -244,26 +245,33 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
           cause: error,
         });
       }
-      const updated = await deps.db.transaction(async (tx) => {
-        const [changed] = await tx
+      const changed = await deps.db.transaction(async (tx) => {
+        // The agent's result may have landed already: only annotate a deployment still running.
+        const [annotated] = await tx
           .update(deployments)
           .set({ statusMessage: 'Cancellation requested' })
-          .where(eq(deployments.id, row.id))
+          .where(
+            and(
+              eq(deployments.id, row.id),
+              inArray(deployments.status, IN_PROGRESS_DEPLOYMENT_STATUSES),
+            ),
+          )
           .returning();
         await recordAudit(tx, actor, {
           action: 'deployment.cancel',
           target: { type: 'deployment', id: row.id },
           summary: { appId: row.appId, requested: true, status: row.status },
         });
-        return changed ?? row;
+        return annotated;
       });
+      if (!changed) return toDeployment(await loadRow(id));
       deps.events.publish({
         topic: 'deployments',
         action: 'updated',
         resourceId: row.id,
-        data: { appId: row.appId, status: updated.status },
+        data: { appId: row.appId, status: changed.status },
       });
-      return toDeployment(updated);
+      return toDeployment(changed);
     },
 
     async *logStream(id, query, signal) {
@@ -279,8 +287,8 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
             wake?.();
           })
         : () => {};
-      try {
-        let last = query.after ?? -1;
+      let last = query.after ?? -1;
+      async function* history(): AsyncGenerator<SseMessage> {
         for (;;) {
           const rows = await deps.db
             .select()
@@ -304,9 +312,15 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
           }
           if (rows.length < HISTORY_BATCH) break;
         }
-
+      }
+      try {
+        yield* history();
+        if (signal.aborted) return;
         const current = await loadRow(id);
         if (!query.follow || !isInProgressStatus(current.status)) {
+          // Lines stored between the history read and the status check (the final ones).
+          yield* history();
+          if (signal.aborted) return;
           yield { event: SSE_EVENTS.end, data: { status: current.status } };
           return;
         }

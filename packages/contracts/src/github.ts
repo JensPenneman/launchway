@@ -19,9 +19,20 @@ export const GITHUB_WEBHOOK_EVENTS = [
   'installation',
   'installation_repositories',
 ] as const;
-/** Permissions/events requested by the generated GitHub App. */
-export const GITHUB_APP_PERMISSIONS = { contents: 'read', metadata: 'read' } as const;
-export const GITHUB_APP_EVENTS = ['release'] as const;
+/**
+ * Permissions/events requested by the generated GitHub App. `deployments: write` mirrors Launchway
+ * deployments to GitHub's Deployments API; `pull_requests: read` and the `pull_request` event serve
+ * preview deployments. Apps created before these were added must be updated on GitHub (ADR 0017).
+ */
+export const GITHUB_APP_PERMISSIONS = {
+  contents: 'read',
+  metadata: 'read',
+  deployments: 'write',
+  pull_requests: 'read',
+} as const;
+export const GITHUB_APP_EVENTS = ['release', 'pull_request'] as const;
+/** How long the capabilities of a connection are cached by the API. */
+export const GITHUB_CAPABILITIES_TTL_MS = 5 * 60 * 1000;
 /** Release polling interval for PAT connections with autoDeployReleases. */
 export const GITHUB_RELEASE_POLL_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -198,3 +209,56 @@ export type ResolvedGitRef = z.infer<typeof ResolvedGitRef>;
 
 export const GitHubRefQuery = z.object({ connectionId: GitHubConnectionId });
 export type GitHubRefQuery = z.infer<typeof GitHubRefQuery>;
+
+// --- Capabilities ----------------------------------------------------------------------------
+
+export const GitHubCapabilitiesQuery = z.object({
+  refresh: z
+    .stringbool()
+    .default(false)
+    .openapi({ description: 'Bypass the 5-minute cache (after granting permissions on GitHub)' }),
+});
+export type GitHubCapabilitiesQuery = z.infer<typeof GitHubCapabilitiesQuery>;
+
+/**
+ * What a connection may do on GitHub beyond reading code. GitHub Apps: read with the app JWT
+ * (`GET /app` and the installation). Tokens: probed with cheap read calls on a repository; write
+ * access to deployments is inferred from the last mirror attempt.
+ */
+export const GitHubConnectionCapabilities = z
+  .object({
+    connectionId: GitHubConnectionId,
+    kind: GitHubConnectionKind,
+    deployments: z
+      .boolean()
+      .openapi({ description: 'Launchway can create deployments and statuses on GitHub' }),
+    pullRequests: z.boolean().openapi({ description: 'Launchway can read pull requests' }),
+    events: z
+      .array(z.string())
+      .openapi({ description: 'Webhook events delivered to Launchway (empty for tokens)' }),
+    missing: z.array(z.string()).openapi({
+      description:
+        'Permissions (`deployments: write`) and events (`event: pull_request`) still to grant',
+      example: ['deployments: write', 'event: pull_request'],
+    }),
+    pendingApproval: z.boolean().openapi({
+      description:
+        'The GitHub App requests everything, but the installation has not approved the new permissions yet',
+    }),
+    settingsUrl: z.url().openapi({
+      description:
+        "Where to grant the permissions: the app's permission settings, or the token page",
+    }),
+    installationSettingsUrl: z.url().nullable().openapi({
+      description: 'Where the installation owner approves updated permissions (GitHub Apps)',
+    }),
+    probedRepository: z.string().nullable().openapi({
+      description: 'Repository the token was probed on (tokens only)',
+    }),
+    lastDeniedAt: Timestamp.nullable().openapi({
+      description: 'Last time GitHub refused a deployment mirror request of this connection',
+    }),
+    checkedAt: Timestamp,
+  })
+  .openapi('GitHubConnectionCapabilities');
+export type GitHubConnectionCapabilities = z.infer<typeof GitHubConnectionCapabilities>;

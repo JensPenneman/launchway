@@ -3,6 +3,7 @@ import {
   CreateNodeInput,
   CreatePatConnectionInput,
   type GitHubConnection,
+  type GitHubConnectionCapabilities,
   generateId,
   type Node,
   type NodeJoinToken,
@@ -302,12 +303,39 @@ export const platformHandlers = [
         description: 'Deploys GitHub releases with Launchway',
         public: false,
         default_permissions: { contents: 'read', metadata: 'read' },
-        default_events: ['release'],
+        default_events: ['release', 'pull_request'],
         setup_on_update: true,
         request_oauth_on_install: false,
       },
     };
     return HttpResponse.json(start);
+  }),
+  http.get(`${API}/github/connections/:id/capabilities`, ({ params }) => {
+    const denied = guard('viewer');
+    if (denied) return denied;
+    const connection = db.connections.find((item) => item.id === params.id);
+    if (!connection) return problem('not-found');
+    // The demo app connection predates the deployment permissions; the token has them.
+    const legacy = connection.kind === 'app';
+    const capabilities: GitHubConnectionCapabilities = {
+      connectionId: connection.id,
+      kind: connection.kind,
+      deployments: !legacy,
+      pullRequests: !legacy,
+      events: legacy ? ['release'] : [],
+      missing: legacy ? ['deployments: write', 'pull_requests: read', 'event: pull_request'] : [],
+      pendingApproval: false,
+      settingsUrl: connection.app
+        ? `https://github.com/settings/apps/${connection.app.slug}/permissions`
+        : 'https://github.com/settings/personal-access-tokens',
+      installationSettingsUrl: connection.app?.installationId
+        ? `https://github.com/settings/installations/${connection.app.installationId}`
+        : null,
+      probedRepository: legacy ? null : `${connection.account?.login ?? 'octo'}/notes`,
+      lastDeniedAt: null,
+      checkedAt: now(),
+    };
+    return HttpResponse.json(capabilities);
   }),
   http.delete(`${API}/github/connections/:id`, ({ params }) => {
     const denied = guard('admin');

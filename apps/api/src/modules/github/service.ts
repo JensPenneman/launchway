@@ -46,6 +46,7 @@ import {
   toGitProblem,
 } from './providers.js';
 import { githubConnections } from './schema.js';
+import { resetConnectionState } from './state.js';
 
 export function toConnection(row: ConnectionRow): GitHubConnection {
   const app =
@@ -270,6 +271,7 @@ export function createGitHubService(deps: Deps): GitHubService {
         });
       });
       if (row.appId !== null) forgetInstallationTokens(row.appId);
+      resetConnectionState(deps.events, id);
       publishChange('updated', id);
       return connectionUrls(url, id).settingsUrl;
     },
@@ -292,6 +294,7 @@ export function createGitHubService(deps: Deps): GitHubService {
         });
       });
       if (row.appId !== null) forgetInstallationTokens(row.appId);
+      resetConnectionState(deps.events, id);
       publishChange('deleted', id);
     },
 

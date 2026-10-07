@@ -179,6 +179,7 @@ export const appHandlers = [
       autoDeployReleases: data.autoDeployReleases,
       autoDeployPrereleases: data.autoDeployPrereleases,
       autoDeployBranch: data.autoDeployBranch,
+      githubDeployments: data.githubDeployments,
       trustedMounts: data.trustedMounts,
       proxyServices: [],
       activeDeploymentId: null,

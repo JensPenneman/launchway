@@ -334,7 +334,8 @@ export interface DnsProvider {
   listing, release listing, clone tokens and webhooks all use installation
   tokens (`@octokit/app`, `@octokit/rest`).
 - **Personal access token (fallback)**: a fine-grained PAT with
-  `Contents: read`, `Metadata: read`. Same interface, no webhooks (polling
+  `Contents: read`, `Metadata: read` (plus `Deployments: read and write` to
+  show deployments on GitHub). Same interface, no webhooks (polling
   releases every 5 min when `autoDeployReleases` is on).
 - **Webhooks** at `POST /api/v1/webhooks/github`: HMAC `X-Hub-Signature-256`
   verified with timing-safe comparison; events handled: `release`
@@ -346,6 +347,18 @@ export interface DnsProvider {
   `auto` and are deduplicated per tag or commit.)*
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; }` so another host could be added later.
+- **Deployments on GitHub**: Launchway mirrors every deployment to GitHub's
+  Deployments API (environment `production`, or `preview/<previewKey>` for
+  previews) and posts its status as it moves (`in_progress`, `success` with
+  the app's first route as environment URL and the deployment page as log
+  link, `failure`, `inactive`, `error`). The GitHub id is kept in
+  `deployments.github_deployment_id`. It is best effort: a missing permission
+  or a GitHub outage is logged and never fails a deployment. Apps opt out with
+  `App.githubDeployments: false`. This needs `deployments: write`; the app
+  manifest also requests `pull_requests: read` and the `pull_request` event.
+  Apps created before must be updated on GitHub, and
+  `GET /github/connections/{id}/capabilities` (cached 5 minutes) reports what
+  is missing ([ADR 0017](adr/0017-github-deployments-mirror.md)).
 
 ## 9. Node agent
 
@@ -406,7 +419,8 @@ export interface DnsProvider {
   (database reachable).
 - Resource overview (all under `/api/v1`):
   `setup`, `auth/*` (login, logout, passkeys), `me`, `users`, `invitations`,
-  `tokens`, `settings`, `audit`, `github/connections`, `github/repos`,
+  `tokens`, `settings`, `audit`, `github/connections`,
+  `github/connections/{id}/capabilities`, `github/repos`,
   `github/repos/{owner}/{repo}/releases`, `apps`, `apps/{id}/env`,
   `apps/{id}/deployments`, `deployments/{id}`, `deployments/{id}/logs`,
   `deployments/{id}/cancel`, `domains`, `domains/{id}/verify`, `routes`,

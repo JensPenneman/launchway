@@ -43,7 +43,7 @@ export function buildManifest(
     redirect_url: urls.redirectUrl,
     callback_urls: [urls.redirectUrl],
     setup_url: urls.setupUrl,
-    description: 'Deploys GitHub releases of your repositories with Launchway.',
+    description: 'Deploys your repositories with Launchway and reports the deployments to GitHub.',
     public: false,
     default_permissions: { ...GITHUB_APP_PERMISSIONS },
     default_events: [...GITHUB_APP_EVENTS],

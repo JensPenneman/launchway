@@ -2,6 +2,7 @@ import {
   AppManifestStart,
   type CreatePatConnectionInput,
   GitHubConnection,
+  GitHubConnectionCapabilities,
   GitHubConnectionList,
   GitHubReleasePage,
   GitHubRepoPage,
@@ -15,6 +16,27 @@ export const connectionsQuery = queryOptions({
   queryKey: [...keys.github, 'connections'],
   queryFn: ({ signal }) => request('/github/connections', { schema: GitHubConnectionList, signal }),
 });
+
+/** What a connection may do on GitHub (cached 5 minutes by the API unless `refresh`). */
+export function capabilitiesQuery(connectionId: string) {
+  return queryOptions({
+    queryKey: [...keys.github, 'capabilities', connectionId],
+    queryFn: ({ signal }) =>
+      request(`/github/connections/${encodeURIComponent(connectionId)}/capabilities`, {
+        schema: GitHubConnectionCapabilities,
+        signal,
+      }),
+    staleTime: 60_000,
+    retry: false,
+  });
+}
+
+export function refreshCapabilities(connectionId: string) {
+  return request(`/github/connections/${encodeURIComponent(connectionId)}/capabilities`, {
+    query: { refresh: true },
+    schema: GitHubConnectionCapabilities,
+  });
+}
 
 export function createPatConnection(input: CreatePatConnectionInput) {
   return request('/github/connections/pat', {

@@ -98,6 +98,11 @@ export const TrustedMounts = z.boolean().openapi({
   description:
     "Allows bind mounts below the node's allowedBindRoots, external volumes and custom volume names. Setting it requires the admin role.",
 });
+/** Per-app switch of the GitHub deployment mirror (ADR 0017). */
+export const GitHubDeploymentsFlag = z.boolean().openapi({
+  description:
+    "Mirror this app's deployments to GitHub's Deployments API (needs deployments: write on the connection)",
+});
 /**
  * Services attached to the proxy network without a public route (e.g. a forward-auth gate the
  * edge calls by its alias). Admin only to change.
@@ -140,6 +145,7 @@ export const App = z
       description: 'With autoDeployReleases: also deploy releases marked as prerelease',
     }),
     autoDeployBranch: AutoDeployBranch.nullable(),
+    githubDeployments: GitHubDeploymentsFlag,
     trustedMounts: TrustedMounts,
     proxyServices: ProxyServices,
     activeDeploymentId: DeploymentId.nullable(),
@@ -171,6 +177,7 @@ export const CreateAppInput = z
     autoDeployReleases: z.boolean().default(false),
     autoDeployPrereleases: z.boolean().default(false),
     autoDeployBranch: AutoDeployBranch.nullable().default(null),
+    githubDeployments: GitHubDeploymentsFlag.default(true),
     trustedMounts: TrustedMounts.default(false),
   })
   .superRefine(checkSourceXor)
@@ -192,6 +199,7 @@ export const UpdateAppInput = z
     autoDeployReleases: z.boolean().optional(),
     autoDeployPrereleases: z.boolean().optional(),
     autoDeployBranch: AutoDeployBranch.nullable().optional(),
+    githubDeployments: GitHubDeploymentsFlag.optional(),
     trustedMounts: TrustedMounts.optional(),
     proxyServices: ProxyServices.optional().openapi({
       description: 'Requires the admin role; takes effect with the next deployment',

@@ -49,6 +49,7 @@ export function SettingsTab({ app }: { app: App }) {
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployReleases);
   const [autoDeployPrereleases, setAutoDeployPrereleases] = useState(app.autoDeployPrereleases);
   const [autoDeployBranch, setAutoDeployBranch] = useState(app.autoDeployBranch ?? '');
+  const [githubDeployments, setGithubDeployments] = useState(app.githubDeployments);
   const isAdmin = useCan('admin');
   const [proxyServices, setProxyServices] = useState(app.proxyServices.join('\n'));
   const proxyServiceList = parseServiceList(proxyServices);
@@ -70,6 +71,7 @@ export function SettingsTab({ app }: { app: App }) {
     autoDeployReleases: autoDeploy,
     autoDeployPrereleases,
     autoDeployBranch: autoDeployBranch.trim() === '' ? null : autoDeployBranch.trim(),
+    githubDeployments,
     ...(isAdmin && proxyServicesChanged ? { proxyServices: proxyServiceList } : {}),
   });
   const autoDeployBranchError = input.success
@@ -237,6 +239,20 @@ export function SettingsTab({ app }: { app: App }) {
                 onChange={(event) => setAutoDeployBranch(event.target.value)}
               />
             </Field>
+            <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+              <div>
+                <Label htmlFor="settings-github-deployments">Show deployments on GitHub</Label>
+                <p className="text-xs text-muted-foreground">
+                  Records each deployment and its status in the repository's environments. Needs the
+                  deployments permission on the GitHub connection.
+                </p>
+              </div>
+              <Switch
+                id="settings-github-deployments"
+                checked={githubDeployments}
+                onCheckedChange={setGithubDeployments}
+              />
+            </div>
             <Field
               label="Proxy network services"
               error={proxyServicesError}

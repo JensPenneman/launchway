@@ -348,6 +348,7 @@ export function createApps(): App[] {
     autoDeployReleases: false,
     autoDeployPrereleases: false,
     autoDeployBranch: null,
+    githubDeployments: true,
     trustedMounts: false,
     proxyServices: [] as string[],
   };

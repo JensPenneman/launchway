@@ -26,7 +26,23 @@ export interface FakeApp {
   webhookSecret: string;
   privateKey: string;
   installations: Map<number, { login: string; type: 'User' | 'Organization' }>;
+  /** What the app requests (`GET /app`); defaults to the v0.1 read-only set. */
+  permissions?: Record<string, string>;
+  events?: string[];
+  /** What its installations approved (`GET /app/installations/{id}`); defaults to the above. */
+  installationPermissions?: Record<string, string>;
+  installationEvents?: string[];
 }
+
+/** A deployment created through the Deployments API, with the statuses posted to it. */
+export interface FakeDeployment {
+  id: number;
+  repo: string;
+  body: Record<string, unknown>;
+  statuses: Record<string, unknown>[];
+}
+
+const LEGACY_PERMISSIONS = { contents: 'read', metadata: 'read' };
 
 let keyPair: { privateKey: string } | undefined;
 
@@ -71,6 +87,9 @@ export class FakeGitHub {
   readonly patScopes = new Map<string, string>();
   /** Repository requests to answer with 502 before behaving normally (GitHub outages). */
   failRepoRequests = 0;
+  /** Deployments API: created deployments, and whether writes are refused (403). */
+  readonly deployments: FakeDeployment[] = [];
+  denyDeployments = false;
   /** Lifetime of issued installation tokens. */
   tokenLifetimeMs = 60 * 60 * 1000;
   readonly calls: string[] = [];
@@ -152,6 +171,45 @@ export class FakeGitHub {
     };
   }
 
+  /** App of a JWT-authenticated request (`iss` claim). */
+  private jwtApp(request: Request): FakeApp | undefined {
+    const token = (request.headers.get('authorization') ?? '').split(' ')[1] ?? '';
+    try {
+      const claims = JSON.parse(Buffer.from(token.split('.')[1] ?? '', 'base64url').toString());
+      return this.apps.get(Number(claims.iss));
+    } catch {
+      return undefined;
+    }
+  }
+
+  private async deploymentsApi(request: Request, repo: FakeRepo, rest: string) {
+    const fullName = `${repo.owner}/${repo.name}`;
+    if (request.method === 'GET') {
+      if (rest === 'pulls') return json(200, []);
+      return this.denyDeployments
+        ? json(403, { message: 'Resource not accessible by integration' })
+        : json(
+            200,
+            this.deployments.filter((d) => d.repo === fullName),
+          );
+    }
+    if (request.method !== 'POST') return json(404, { message: 'Not Found' });
+    if (this.denyDeployments) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    const body = (await request.json()) as Record<string, unknown>;
+    if (rest === 'deployments') {
+      const deployment = { id: 5000 + this.deployments.length, repo: fullName, body, statuses: [] };
+      this.deployments.push(deployment);
+      return json(201, { id: deployment.id, ref: body.ref, environment: body.environment });
+    }
+    const status = /^deployments\/(\d+)\/statuses$/.exec(rest);
+    const deployment = this.deployments.find((d) => d.id === Number(status?.[1]));
+    if (!deployment) return json(404, { message: 'Not Found' });
+    deployment.statuses.push(body);
+    return json(201, { id: deployment.statuses.length, state: body.state });
+  }
+
   private async route(request: Request, url: URL): Promise<Response> {
     const path = decodeURIComponent(url.pathname);
     const method = request.method;
@@ -186,6 +244,19 @@ export class FakeGitHub {
     const auth = this.authorized(request);
     if (!auth) return json(401, { message: 'Bad credentials' });
 
+    if (method === 'GET' && path === '/app') {
+      if (auth !== 'jwt') return json(401, { message: 'JWT required' });
+      const app = this.jwtApp(request);
+      if (!app) return json(404, { message: 'Not Found' });
+      return json(200, {
+        id: app.id,
+        slug: app.slug,
+        owner: { login: 'octo', type: 'User' },
+        permissions: app.permissions ?? LEGACY_PERMISSIONS,
+        events: app.events ?? ['release'],
+      });
+    }
+
     m = /^\/app\/installations\/(\d+)(\/access_tokens)?$/.exec(path);
     if (m) {
       if (auth !== 'jwt') return json(401, { message: 'JWT required' });
@@ -193,7 +264,12 @@ export class FakeGitHub {
       const app = [...this.apps.values()].find((a) => a.installations.has(installationId));
       if (!app) return json(404, { message: 'Not Found' });
       if (method === 'GET' && !m[2]) {
-        return json(200, { id: installationId, account: app.installations.get(installationId) });
+        return json(200, {
+          id: installationId,
+          account: app.installations.get(installationId),
+          permissions: app.installationPermissions ?? app.permissions ?? LEGACY_PERMISSIONS,
+          events: app.installationEvents ?? app.events ?? ['release'],
+        });
       }
       if (method === 'POST' && m[2]) {
         const body = await request.text();
@@ -232,8 +308,12 @@ export class FakeGitHub {
     }
     m = /^\/repos\/([^/]+)\/([^/]+)\/(.+)$/.exec(path);
     const repo = m ? this.repo(m[1] ?? '', m[2] ?? '') : undefined;
-    if (!m || !repo || method !== 'GET') return json(404, { message: 'Not Found' });
+    if (!m || !repo) return json(404, { message: 'Not Found' });
     const rest = m[3] ?? '';
+    if (rest === 'deployments' || rest.startsWith('deployments/') || rest === 'pulls') {
+      return this.deploymentsApi(request, repo, rest);
+    }
+    if (method !== 'GET') return json(404, { message: 'Not Found' });
 
     if (rest === 'releases') {
       const all = [...(repo.releases ?? [])]

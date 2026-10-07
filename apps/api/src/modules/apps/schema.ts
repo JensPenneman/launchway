@@ -36,6 +36,8 @@ export const apps = pgTable(
     autoDeployPrereleases: boolean('auto_deploy_prereleases').notNull().default(false),
     /** Pushes to this branch create an automatic deployment of the pushed commit. */
     autoDeployBranch: text('auto_deploy_branch'),
+    /** Mirror deployments to GitHub's Deployments API (ADR 0017). */
+    githubDeployments: boolean('github_deployments').notNull().default(true),
     /** Admin decision: bind mounts below the node's allowed roots and foreign volumes. */
     trustedMounts: boolean('trusted_mounts').notNull().default(false),
     /** Services attached to the proxy network without a route (sorted, unique). */

@@ -1,8 +1,10 @@
-import type { Deployment, DeploymentStatus, NodeId } from '@launchway/contracts';
+import type { Deployment, DeploymentId, DeploymentStatus, NodeId } from '@launchway/contracts';
+import { and, eq, isNull } from 'drizzle-orm';
+import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
 import type { RequestActor } from '../../lib/auth-context.js';
 import { logHubFor } from './log-hub.js';
-import type { deployments } from './schema.js';
+import { deployments } from './schema.js';
 
 export type DeploymentRow = typeof deployments.$inferSelect;
 
@@ -65,3 +67,20 @@ export const ACTIVE_STATUSES = [
   'building',
   'starting',
 ] as const satisfies readonly DeploymentStatus[];
+
+/**
+ * Records the id of the deployment mirrored to GitHub (ADR 0017). Only the first id sticks, so a
+ * repeated mirror attempt cannot overwrite it. No change event: nothing user-visible changed.
+ */
+export async function recordGitHubDeploymentId(
+  db: Executor,
+  id: DeploymentId,
+  githubDeploymentId: number,
+): Promise<boolean> {
+  const updated = await db
+    .update(deployments)
+    .set({ githubDeploymentId })
+    .where(and(eq(deployments.id, id), isNull(deployments.githubDeploymentId)))
+    .returning({ id: deployments.id });
+  return updated.length > 0;
+}

@@ -99,6 +99,11 @@ function client(token?: string): Octokit {
 
 const requestOptions = () => ({ request: { signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) } });
 
+/** Classifies a failed GitHub call (Octokit `RequestError` or other) into a GitProviderError. */
+export function classifyGitHubError(error: unknown): GitProviderError {
+  return classify(error);
+}
+
 function classify(error: unknown): GitProviderError {
   if (error instanceof GitProviderError) return error;
   const status =
@@ -407,6 +412,32 @@ async function cloneInstallationToken(
   } catch (error) {
     throw classify(error);
   }
+}
+
+/**
+ * Installation-wide token for calls made by the control plane itself (Deployments API, capability
+ * checks); cached like the provider's tokens and never sent to a node.
+ */
+export function installationAccessToken(
+  app: GitHubAppCredentials,
+  installationId: number,
+): Promise<string> {
+  return installationToken(app, installationId);
+}
+
+/** Short-lived app JWT (`GET /app`, installation metadata). */
+export async function appJwt(app: GitHubAppCredentials): Promise<string> {
+  try {
+    const auth = createAppAuth({ appId: app.appId, privateKey: app.privateKey });
+    return (await auth({ type: 'app' })).token;
+  } catch (error) {
+    throw classify(error);
+  }
+}
+
+/** Octokit with Launchway's user agent and silenced logging, for module-specific calls. */
+export function githubClient(token: string): Octokit {
+  return client(token);
 }
 
 /** Drops cached installation tokens of an app (installation removed, connection deleted). */

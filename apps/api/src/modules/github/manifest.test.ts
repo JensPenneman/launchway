@@ -13,7 +13,7 @@ import {
 const key = randomBytes(32);
 
 describe('GitHub App manifest', () => {
-  it('builds the manifest with the platform URLs and read-only permissions', () => {
+  it('builds the manifest with the platform URLs and the permissions Launchway needs', () => {
     const id = generateId('gh');
     const manifest = buildManifest(
       'https://deploy.example.com',
@@ -25,8 +25,13 @@ describe('GitHub App manifest', () => {
       redirect_url: 'https://deploy.example.com/api/v1/github/connections/app-manifest/callback',
       setup_url: `https://deploy.example.com/api/v1/github/connections/${id}/installation-callback`,
       hook_attributes: { url: 'https://deploy.example.com/api/v1/webhooks/github', active: true },
-      default_permissions: { contents: 'read', metadata: 'read' },
-      default_events: ['release'],
+      default_permissions: {
+        contents: 'read',
+        metadata: 'read',
+        deployments: 'write',
+        pull_requests: 'read',
+      },
+      default_events: ['release', 'pull_request'],
       public: false,
     });
   });

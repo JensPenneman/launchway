@@ -18,6 +18,7 @@ import { startDeploymentWorker } from './modules/deployments/dispatcher.js';
 import { createDeploymentSink } from './modules/deployments/sink.js';
 import { createDomainsService } from './modules/domains/service.js';
 import { edgeReconciler } from './modules/edge/reconciler.js';
+import { startDeploymentsMirror } from './modules/github/deployments-mirror.js';
 import { startReleasePoller } from './modules/github/poller.js';
 import { createAgentGateway } from './modules/nodes/gateway.js';
 import { ensureLocalNode } from './modules/nodes/service.js';
@@ -99,6 +100,8 @@ export async function start(): Promise<void> {
   // Background jobs; they stop when lifecycle.signal aborts.
   startDeploymentWorker(deps);
   startReleasePoller(deps);
+  // Mirrors deployment status changes to GitHub's Deployments API (best effort, ADR 0017).
+  startDeploymentsMirror(deps);
 
   // WebSocket upgrades (agent socket) are handled by `upgradeWebSocket` from @hono/node-server.
   // Agent frames are at most 500 log lines of 16 KiB each.

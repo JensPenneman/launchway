@@ -12,6 +12,7 @@ import { createDeploymentsService } from '../deployments/service.js';
 import type { ConnectionRow } from './providers.js';
 import { secretContext } from './providers.js';
 import { githubConnections, githubWebhookDeliveries } from './schema.js';
+import { resetConnectionState } from './state.js';
 
 const SIGNATURE_PREFIX = 'sha256=';
 
@@ -230,6 +231,13 @@ export function createWebhookHandler(deps: Deps) {
           summary: { installationId: { from: null, to: installationId } },
         });
       });
+    } else if (
+      event.action === 'new_permissions_accepted' &&
+      connection.installationId === installationId
+    ) {
+      // Tokens minted before carry the old permissions; the capability hint must re-check.
+      resetConnectionState(deps.events, connection.id);
+      logger.info({ connectionId: connection.id }, 'GitHub App permissions accepted');
     } else {
       logger.info({ connectionId: connection.id, action: event.action }, 'installation event');
       return 'ignored';

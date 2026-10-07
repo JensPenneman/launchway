@@ -294,6 +294,42 @@ it. They reach the containers the same way as your own variables: a
 single-`Dockerfile` app gets them in its environment, and Compose files can
 reference them like any other variable (for example `${LAUNCHWAY_REF}`).
 
+## Deployments on GitHub
+
+Launchway records each deployment on GitHub (the repository's *Environments*
+and *Deployments*), with its status, the app's URL and a link back to the
+deployment page. It needs the `deployments: write` permission; nothing fails
+without it. Turn it off per app under **Settings -> Show deployments on
+GitHub**.
+
+GitHub Apps created by Launchway 0.1 lack that permission. The GitHub
+connection card in **Settings -> GitHub** then shows *Grant in GitHub* with
+the missing items. To grant them:
+
+1. Click **App permissions** (or open GitHub -> Settings -> Developer settings
+   -> GitHub Apps -> your Launchway app -> *Permissions & events*).
+2. Under *Repository permissions* set **Deployments** to *Read and write* and
+   **Pull requests** to *Read-only*. Under *Subscribe to events* tick
+   **Pull request**. Save; GitHub asks for a reason, any text will do.
+3. Click **Approve on the installation** (or GitHub -> Settings ->
+   Applications -> *Installed GitHub Apps* -> the app -> *Configure*) and
+   accept the new permissions. For an organization, an owner has to do this.
+4. Back in Launchway, click **Check again**. The hint disappears once the
+   installation has approved the permissions; the next deployment shows on
+   GitHub.
+
+```sh
+# The same check from a script (cached for 5 minutes unless refresh=true):
+curl -s -H "Authorization: Bearer $LAUNCHWAY_TOKEN" \
+  "https://deploy.example.com/api/v1/github/connections/<id>/capabilities?refresh=true"
+```
+
+For a fine-grained personal access token, edit the token on GitHub and add
+**Deployments: Read and write** (and **Pull requests: Read-only** for
+previews) for the repositories it deploys. Classic tokens cannot be used for
+this. Deployments that finished before the permission was granted are not
+added to GitHub afterwards.
+
 ## Add a node
 
 A node is any machine with Docker that runs the agent. The agent connects

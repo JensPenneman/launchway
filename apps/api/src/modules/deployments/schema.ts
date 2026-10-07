@@ -58,6 +58,8 @@ export const deployments = pgTable(
     nextAttemptAt: tz('next_attempt_at'),
     /** Per-service result reported by the agent. */
     services: jsonb('services').$type<ServiceStatus[]>().notNull().default(sql`'[]'::jsonb`),
+    /** Id of the mirrored deployment on GitHub (ADR 0017); null when not mirrored (yet). */
+    githubDeploymentId: bigint('github_deployment_id', { mode: 'number' }),
     startedAt: tz('started_at'),
     finishedAt: tz('finished_at'),
     ...timestamps(),

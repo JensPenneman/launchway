@@ -3,7 +3,9 @@ import {
   AppManifestStart,
   CompleteAppManifestInput,
   CreatePatConnectionInput,
+  GitHubCapabilitiesQuery,
   GitHubConnection,
+  GitHubConnectionCapabilities,
   GitHubConnectionId,
   GitHubConnectionList,
   GitHubLogin,
@@ -27,6 +29,7 @@ import {
   PUBLIC,
   problemResponses,
 } from '../../lib/openapi.js';
+import { createCapabilitiesService } from './capabilities.js';
 import { createGitHubService } from './service.js';
 import { createWebhookHandler } from './webhooks.js';
 
@@ -64,6 +67,26 @@ const getConnection = createRoute({
   responses: {
     200: jsonResponse(GitHubConnection, 'The connection'),
     ...problemResponses(401, 403, 404),
+  },
+});
+
+const getCapabilities = createRoute({
+  method: 'get',
+  path: '/github/connections/{id}/capabilities',
+  operationId: 'getGitHubConnectionCapabilities',
+  tags: TAGS,
+  summary: 'What a GitHub connection may do (deployments, pull requests, events)',
+  description:
+    'GitHub Apps: read with the app JWT (`GET /app` and the installation). Tokens: probed with ' +
+    'read calls on a repository of the connection; a refused deployment mirror marks ' +
+    '`deployments` false. Cached for 5 minutes unless `refresh=true`. `missing` lists what to ' +
+    'grant at `settingsUrl` (and approve at `installationSettingsUrl` for apps).',
+  security: AUTHENTICATED,
+  middleware: [requireRole('viewer')],
+  request: { params: ConnectionParams, query: GitHubCapabilitiesQuery },
+  responses: {
+    200: jsonResponse(GitHubConnectionCapabilities, 'The capabilities'),
+    ...problemResponses(400, 401, 403, 404, 502),
   },
 });
 
@@ -208,7 +231,7 @@ const receiveWebhook = createRoute({
     'Called by GitHub. The raw body is verified against `X-Hub-Signature-256` with the webhook ' +
     'secret of the app named by `X-GitHub-Hook-Installation-Target-ID` before it is parsed; ' +
     'deliveries are deduplicated by `X-GitHub-Delivery`. Handles ping, release, installation and ' +
-    'installation_repositories.',
+    'installation_repositories; other events are accepted and ignored.',
   security: PUBLIC,
   responses: {
     204: { description: 'Accepted (processed, ignored or duplicate)' },
@@ -219,9 +242,16 @@ const receiveWebhook = createRoute({
 export function registerGitHubRoutes(api: Api, deps: Deps): void {
   const service = createGitHubService(deps);
   const webhooks = createWebhookHandler(deps);
+  const capabilities = createCapabilitiesService(deps);
 
   api.openapi(listConnections, async (c) => c.json(await service.list(), 200));
   api.openapi(getConnection, async (c) => c.json(await service.get(c.req.valid('param').id), 200));
+  api.openapi(getCapabilities, async (c) =>
+    c.json(
+      await capabilities.get(c.req.valid('param').id, { refresh: c.req.valid('query').refresh }),
+      200,
+    ),
+  );
   api.openapi(deleteConnection, async (c) => {
     await service.remove(c.req.valid('param').id, requestActor(c));
     return c.body(null, 204);

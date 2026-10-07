@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../deps.js';
 import { ProblemError } from './problem.js';
@@ -129,7 +130,44 @@ export const AUTH_RATE_LIMITS: readonly RateLimitRule[] = [
 ];
 
 /**
- * Global middleware: applies the first matching rule, keyed by client IP + rule group, and
+ * The part of a client address that identifies one client: the IPv4 address, or the /64 prefix of
+ * an IPv6 address (one subscriber usually holds a whole /64, so per-address buckets would be free).
+ */
+export function clientKey(ip: string | null | undefined): string {
+  if (!ip) return 'unknown';
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(ip);
+  if (mapped?.[1]) return mapped[1];
+  if (isIP(ip) !== 6) return ip;
+  const [head = '', tail = ''] = ip.toLowerCase().split('%')[0]?.split('::') ?? [];
+  const left = head ? head.split(':') : [];
+  const right = tail ? tail.split(':') : [];
+  const groups = ip.includes('::')
+    ? [...left, ...Array<string>(8 - left.length - right.length).fill('0'), ...right]
+    : left;
+  return `${groups
+    .slice(0, 4)
+    .map((group) => group.replace(/^0+(?=.)/, ''))
+    .join(':')}::/64`;
+}
+
+/** Throws `429 rate-limited` with `Retry-After` when the bucket of `key` is empty. */
+export function enforceRateLimit(
+  limiter: RateLimiter,
+  key: string,
+  options: TokenBucketOptions,
+  log?: { warn: (obj: object, msg: string) => void },
+): void {
+  const decision = limiter.take(key, options);
+  if (decision.allowed) return;
+  log?.warn({ group: key.slice(0, key.indexOf(':')) }, 'rate limit exceeded');
+  throw new ProblemError('rate-limited', {
+    detail: `Too many requests; retry in ${decision.retryAfterSeconds} s`,
+    headers: { 'Retry-After': String(decision.retryAfterSeconds) },
+  });
+}
+
+/**
+ * Global middleware: applies the first matching rule, keyed by client (`clientKey`) + rule group, and
  * answers `429 rate-limited` with `Retry-After` when the bucket is empty.
  */
 export function rateLimit(
@@ -140,15 +178,12 @@ export function rateLimit(
     const method = c.req.method.toUpperCase();
     const rule = rules.find((r) => r.methods.includes(method) && r.path.test(c.req.path));
     if (rule) {
-      const key = `${rule.group}:${c.get('clientIp') ?? 'unknown'}`;
-      const decision = limiter.take(key, rule);
-      if (!decision.allowed) {
-        c.get('logger')?.warn({ group: rule.group }, 'rate limit exceeded');
-        throw new ProblemError('rate-limited', {
-          detail: `Too many requests; retry in ${decision.retryAfterSeconds} s`,
-          headers: { 'Retry-After': String(decision.retryAfterSeconds) },
-        });
-      }
+      enforceRateLimit(
+        limiter,
+        `${rule.group}:${clientKey(c.get('clientIp'))}`,
+        rule,
+        c.get('logger'),
+      );
     }
     await next();
   };

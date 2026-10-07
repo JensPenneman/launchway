@@ -70,7 +70,8 @@ This is a summary of the security requirements in section 14 of
   when served over HTTPS), are stored server-side, are replaced on login
   (no session fixation) and can be revoked.
 - Sign-in with passkeys (WebAuthn) or passwords. Setup, login, passkey and
-  token endpoints are rate-limited.
+  token endpoints are rate-limited per client (IPv6 clients per /64), password
+  sign-in also per account, and at most two argon2 computations run at once.
 - CSRF: cookie-authenticated requests that change state must carry an `Origin`
   or `Sec-Fetch-Site` header that matches the platform origin. Requests with a
   bearer token are exempt.

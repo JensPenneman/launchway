@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { createTestDeps } from '../../test/support/deps.js';
 import { createApp } from '../app.js';
-import { createRateLimiter } from './rate-limit.js';
+import { clientKey, createRateLimiter } from './rate-limit.js';
+import { createWorkQueue } from './work-queue.js';
 
 const bucket = { capacity: 3, refillPerSecond: 1 };
 
@@ -36,6 +37,33 @@ describe('createRateLimiter', () => {
     limiter.take('k', slow, 0);
     expect(limiter.take('k', slow, 0).retryAfterSeconds).toBe(60);
     expect(limiter.take('k', slow, 30_000).retryAfterSeconds).toBe(30);
+  });
+});
+
+describe('clientKey', () => {
+  it('keys IPv4 per address and IPv6 per /64 prefix', () => {
+    expect(clientKey('203.0.113.7')).toBe('203.0.113.7');
+    expect(clientKey('::ffff:203.0.113.7')).toBe('203.0.113.7');
+    expect(clientKey('2001:db8:1:2:aaaa::1')).toBe('2001:db8:1:2::/64');
+    expect(clientKey('2001:0db8:0001:0002:ffff:1:2:3')).toBe('2001:db8:1:2::/64');
+    expect(clientKey('2001:db8::5')).toBe('2001:db8:0:0::/64');
+    expect(clientKey('::1')).toBe('0:0:0:0::/64');
+    expect(clientKey(null)).toBe('unknown');
+  });
+});
+
+describe('createWorkQueue', () => {
+  it('runs at most `concurrency` jobs, queues a few and refuses the rest with 503', async () => {
+    const run = createWorkQueue(1, 1);
+    let release = () => {};
+    const first = run(() => new Promise<string>((resolve) => (release = () => resolve('a'))));
+    const second = run(() => Promise.resolve('b'));
+    await expect(run(() => Promise.resolve('c'))).rejects.toMatchObject({
+      type: 'service-unavailable',
+    });
+    release();
+    await expect(Promise.all([first, second])).resolves.toEqual(['a', 'b']);
+    await expect(run(() => Promise.resolve('d'))).resolves.toBe('d');
   });
 });
 

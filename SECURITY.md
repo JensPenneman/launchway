@@ -97,7 +97,8 @@ This is a summary of the security requirements in section 14 of
 - Internal endpoints (`/internal/*`) and agent WebSocket upgrades without a
   valid token are rejected from outside the Docker networks.
 - PostgreSQL is reachable only on an internal Docker network shared with the
-  API. Caddy's admin API is not published on the host.
+  API. Caddy's admin API listens only on a unix socket that the `caddy` and
+  `slipway` containers share; app containers cannot reach it.
 - Port 3000 serves plain HTTP for the first setup. Do not expose it to the
   internet; use the platform's HTTPS URL once it works.
 

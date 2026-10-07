@@ -50,6 +50,7 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
   }
 
   return {
+    adminListen: config.caddyAdminListen,
     settings: {
       publicUrl: config.publicUrl ?? settingsRow?.publicUrl ?? null,
       acmeEmail: settingsRow?.acmeEmail ?? config.acmeEmail,

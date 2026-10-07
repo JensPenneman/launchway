@@ -38,7 +38,7 @@ services:
       SLIPWAY_SECRET_KEY: ${SLIPWAY_SECRET_KEY:-}
       SLIPWAY_LISTEN: 0.0.0.0:3000
       SLIPWAY_PUBLIC_URL: ${SLIPWAY_PUBLIC_URL:-}
-      SLIPWAY_CADDY_ADMIN_URL: http://caddy:2019
+      SLIPWAY_CADDY_ADMIN_URL: unix:///run/caddy-admin/admin.sock
       SLIPWAY_PROXY_NETWORK: slipway-proxy
       # Only Caddy (fixed address) may set X-Forwarded-*: app containers share this network.
       SLIPWAY_TRUSTED_PROXIES: 10.210.0.2/32
@@ -48,6 +48,8 @@ services:
     ports:
       # Direct access, so the first-run setup works before any domain exists.
       - "${SLIPWAY_PORT:-3000}:3000"
+    volumes:
+      - caddy-admin:/run/caddy-admin
     networks:
       - slipway-proxy
       - database
@@ -114,7 +116,7 @@ services:
       - no-new-privileges:true
     environment:
       SLIPWAY_ACME_EMAIL: ${SLIPWAY_ACME_EMAIL:-}
-    # The admin API (port 2019) stays on the slipway-proxy network: never publish it.
+    # The admin API is a unix socket in the caddy-admin volume (see the Caddyfile).
     ports:
       - "80:80"
       - "443:443"
@@ -127,11 +129,12 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+      - caddy-admin:/run/caddy-admin
     networks:
       slipway-proxy:
         ipv4_address: 10.210.0.2
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:2019/config/ >/dev/null"]
+      test: ["CMD-SHELL", "test -S /run/caddy-admin/admin.sock"]
       interval: 10s
       timeout: 5s
       retries: 3
@@ -189,4 +192,6 @@ volumes:
   db-data:
   caddy-data:
   caddy-config:
+  # Caddy's admin socket; mounted only into caddy and slipway.
+  caddy-admin:
   agent-data:

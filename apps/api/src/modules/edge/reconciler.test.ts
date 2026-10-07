@@ -1,3 +1,7 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { createServer } from 'node:http';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DomainId, DomainStatus, RouteId } from '@slipway/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestDeps } from '../../../test/support/deps.js';
@@ -166,6 +170,24 @@ describe('caddy admin client', () => {
       { url: 'http://caddy:2019/adapt', type: 'text/caddyfile', body: ':80 {\n}\n' },
       { url: 'http://caddy:2019/load', type: 'application/json', body: '{"apps":{}}' },
     ]);
+  });
+
+  it('reaches a unix-socket admin API with a Host header Caddy accepts', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'caddy-admin-'));
+    const socket = join(dir, 'admin.sock');
+    const seen: string[] = [];
+    const server = createServer((request, response) => {
+      seen.push(`${request.method} ${request.url} ${request.headers.host}`);
+      response.end(request.url === '/adapt' ? JSON.stringify({ result: {} }) : '');
+    });
+    await new Promise<void>((resolve) => server.listen(socket, resolve));
+    try {
+      await createCaddyAdmin(`unix://${socket}`).load(':80 {\n}\n');
+    } finally {
+      server.close();
+      await rm(dir, { recursive: true, force: true });
+    }
+    expect(seen).toEqual(['POST /adapt 127.0.0.1', 'POST /load 127.0.0.1']);
   });
 
   it('maps Caddy errors and unreachable admin APIs to problems', async () => {

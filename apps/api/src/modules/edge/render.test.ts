@@ -118,6 +118,13 @@ describe('renderEdge (golden files)', () => {
     await expect(caddyfile).toMatchFileSnapshot('./__golden__/empty.caddyfile');
   });
 
+  it('keeps the admin API on the unix socket, never on a TCP address', () => {
+    const { caddyfile } = renderEdge(fullInput());
+    const admin = caddyfile.split('\n').find((line) => line.trim().startsWith('admin '));
+    expect(admin?.trim()).toBe('admin unix//run/caddy-admin/admin.sock|0222');
+    expect(caddyfile).not.toMatch(/admin\s+[^\s]*:\d+/);
+  });
+
   it('is deterministic regardless of input order', () => {
     const input = fullInput();
     const reversed = {

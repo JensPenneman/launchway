@@ -73,6 +73,7 @@ describe('edge configuration loaded into a real Caddy', () => {
 
   it('validates and loads a rendered Caddyfile with every target kind', async () => {
     const { caddyfile } = renderEdge({
+      adminListen: '0.0.0.0:2019',
       settings: {
         publicUrl: 'https://deploy.example.com',
         acmeEmail: 'ops@example.com',
@@ -168,7 +169,10 @@ describe('edge configuration loaded into a real Caddy', () => {
       externalPort: 8096,
     });
     const base = createTestDeps({ db, auth: fixedAuth(testPrincipal('admin')) });
-    const deps = { ...base, config: { ...base.config, caddyAdminUrl: adminUrl } };
+    const deps = {
+      ...base,
+      config: { ...base.config, caddyAdminUrl: adminUrl, caddyAdminListen: '0.0.0.0:2019' },
+    };
     const app = createApp(deps);
 
     const before = (await (await app.request('/api/v1/edge/config')).json()) as EdgeConfig;

@@ -32,10 +32,13 @@ import {
   PUBLIC,
   problemResponses,
 } from '../../lib/openapi.js';
+import { createRateLimiter, enforceRateLimit } from '../../lib/rate-limit.js';
 import { createPasskeyService, relyingPartyFor } from './passkeys.js';
 import { createAuthService } from './service.js';
 import { clearSessionCookie, readSessionCookie, writeSessionCookie } from './session-cookie.js';
 
+/** Password attempts per account (any client): 10 in a burst, then one every 30 s. */
+const LOGIN_ACCOUNT_LIMIT = { capacity: 10, refillPerSecond: 1 / 30 };
 const SessionParams = z.object({ id: SessionId });
 const PasskeyParams = z.object({ id: PasskeyId });
 const signedIn = 'Signed in; the response sets the `slipway_session` cookie';
@@ -281,6 +284,7 @@ const deletePasskey = createRoute({
 
 export function registerAuthRoutes(api: Api, deps: Deps): void {
   const auth = createAuthService(deps);
+  const accountLimiter = createRateLimiter();
   const passkeys = createPasskeyService(deps);
   const origins = createPlatformOriginResolver(deps);
   const relyingParty = async (c: Context<AppEnv>) => relyingPartyFor(await origins.forRequest(c));
@@ -294,11 +298,15 @@ export function registerAuthRoutes(api: Api, deps: Deps): void {
   });
 
   api.openapi(login, async (c) => {
-    const { token, me } = await auth.login(
-      c.req.valid('json'),
-      requestActor(c),
-      readSessionCookie(c),
+    const input = c.req.valid('json');
+    // Per account as well as per client: guessing one account's password from many addresses.
+    enforceRateLimit(
+      accountLimiter,
+      `login-account:${input.email.toLowerCase()}`,
+      LOGIN_ACCOUNT_LIMIT,
+      c.get('logger'),
     );
+    const { token, me } = await auth.login(input, requestActor(c), readSessionCookie(c));
     writeSessionCookie(c, token);
     return c.json(me, 200);
   });

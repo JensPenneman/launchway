@@ -1,10 +1,14 @@
 import argon2 from 'argon2';
+import { createWorkQueue } from '../../lib/work-queue.js';
 
 /** argon2id with the library defaults (64 MiB, t=3, p=4). */
 const OPTIONS = { type: argon2.argon2id } as const;
 
+/** Two hashes at a time (128 MiB, half of libuv's pool); a flood of sign-ins gets 503s. */
+const argonQueue = createWorkQueue(2, 32);
+
 export function hashPassword(password: string): Promise<string> {
-  return argon2.hash(password, OPTIONS);
+  return argonQueue(() => argon2.hash(password, OPTIONS));
 }
 
 let dummyHash: Promise<string> | undefined;
@@ -17,12 +21,12 @@ let dummyHash: Promise<string> | undefined;
 export async function verifyPassword(hash: string | null, password: string): Promise<boolean> {
   if (!hash) {
     dummyHash ??= hashPassword('slipway-dummy-password-for-timing');
-    await argon2.verify(await dummyHash, password).catch(() => false);
+    dummyHash.catch(() => {
+      dummyHash = undefined;
+    });
+    const dummy = await dummyHash;
+    await argonQueue(() => argon2.verify(dummy, password).catch(() => false));
     return false;
   }
-  try {
-    return await argon2.verify(hash, password);
-  } catch {
-    return false;
-  }
+  return argonQueue(() => argon2.verify(hash, password).catch(() => false));
 }

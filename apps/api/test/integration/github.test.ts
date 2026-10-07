@@ -240,6 +240,18 @@ describe('GitHub integration against PostgreSQL', () => {
       installation: { id: installationId },
     };
     const delivery = crypto.randomUUID();
+    // GitHub failing while the tag is resolved: the delivery is forgotten so a redelivery retries.
+    github.failRepoRequests = 1;
+    expect(
+      (await api.request('/api/v1/webhooks/github', webhook('release', release, { delivery })))
+        .status,
+    ).toBe(502);
+    expect(
+      await db
+        .select()
+        .from(githubWebhookDeliveries)
+        .where(eq(githubWebhookDeliveries.deliveryId, delivery)),
+    ).toEqual([]);
     expect(
       (await api.request('/api/v1/webhooks/github', webhook('release', release, { delivery })))
         .status,

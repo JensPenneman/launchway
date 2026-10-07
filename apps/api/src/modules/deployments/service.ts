@@ -105,6 +105,8 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
     ref: string,
     trigger: DeploymentTrigger,
     actor: RequestActor,
+    /** `background`: do not wait for the agent's acknowledgement (webhook deliveries). */
+    dispatch: 'await' | 'background' = 'await',
   ): Promise<Deployment> {
     const connection = await getConnection(deps.db, app.connectionId);
     let commitSha: string;
@@ -149,6 +151,10 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       data: { appId: app.id, status: row.status },
     });
     deps.logger.info({ deploymentId: row.id, appId: app.id, trigger }, 'deployment queued');
+    if (dispatch === 'background') {
+      void dispatcher.dispatchApp(app.id);
+      return toDeployment(row);
+    }
     await dispatcher.dispatchApp(app.id);
     return toDeployment(await loadRow(row.id));
   }
@@ -185,7 +191,7 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
         .where(and(eq(deployments.appId, app.id), eq(deployments.ref, tag)))
         .limit(1);
       if (existing) return null;
-      return insert(app, tag, 'auto', actor);
+      return insert(app, tag, 'auto', actor, 'background');
     },
 
     async list(appId, query) {

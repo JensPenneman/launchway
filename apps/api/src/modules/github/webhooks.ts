@@ -4,7 +4,7 @@ import { z } from 'zod';
 import type { Deps } from '../../deps.js';
 import { systemActor } from '../../lib/auth-context.js';
 import { forgetInstallationTokens } from '../../lib/git-provider.js';
-import { badRequest, unauthorized } from '../../lib/problem.js';
+import { badRequest, ProblemError, unauthorized } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
 import { createDeploymentsService } from '../deployments/service.js';
@@ -83,6 +83,7 @@ export function createWebhookHandler(deps: Deps) {
           sql`lower(${apps.repoName}) = lower(${repo})`,
         ),
       );
+    let retry = false;
     for (const app of targets) {
       try {
         const deployment = await deployments.createForRelease(app, event.release.tag_name, actor);
@@ -94,7 +95,16 @@ export function createWebhookHandler(deps: Deps) {
           { appId: app.id, reason: error instanceof Error ? error.message : 'unknown' },
           'auto-deploy of a release failed',
         );
+        // GitHub or the database failing is worth a redelivery; an unknown tag is not.
+        retry ||= !(error instanceof ProblemError) || error.type === 'upstream-failed';
       }
+    }
+    if (retry) {
+      // The handler forgets the delivery, so GitHub's redelivery is not rejected as a duplicate;
+      // apps deployed already are skipped then (one deployment per release tag).
+      throw new ProblemError('upstream-failed', {
+        detail: 'Auto-deploying the release failed for at least one app; redeliver to retry',
+      });
     }
     return 'processed';
   }

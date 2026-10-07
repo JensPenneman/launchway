@@ -28,6 +28,10 @@ updates:
       # Pinned to 5.x until openapi-typescript supports TypeScript 7 (ADR 0008).
       - dependency-name: typescript
         update-types: ["version-update:semver-major"]
+      # vitest 5 (@vitest/mocker) declares the peer msw ^2; with strictPeerDependencies
+      # the msw 3 update cannot resolve and failed the whole npm job. Revisit with vitest.
+      - dependency-name: msw
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     # "/" covers .github/workflows; composite actions need their own entry.

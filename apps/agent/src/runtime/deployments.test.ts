@@ -314,6 +314,39 @@ describe('DeploymentManager', () => {
     expect(deployments.cancel(job.deploymentId)).toBe(false);
   });
 
+  it('stops reporting a deployment as active once its result is sent', async () => {
+    const fake = fakeDocker();
+    fake.on.up = blockUntilAborted;
+    let releasePrune: () => void = () => {};
+    const pruning = new Promise<void>((resolve) => {
+      releasePrune = resolve;
+    });
+    class SlowPruneWorkspace extends Workspace {
+      override async prune(...args: Parameters<Workspace['prune']>): Promise<string[]> {
+        await pruning;
+        return super.prune(...args);
+      }
+    }
+    const deployments = new DeploymentManager({
+      logger,
+      send: (message) => messages.push(message),
+      workspace: new SlowPruneWorkspace(root),
+      run: fake.run,
+      env: { PATH: process.env.PATH ?? '' },
+    });
+    const job = payload();
+    deployments.deploy('req-1', job);
+    await waitFor(() => fake.calls.some((c) => c.args.includes('up')));
+    expect(deployments.cancel(job.deploymentId)).toBe(true);
+    await waitFor(() => results().length === 1);
+    // The run is still pruning old checkouts, but the deployment is already terminal.
+    expect(deployments.cancel(job.deploymentId)).toBe(false);
+    expect(deployments.activeDeploymentIds()).toEqual([]);
+    releasePrune();
+    await deployments.cancelApp(job.app.id);
+    expect(results()).toHaveLength(1);
+  });
+
   it('queues deployments of the same app and cancels queued ones immediately', async () => {
     const fake = fakeDocker();
     fake.on.up = blockUntilAborted;
@@ -403,7 +436,9 @@ describe('DeploymentManager', () => {
       await new Promise((resolve) => setTimeout(resolve, 3));
     }
     for (const [i, job] of jobs.entries()) deployments.deploy(`req-${i}`, job);
-    await waitFor(() => results().length === 3 && deployments.activeDeploymentIds().length === 0);
+    await waitFor(() => results().length === 3);
+    // The app's queue is idle once the last run has pruned its old checkouts.
+    await deployments.exclusive(app.id, async () => {});
     const { readdir } = await import('node:fs/promises');
     expect((await readdir(join(root, 'apps', app.id))).sort()).toEqual(
       jobs

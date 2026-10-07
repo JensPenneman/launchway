@@ -151,8 +151,9 @@ describe('AgentConnection', () => {
       await new Promise<void>((resolve) => harness.server.close(() => resolve()));
     });
     connection.start();
-    await waitFor(() => harness.sockets.length >= 2);
-    expect(harness.received.filter((m) => m.type === 'hello').length).toBeGreaterThanOrEqual(2);
+    // A second socket can open before its hello arrives; wait for the hello itself.
+    await waitFor(() => harness.received.filter((m) => m.type === 'hello').length >= 2);
+    expect(harness.sockets.length).toBeGreaterThanOrEqual(2);
   });
 
   it('joins with the join token, stores the credential, heartbeats and answers requests', async () => {

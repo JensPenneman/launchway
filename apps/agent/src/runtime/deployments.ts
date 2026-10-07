@@ -61,6 +61,8 @@ interface Job {
   controller: AbortController;
   state: 'queued' | 'running';
   cancelled: boolean;
+  /** Called just before the terminal `deployment.result` is sent. */
+  settle: () => void;
   /** Next sequence number of the job's log lines (the acknowledgement takes the first). */
   logSeq: number;
 }
@@ -177,6 +179,8 @@ export class DeploymentManager {
       state: 'queued',
       cancelled: false,
       logSeq: 0,
+      // The run still prunes old checkouts after its result; it is no longer cancellable then.
+      settle: () => this.#forget(job),
     };
     this.#jobs.set(deploymentId, job);
     this.#log.info({ deploymentId, appId: payload.app.id }, 'deployment queued');
@@ -185,7 +189,7 @@ export class DeploymentManager {
     void this.#enqueue(payload.app.id, () => this.#execute(job));
   }
 
-  /** Cancels a queued or running deployment; `false` when it is unknown. */
+  /** Cancels a queued or running deployment; `false` when it is unknown or already finished. */
   cancel(deploymentId: DeploymentId, reason: AbortReason = 'cancel'): boolean {
     const job = this.#jobs.get(deploymentId);
     if (!job) return false;
@@ -266,8 +270,13 @@ export class DeploymentManager {
     } catch (error) {
       this.#log.error({ err: error, deploymentId: job.payload.deploymentId }, 'deployment crashed');
     } finally {
-      this.#jobs.delete(job.payload.deploymentId);
+      this.#forget(job);
     }
+  }
+
+  #forget(job: Job): void {
+    const { deploymentId } = job.payload;
+    if (this.#jobs.get(deploymentId) === job) this.#jobs.delete(deploymentId);
   }
 
   /** The server waits for a first reply to `deploy`; a system log line is that reply. */
@@ -653,6 +662,7 @@ class DeploymentRun {
       | { type: 'deployment.result'; payload: DeploymentResultPayload }
       | { type: 'deployment.progress'; payload: DeploymentProgressPayload },
   ): void {
+    if (message.type === 'deployment.result') this.#job.settle();
     this.#options.send({ id: this.#job.requestId, ...message });
   }
 }

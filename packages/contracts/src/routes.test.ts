@@ -28,6 +28,30 @@ describe('route target union', () => {
     ).toBe(false);
   });
 
+  it('rejects external targets on the edge itself or its platform containers', () => {
+    for (const host of [
+      'localhost',
+      'app.localhost',
+      '127.0.0.1',
+      '127.1.2.3',
+      '0.0.0.0',
+      '169.254.169.254',
+      '::1',
+      '::',
+      'fe80::1',
+      '::ffff:127.0.0.1',
+      'caddy',
+      'slipway',
+      'slipway-agent',
+      'db',
+    ]) {
+      expect(
+        RouteTarget.safeParse({ kind: 'external', scheme: 'http', host, port: 2019 }).success,
+        host,
+      ).toBe(false);
+    }
+  });
+
   it('defaults redirects to temporary', () => {
     expect(RouteTarget.parse({ kind: 'redirect', to: 'https://example.com/new' })).toEqual({
       kind: 'redirect',

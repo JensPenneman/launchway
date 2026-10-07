@@ -87,7 +87,8 @@ export async function start(): Promise<void> {
   const app = createApp(deps);
 
   await ensureLocalNode(deps);
-  // Marks nodes a previous process left online offline (through the sink), then sweeps heartbeats.
+  // Marks nodes a previous process left online offline (their deployments fail only if they do not
+  // reconnect within the grace period), then sweeps heartbeats.
   await agents.start();
   const domains = createDomainsService(deps);
   edgeReconciler(deps).start({

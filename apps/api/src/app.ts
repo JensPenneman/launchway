@@ -1,6 +1,6 @@
 import { type Hook, OpenAPIHono } from '@hono/zod-openapi';
 import { Scalar } from '@scalar/hono-api-reference';
-import type { Context } from 'hono';
+import type { Context, MiddlewareHandler } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { secureHeaders } from 'hono/secure-headers';
 import type { AppEnv, Deps } from './deps.js';
@@ -75,7 +75,7 @@ export function createApp(deps: Deps): OpenAPIHono<AppEnv> {
 
   registerSecuritySchemes(app);
   app.doc31('/api/openapi.json', openApiObject(deps.version));
-  app.get('/api/docs', Scalar({ url: '/api/openapi.json', pageTitle: 'Slipway API' }));
+  app.get('/api/docs', scalarReference());
 
   app.notFound((c) => {
     throw notFound(`No route for ${c.req.method} ${c.req.path}`);
@@ -84,4 +84,29 @@ export function createApp(deps: Deps): OpenAPIHono<AppEnv> {
 
   registerWebUi(app, deps.config.webRoot, deps.logger);
   return app;
+}
+
+/**
+ * Scalar's bundle runs on the platform origin, next to the session cookie: load an exact version
+ * and let the browser verify it (SRI) instead of whatever the CDN serves as latest. Update both
+ * together: `curl -s <url> | openssl dgst -sha384 -binary | openssl base64 -A`.
+ */
+const SCALAR_BUNDLE =
+  'https://cdn.jsdelivr.net/npm/@scalar/api-reference@1.73.0/dist/browser/standalone.js';
+const SCALAR_INTEGRITY = 'sha384-OKyMdsDX84ypSZEhVun8YElXk5c2GQaH3EXPOc6ItmVcLDUAvKHYwvDLvAgsqVtB';
+
+function scalarReference(): MiddlewareHandler {
+  const render = Scalar({ url: '/api/openapi.json', pageTitle: 'Slipway API', cdn: SCALAR_BUNDLE });
+  return async (c, next) => {
+    const res = await render(c, next);
+    if (!res) return res;
+    const html = (await res.text()).replace(
+      `<script src="${SCALAR_BUNDLE}">`,
+      `<script src="${SCALAR_BUNDLE}" integrity="${SCALAR_INTEGRITY}" crossorigin="anonymous">`,
+    );
+    if (!html.includes(SCALAR_INTEGRITY)) throw new Error('Scalar page without the pinned bundle');
+    const headers = new Headers(res.headers);
+    headers.delete('content-length');
+    return new Response(html, { status: res.status, headers });
+  };
 }

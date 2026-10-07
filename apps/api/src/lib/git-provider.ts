@@ -195,12 +195,18 @@ const OffsetCursor = z.object({ o: z.number().int().min(0).max(MAX_FILTERED_REPO
 // --- Provider --------------------------------------------------------------------------------
 
 type TokenSource = () => Promise<string>;
+/** Token handed to a node for one clone; defaults to the provider's own token. */
+type CloneTokenSource = (owner: string, repo: string) => Promise<string>;
 type RepoListing = 'installation' | 'user';
 
 const SHA_PREFIX = /^[0-9a-f]{7,64}$/;
 const FULL_SHA = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 
-function createGitHubProvider(token: TokenSource, listing: RepoListing): GitProvider {
+function createGitHubProvider(
+  token: TokenSource,
+  listing: RepoListing,
+  cloneToken: CloneTokenSource = () => token(),
+): GitProvider {
   async function repoPage(page: number, perPage: number) {
     const octokit = client(await token());
     if (listing === 'installation') {
@@ -327,7 +333,7 @@ function createGitHubProvider(token: TokenSource, listing: RepoListing): GitProv
     cloneCredentials: (owner, repo) =>
       call(async () => ({
         cloneUrl: `https://github.com/${owner}/${repo}.git`,
-        authorization: basicAuthorization(await token()),
+        authorization: basicAuthorization(await cloneToken(owner, repo)),
       })),
   };
 }
@@ -379,6 +385,30 @@ async function installationToken(
   }
 }
 
+/**
+ * A fresh, uncached installation token limited to one repository and `contents: read`. It is sent
+ * to the node that clones, so a compromised node never gets the installation-wide token.
+ */
+async function cloneInstallationToken(
+  app: GitHubAppCredentials,
+  installationId: number,
+  repo: string,
+): Promise<string> {
+  try {
+    const auth = createAppAuth({ appId: app.appId, privateKey: app.privateKey });
+    const result = await auth({
+      type: 'installation',
+      installationId,
+      repositoryNames: [repo],
+      permissions: { contents: 'read' },
+      refresh: true,
+    });
+    return result.token;
+  } catch (error) {
+    throw classify(error);
+  }
+}
+
 /** Drops cached installation tokens of an app (installation removed, connection deleted). */
 export function forgetInstallationTokens(appId: number): void {
   for (const key of installationTokens.keys()) {
@@ -391,7 +421,11 @@ export function createInstallationProvider(
   app: GitHubAppCredentials,
   installationId: number,
 ): GitProvider {
-  return createGitHubProvider(() => installationToken(app, installationId), 'installation');
+  return createGitHubProvider(
+    () => installationToken(app, installationId),
+    'installation',
+    (_owner, repo) => cloneInstallationToken(app, installationId, repo),
+  );
 }
 
 const RawAccount = z.object({
@@ -412,6 +446,18 @@ function toAccount(raw: unknown): GitHubAccount | null {
 export function verifyPatToken(token: string): Promise<GitHubAccount> {
   return call(async () => {
     const res = await client(token).request('GET /user', requestOptions());
+    // Only classic tokens report scopes. The token is sent to every node that deploys, so refuse
+    // classic tokens that can write (repo, workflow, admin:*, ...).
+    const scopes = String(res.headers['x-oauth-scopes'] ?? '')
+      .split(',')
+      .map((scope) => scope.trim())
+      .filter(Boolean);
+    if (scopes.some((scope) => !scope.startsWith('read:'))) {
+      throw new GitProviderError(
+        'forbidden',
+        `This classic token can write (${scopes.join(', ')}); use a fine-grained token with Contents: read`,
+      );
+    }
     const account = toAccount(res.data);
     if (!account) throw new GitProviderError('upstream', 'Unexpected GitHub response');
     return account;

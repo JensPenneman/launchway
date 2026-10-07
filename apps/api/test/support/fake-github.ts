@@ -65,6 +65,10 @@ export class FakeGitHub {
   readonly manifestCodes = new Map<string, { appId: number; slug: string; owner: string }>();
   /** Installation tokens issued: token -> installation id. */
   readonly installationTokens = new Map<string, number>();
+  /** Bodies of installation token requests (repository and permission limits). */
+  readonly tokenRequests: unknown[] = [];
+  /** `X-OAuth-Scopes` reported for classic tokens: token -> scopes. */
+  readonly patScopes = new Map<string, string>();
   /** Lifetime of issued installation tokens. */
   tokenLifetimeMs = 60 * 60 * 1000;
   readonly calls: string[] = [];
@@ -190,6 +194,8 @@ export class FakeGitHub {
         return json(200, { id: installationId, account: app.installations.get(installationId) });
       }
       if (method === 'POST' && m[2]) {
+        const body = await request.text();
+        this.tokenRequests.push(body ? JSON.parse(body) : {});
         const token = `ghs_${randomBytes(18).toString('hex')}`;
         this.installationTokens.set(token, installationId);
         return json(201, {
@@ -203,8 +209,12 @@ export class FakeGitHub {
 
     if (method === 'GET' && path === '/user') {
       const header = request.headers.get('authorization') ?? '';
-      const account = this.patTokens.get(header.split(' ')[1] ?? '');
-      return account ? json(200, { ...account, id: 1 }) : json(403, { message: 'Forbidden' });
+      const token = header.split(' ')[1] ?? '';
+      const account = this.patTokens.get(token);
+      const scopes = this.patScopes.get(token);
+      return account
+        ? json(200, { ...account, id: 1 }, scopes === undefined ? {} : { 'x-oauth-scopes': scopes })
+        : json(403, { message: 'Forbidden' });
     }
     if (method === 'GET' && (path === '/user/repos' || path === '/installation/repositories')) {
       const all = this.repos.map((repo, index) => this.repoJson(repo, index));

@@ -66,7 +66,8 @@ export interface GatewayTimeouts {
 const DEFAULT_TIMEOUTS: GatewayTimeouts = {
   deployAckMs: 30_000,
   statusMs: 30_000,
-  stopMs: 120_000,
+  // Above the agent's worst case: unwinding a deployment plus `compose stop` (5 min limit).
+  stopMs: 360_000,
   cancelMs: 30_000,
   helloMs: 10_000,
   offlineAfterMs: NODE_OFFLINE_AFTER_MS,

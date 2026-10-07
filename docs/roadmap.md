@@ -13,6 +13,19 @@ features that are deliberately out of scope for v0.1 are listed in
 - Agent WebSocket upgrades are not rate-limited on failed authentication and
   are not restricted to the Docker networks (§14). The local bootstrap token is
   likewise accepted from anywhere that reaches the API ([ADR 0010](adr/0010-composition-root-wiring.md)).
+- Revoking the `local` node's credential is undone at the next API start:
+  `ensureLocalNode` re-arms `SLIPWAY_LOCAL_JOIN_TOKEN`, which never expires.
+  Persist a "bootstrap disabled" flag on revoke (schema change) and re-arm only
+  a node that never joined; document removing the token from `.env` after the
+  first join.
+- Agents accept `ws://` server URLs for remote nodes, and the join snippets use
+  `ws://` when the public URL is `http`, so credentials, deploy payloads and
+  secrets can cross the network unencrypted. Require `wss://` except for
+  loopback and the bundled agent, or an explicit opt-in.
+- On Docker Desktop (macOS, Windows) every client of the direct port shares
+  the VM gateway's address, so they share one per-IP login bucket and audit
+  rows record that address. Document that the direct port is for the first
+  setup only.
 - Changing the e-mail address (`PATCH /me`) does not ask for the password again.
 - Logout and session revocation are audited but publish no change event; there
   is no `sessions` topic.
@@ -56,7 +69,19 @@ features that are deliberately out of scope for v0.1 are listed in
   report `stdout`. Per-stream output needs the Docker API with demuxing.
 - Deployment build output has no line-rate cap (log streams do).
 - Checkout pruning orders directories by deployment id (UUIDv7). Ids created
-  in the same millisecond are not ordered; harmless in practice.
+  in the same millisecond are not ordered; harmless in practice. It also keeps
+  the newest two checkouts rather than the running one: record the last
+  successful deployment per app and always keep it (matters once file-based
+  configs are bind-mounted from the workspace).
+- The app's `.env` (secrets included) is written into the checkout, which is
+  the default build context: a Dockerfile with `COPY . .` bakes the secrets
+  into an image layer. Write it outside the checkout (mode 0600) and pass
+  `--env-file`.
+- The Compose policy is a deny-list over `docker compose config` output, and
+  `build`/`up` re-read the project afterwards (a remote `include:` may serve
+  different content then). Run them against the exact checked document, and
+  move the service schema to an allow-list of known keys so new Compose
+  features fail closed.
 
 ## Nodes and edge
 
@@ -114,3 +139,9 @@ features that are deliberately out of scope for v0.1 are listed in
   backups of app volumes (§15).
 - Release images are published by the image workflow once the GitHub
   repository and its first release exist.
+- Base images are `ARG`-templated major tags (`node:24-alpine`,
+  `docker:29-cli`), which Dependabot cannot update and which are not
+  reproducible. Use literal, digest-pinned references.
+- Trivy only reports (SARIF) after the images are pushed and signed, for
+  amd64 only. Add a gating scan (`exit-code: 1` on fixable CRITICAL) to the
+  CI image build.

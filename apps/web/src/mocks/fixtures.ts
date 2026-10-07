@@ -346,6 +346,8 @@ export function createApps(): App[] {
     connectionId: APP_CONNECTION_ID,
     context: null,
     autoDeployReleases: false,
+    autoDeployPrereleases: false,
+    autoDeployBranch: null,
     trustedMounts: false,
     proxyServices: [] as string[],
   };
@@ -417,6 +419,9 @@ export function createDeployments(): Deployment[] {
     status,
     statusMessage: null,
     triggeredBy: OWNER_ID,
+    failureReason: null,
+    retryCount: 0,
+    nextAttemptAt: null,
     services: [],
     createdAt: ago(minutesAgo),
     startedAt: ago(minutesAgo - 0.1),

@@ -236,6 +236,7 @@ describe('DeploymentManager', () => {
     expect(results()[0]?.payload).toMatchObject({
       outcome: 'failed',
       error: { code: 'policy-violation', retryable: false },
+      reason: 'policy',
     });
     expect(fake.calls.some((c) => c.args.includes('build'))).toBe(false);
   });
@@ -280,10 +281,46 @@ describe('DeploymentManager', () => {
     deployments.deploy('req-1', payload());
     await waitFor(() => results().length === 1);
     const result = results()[0]?.payload;
-    expect(result).toMatchObject({ outcome: 'failed', error: { code: 'internal-error' } });
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: { code: 'internal-error', retryable: false },
+      reason: 'build',
+    });
     if (result?.outcome !== 'failed') throw new Error('expected failure');
     expect(result.error.message).toMatch(/docker compose build/);
     expect(result.error.message).toMatch(/failed to solve/);
+  });
+
+  it('reports image-not-found when the registry does not have the image yet', async () => {
+    const fake = fakeDocker();
+    fake.on.pull = (call) => {
+      call.options.onStderrLine?.(' web Error manifest unknown');
+      call.options.onStderrLine?.('Error response from daemon: manifest unknown');
+      return { code: 18 };
+    };
+    manager(fake).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    const result = results()[0]?.payload;
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: {
+        retryable: true,
+        message: expect.stringMatching(/^Image not found in the registry/),
+      },
+      reason: 'image-not-found',
+    });
+    expect(fake.calls.some((c) => c.args.includes('up'))).toBe(false);
+  });
+
+  it('reports start when compose up fails', async () => {
+    const fake = fakeDocker();
+    fake.on.up = (call) => {
+      call.options.onStderrLine?.('dependency failed to start: container web is unhealthy');
+      return { code: 1 };
+    };
+    manager(fake).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(results()[0]?.payload).toMatchObject({ outcome: 'failed', reason: 'start' });
   });
 
   it('fails cleanly when a program cannot be started', async () => {

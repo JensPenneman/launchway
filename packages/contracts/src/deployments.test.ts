@@ -41,10 +41,13 @@ describe('deployment state machine', () => {
     for (const to of DEPLOYMENT_STATUSES) expect(canTransition(status, to)).toBe(false);
   });
 
-  it('never skips stages or moves backwards', () => {
+  it('never skips stages or moves backwards, except for the image retry', () => {
     expect(canTransition('queued', 'building')).toBe(false);
     expect(canTransition('building', 'cloning')).toBe(false);
     expect(canTransition('starting', 'queued')).toBe(false);
+    expect(canTransition('cloning', 'queued')).toBe(false);
+    // An automatic deployment whose image does not exist yet waits for its next attempt.
+    expect(canTransition('building', 'queued')).toBe(true);
   });
 
   it('defines transitions for every status, all pointing at known statuses', () => {

@@ -1,5 +1,10 @@
-import { type AppId, type DeploymentId, QUEUED_DEPLOYMENT_TIMEOUT_MS } from '@launchway/contracts';
-import { and, asc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
+import {
+  type AppId,
+  type DeploymentId,
+  type DeploymentTrigger,
+  QUEUED_DEPLOYMENT_TIMEOUT_MS,
+} from '@launchway/contracts';
+import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, type SQL } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import { systemActor } from '../../lib/auth-context.js';
@@ -21,14 +26,69 @@ import { deployments } from './schema.js';
 export const DISPATCH_INTERVAL_MS = 15_000;
 const MAX_DISPATCH_ATTEMPTS = 10;
 
+// --- Image retries (ADR 0019) --------------------------------------------------------------------
+
+const MINUTE = 60_000;
+/** First wait before retrying a deployment whose image does not exist yet; doubles per retry. */
+export const IMAGE_RETRY_INITIAL_DELAY_MS = MINUTE;
+/** Longest single wait between two attempts. */
+export const IMAGE_RETRY_MAX_DELAY_MS = 15 * MINUTE;
+/** Total waiting time after which a missing image fails the deployment. */
+export const IMAGE_RETRY_BUDGET_MS = 60 * MINUTE;
+export const SUPERSEDED_WHILE_WAITING_MESSAGE =
+  'Cancelled: a newer deployment of the app started while this one waited for its image';
+
+/** Wait before retry `retryCount + 1`: 1, 2, 4, 8, 15, 15, 15 ... minutes. */
+export function imageRetryDelayMs(retryCount: number): number {
+  return Math.min(IMAGE_RETRY_INITIAL_DELAY_MS * 2 ** retryCount, IMAGE_RETRY_MAX_DELAY_MS);
+}
+
+/** Retries that fit in the budget (7: 1 + 2 + 4 + 8 + 15 + 15 + 15 = 60 minutes). */
+export const IMAGE_RETRY_LIMIT = (() => {
+  let total = 0;
+  let count = 0;
+  while (total + imageRetryDelayMs(count) <= IMAGE_RETRY_BUDGET_MS) {
+    total += imageRetryDelayMs(count);
+    count += 1;
+  }
+  return count;
+})();
+
+/**
+ * The next image retry of a deployment that already had `retryCount` retries, or null once the
+ * budget is spent. Only automatic deployments retry; a manual one fails at once.
+ */
+export function nextImageRetry(
+  trigger: DeploymentTrigger,
+  retryCount: number,
+  now: Date,
+): { retryCount: number; nextAttemptAt: Date } | null {
+  if (!isAutomaticTrigger(trigger) || retryCount >= IMAGE_RETRY_LIMIT) return null;
+  return {
+    retryCount: retryCount + 1,
+    nextAttemptAt: new Date(now.getTime() + imageRetryDelayMs(retryCount)),
+  };
+}
+
+/** Deployments nobody explicitly asked for at that moment (release, push, preview, poll). */
+export function isAutomaticTrigger(trigger: DeploymentTrigger): boolean {
+  return trigger !== 'manual';
+}
+
+/** Queued deployments that may be dispatched at `now` (no image retry pending). */
+function due(now: Date): SQL {
+  return or(isNull(deployments.nextAttemptAt), lte(deployments.nextAttemptAt, now)) as SQL;
+}
+
 type AppRow = typeof apps.$inferSelect;
 
 export interface Dispatcher {
   /**
-   * Sends the oldest queued deployment of the app to its node, unless another deployment of the
-   * app is in progress or the node is offline. Never throws; failures are logged.
+   * Sends the oldest due queued deployment of the app to its node, unless another deployment of
+   * the app is in progress or the node is offline. Image retries wait for `nextAttemptAt`, and
+   * are cancelled once a newer deployment of the app is sent. Never throws; failures are logged.
    */
-  dispatchApp(appId: AppId): Promise<void>;
+  dispatchApp(appId: AppId, now?: Date): Promise<void>;
   /** One worker pass: fail deployments queued too long, then dispatch for online nodes. */
   tick(now?: Date): Promise<void>;
 }
@@ -39,8 +99,14 @@ export function createDispatcher(deps: Deps): Dispatcher {
   const logger = deps.logger.child({ component: 'deployment-dispatcher' });
   const settings = createSettingsService(deps);
 
-  /** Claims the next queued deployment (sets `startedAt`) under a lock on the app row. */
-  async function claim(appId: AppId): Promise<{ app: AppRow; deployment: DeploymentRow } | null> {
+  /**
+   * Claims the next due queued deployment (sets `startedAt`) under a lock on the app row and
+   * cancels older deployments still waiting for an image retry: the newer one wins.
+   */
+  async function claim(
+    appId: AppId,
+    now: Date,
+  ): Promise<{ app: AppRow; deployment: DeploymentRow; abandoned: DeploymentRow[] } | null> {
     return deps.db.transaction(async (tx) => {
       const [app] = await tx.select().from(apps).where(eq(apps.id, appId)).for('update');
       if (!app) return null;
@@ -66,6 +132,7 @@ export function createDispatcher(deps: Deps): Dispatcher {
             eq(deployments.appId, appId),
             eq(deployments.status, 'queued'),
             isNull(deployments.startedAt),
+            due(now),
           ),
         )
         .orderBy(asc(deployments.createdAt), asc(deployments.id))
@@ -73,10 +140,40 @@ export function createDispatcher(deps: Deps): Dispatcher {
       if (!next || !deps.agents.isOnline(next.nodeId)) return null;
       const [claimed] = await tx
         .update(deployments)
-        .set({ startedAt: new Date() })
+        .set({ startedAt: new Date(), nextAttemptAt: null })
         .where(eq(deployments.id, next.id))
         .returning();
-      return claimed ? { app, deployment: claimed } : null;
+      if (!claimed) return null;
+      const abandoned = await tx
+        .update(deployments)
+        .set({
+          status: 'cancelled',
+          statusMessage: SUPERSEDED_WHILE_WAITING_MESSAGE,
+          nextAttemptAt: null,
+          finishedAt: new Date(),
+        })
+        .where(
+          and(
+            eq(deployments.appId, appId),
+            eq(deployments.status, 'queued'),
+            isNull(deployments.startedAt),
+            gt(deployments.retryCount, 0),
+            lt(deployments.createdAt, claimed.createdAt),
+          ),
+        )
+        .returning();
+      for (const row of abandoned) {
+        await recordAudit(tx, systemActor('deployment-dispatcher'), {
+          action: 'deployment.cancel',
+          target: { type: 'deployment', id: row.id },
+          summary: {
+            appId,
+            status: { from: 'queued', to: 'cancelled' },
+            supersededBy: claimed.id,
+          },
+        });
+      }
+      return { app, deployment: claimed, abandoned };
     });
   }
 
@@ -91,7 +188,12 @@ export function createDispatcher(deps: Deps): Dispatcher {
     const failed = await deps.db.transaction(async (tx) => {
       const [updated] = await tx
         .update(deployments)
-        .set({ status: 'failed', statusMessage: message, finishedAt: new Date() })
+        .set({
+          status: 'failed',
+          statusMessage: message,
+          nextAttemptAt: null,
+          finishedAt: new Date(),
+        })
         .where(and(eq(deployments.id, row.id), eq(deployments.status, 'queued')))
         .returning();
       if (updated) {
@@ -136,10 +238,11 @@ export function createDispatcher(deps: Deps): Dispatcher {
     });
   }
 
-  async function dispatchOnce(appId: AppId): Promise<DispatchOutcome> {
-    const claimed = await claim(appId);
+  async function dispatchOnce(appId: AppId, now: Date): Promise<DispatchOutcome> {
+    const claimed = await claim(appId, now);
     if (!claimed) return 'none';
-    const { app, deployment } = claimed;
+    const { app, deployment, abandoned } = claimed;
+    for (const row of abandoned) announceStatus(deps, row, true);
     const context = { appId, deploymentId: deployment.id, nodeId: deployment.nodeId };
     try {
       const payload = await payloadFor(app, deployment);
@@ -174,11 +277,11 @@ export function createDispatcher(deps: Deps): Dispatcher {
     return 'sent';
   }
 
-  async function dispatchApp(appId: AppId): Promise<void> {
+  async function dispatchApp(appId: AppId, now?: Date): Promise<void> {
     try {
       // A failed dispatch frees the app for the next queued deployment.
       for (let attempt = 0; attempt < MAX_DISPATCH_ATTEMPTS; attempt += 1) {
-        if ((await dispatchOnce(appId)) !== 'failed') return;
+        if ((await dispatchOnce(appId, now ?? new Date())) !== 'failed') return;
       }
     } catch (error) {
       logger.error({ err: error, appId }, 'deployment dispatch errored');
@@ -211,9 +314,9 @@ export function createDispatcher(deps: Deps): Dispatcher {
       const waiting = await deps.db
         .selectDistinct({ appId: deployments.appId, nodeId: deployments.nodeId })
         .from(deployments)
-        .where(and(eq(deployments.status, 'queued'), isNull(deployments.startedAt)));
+        .where(and(eq(deployments.status, 'queued'), isNull(deployments.startedAt), due(now)));
       for (const { appId, nodeId } of waiting) {
-        if (deps.agents.isOnline(nodeId)) await dispatchApp(appId);
+        if (deps.agents.isOnline(nodeId)) await dispatchApp(appId, now);
       }
     },
   };

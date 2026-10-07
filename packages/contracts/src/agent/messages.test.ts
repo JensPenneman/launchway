@@ -163,3 +163,33 @@ describe('agent protocol', () => {
     expect(isSupportedProtocolVersion(AGENT_PROTOCOL_VERSION + 1)).toBe(false);
   });
 });
+
+describe('deployment.result failure reasons', () => {
+  const failed = {
+    id: 'req-1',
+    type: 'deployment.result',
+    payload: {
+      deploymentId: generateId('dep'),
+      outcome: 'failed',
+      error: { code: 'internal-error', message: 'manifest unknown', retryable: true },
+    },
+  };
+
+  it('accepts a classified reason and its absence (older agents)', () => {
+    const withReason = parseAgentToServerMessage(
+      JSON.stringify({ ...failed, payload: { ...failed.payload, reason: 'image-not-found' } }),
+    );
+    expect(withReason.ok && withReason.message.payload).toMatchObject({
+      reason: 'image-not-found',
+    });
+    const without = parseAgentToServerMessage(JSON.stringify(failed));
+    expect(without.ok).toBe(true);
+  });
+
+  it('rejects unknown reasons', () => {
+    const parsed = parseAgentToServerMessage(
+      JSON.stringify({ ...failed, payload: { ...failed.payload, reason: 'flaky' } }),
+    );
+    expect(parsed).toMatchObject({ ok: false, reason: 'invalid-payload' });
+  });
+});

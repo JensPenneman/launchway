@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { and, eq, sql } from 'drizzle-orm';
+import { CommitSha, GitRef } from '@launchway/contracts';
+import { and, eq, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';
 import { systemActor } from '../../lib/auth-context.js';
@@ -43,6 +44,8 @@ export type WebhookOutcome = 'processed' | 'duplicate' | 'ignored';
 
 const Account = z.object({ login: z.string(), type: z.string() });
 
+const Repository = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
+
 const ReleaseEvent = z.object({
   action: z.string(),
   release: z.object({
@@ -50,8 +53,53 @@ const ReleaseEvent = z.object({
     draft: z.boolean(),
     prerelease: z.boolean(),
   }),
-  repository: z.object({ name: z.string(), owner: z.object({ login: z.string() }) }),
+  /** `edited`: the previous values of the changed fields. */
+  changes: z
+    .object({ draft: z.object({ from: z.boolean() }).optional() })
+    .loose()
+    .optional(),
+  repository: Repository,
 });
+type ReleaseEvent = z.infer<typeof ReleaseEvent>;
+
+const PushEvent = z.object({
+  ref: z.string(),
+  after: z.string(),
+  deleted: z.boolean().optional(),
+  repository: Repository,
+});
+
+const BRANCH_REF_PREFIX = 'refs/heads/';
+
+/**
+ * Whether a release event publishes a release (ADR 0019): `published` and `released` do;
+ * `edited` only when it turns a draft into a published release. Drafts never deploy;
+ * prereleases only for apps with `autoDeployPrereleases` (the caller filters on that).
+ * GitHub sends `published` and `released` for the same publication; deployments are deduped
+ * per tag.
+ */
+export function releasePublication(
+  event: ReleaseEvent,
+): { tag: string; prerelease: boolean } | null {
+  if (event.release.draft) return null;
+  const publishes =
+    event.action === 'published' ||
+    event.action === 'released' ||
+    (event.action === 'edited' && event.changes?.draft?.from === true);
+  return publishes ? { tag: event.release.tag_name, prerelease: event.release.prerelease } : null;
+}
+
+/** The branch and commit a push event deploys, or null (tags, deleted branches, bad input). */
+export function pushedBranch(event: z.infer<typeof PushEvent>): {
+  branch: string;
+  commitSha: string;
+} | null {
+  if (event.deleted || !event.ref.startsWith(BRANCH_REF_PREFIX)) return null;
+  const branch = GitRef.safeParse(event.ref.slice(BRANCH_REF_PREFIX.length));
+  const commitSha = CommitSha.safeParse(event.after);
+  if (!branch.success || !commitSha.success || /^0+$/.test(commitSha.data)) return null;
+  return { branch: branch.data, commitSha: commitSha.data };
+}
 
 const InstallationEvent = z.object({
   action: z.string(),
@@ -65,48 +113,81 @@ export function createWebhookHandler(deps: Deps) {
   const actor = systemActor('github-webhook');
   const deployments = createDeploymentsService(deps);
 
-  async function onRelease(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
-    const event = ReleaseEvent.parse(payload);
-    if (event.action !== 'published' || event.release.draft || event.release.prerelease) {
-      return 'ignored';
-    }
-    const owner = event.repository.owner.login;
-    const repo = event.repository.name;
-    const targets = await deps.db
+  /** Apps of the connection linked to the event's repository that match `filter`. */
+  function appsOf(connection: ConnectionRow, repository: z.infer<typeof Repository>, filter: SQL) {
+    return deps.db
       .select()
       .from(apps)
       .where(
         and(
           eq(apps.connectionId, connection.id),
-          eq(apps.autoDeployReleases, true),
-          sql`lower(${apps.repoOwner}) = lower(${owner})`,
-          sql`lower(${apps.repoName}) = lower(${repo})`,
+          filter,
+          sql`lower(${apps.repoOwner}) = lower(${repository.owner.login})`,
+          sql`lower(${apps.repoName}) = lower(${repository.name})`,
         ),
       );
+  }
+
+  /**
+   * Creates a deployment per app; GitHub or the database failing for any of them makes the
+   * delivery fail so GitHub's redelivery retries (apps deployed already are skipped then).
+   */
+  async function deployEach(
+    targets: (typeof apps.$inferSelect)[],
+    what: string,
+    create: (app: typeof apps.$inferSelect) => Promise<{ id: string } | null>,
+  ): Promise<WebhookOutcome> {
     let retry = false;
     for (const app of targets) {
       try {
-        const deployment = await deployments.createForRelease(app, event.release.tag_name, actor);
+        const deployment = await create(app);
         if (deployment) {
-          logger.info({ appId: app.id, deploymentId: deployment.id }, 'release auto-deployed');
+          logger.info({ appId: app.id, deploymentId: deployment.id }, `${what} auto-deployed`);
         }
       } catch (error) {
         logger.warn(
           { appId: app.id, reason: error instanceof Error ? error.message : 'unknown' },
-          'auto-deploy of a release failed',
+          `auto-deploy of a ${what} failed`,
         );
-        // GitHub or the database failing is worth a redelivery; an unknown tag is not.
+        // GitHub or the database failing is worth a redelivery; an unknown ref is not.
         retry ||= !(error instanceof ProblemError) || error.type === 'upstream-failed';
       }
     }
     if (retry) {
-      // The handler forgets the delivery, so GitHub's redelivery is not rejected as a duplicate;
-      // apps deployed already are skipped then (one deployment per release tag).
+      // The handler forgets the delivery, so GitHub's redelivery is not rejected as a duplicate.
       throw new ProblemError('upstream-failed', {
-        detail: 'Auto-deploying the release failed for at least one app; redeliver to retry',
+        detail: `Auto-deploying the ${what} failed for at least one app; redeliver to retry`,
       });
     }
     return 'processed';
+  }
+
+  async function onRelease(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
+    const event = ReleaseEvent.parse(payload);
+    const publication = releasePublication(event);
+    if (!publication) return 'ignored';
+    const filter = publication.prerelease
+      ? and(eq(apps.autoDeployReleases, true), eq(apps.autoDeployPrereleases, true))
+      : eq(apps.autoDeployReleases, true);
+    const targets = await appsOf(connection, event.repository, filter as SQL);
+    return deployEach(targets, 'release', (app) =>
+      deployments.createForRelease(app, publication.tag, actor),
+    );
+  }
+
+  async function onPush(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
+    const event = PushEvent.parse(payload);
+    const pushed = pushedBranch(event);
+    if (!pushed) return 'ignored';
+    const targets = await appsOf(
+      connection,
+      event.repository,
+      eq(apps.autoDeployBranch, pushed.branch),
+    );
+    if (targets.length === 0) return 'ignored';
+    return deployEach(targets, 'push', (app) =>
+      deployments.createForPush(app, pushed.branch, pushed.commitSha, actor),
+    );
   }
 
   async function onInstallation(
@@ -199,6 +280,9 @@ export function createWebhookHandler(deps: Deps) {
         switch (event) {
           case 'release':
             outcome = await onRelease(connection, payload);
+            break;
+          case 'push':
+            outcome = await onPush(connection, payload);
             break;
           case 'installation':
             outcome = await onInstallation(connection, payload);

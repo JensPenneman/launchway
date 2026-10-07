@@ -395,6 +395,102 @@ as Docker Desktop's drive path), Docker's data directory, the agent workspace
 or the platform's own volumes, and cannot use `shared`/`slave` mount
 propagation. See [ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md).
 
+## Automatic deployments
+
+An app deploys by itself in three cases (Settings → Runtime, or `PATCH
+/api/v1/apps/{id}`):
+
+- **Releases** (`autoDeployReleases`): every published GitHub release. Drafts
+  never deploy; prereleases only with `autoDeployPrereleases`.
+- **Branch pushes** (`autoDeployBranch`, e.g. `"main"`): every push to that
+  branch deploys the pushed commit. This needs a GitHub App connection whose
+  App subscribes to **push** events (GitHub → the App's settings →
+  Permissions & events → Subscribe to events → Push). Token connections only
+  poll releases.
+- **Release polling**: token connections check the latest release every 5
+  minutes.
+
+### Apps whose images CI builds
+
+When the Compose file references an image that CI builds, for example
+`image: ghcr.io/acme/trail:${LAUNCHWAY_REF}`, the release webhook and the
+image build start at the same moment and the deployment can reach
+`docker compose pull` before the image exists. Two things handle this:
+
+1. **Publish the release after the image.** Let release-please (or your
+   release tool) create the release as a **draft**, build and push the image
+   in CI, and publish the draft as the last CI step. GitHub then sends the
+   release webhook when the image exists. Launchway ignores drafts and deploys
+   when the draft is published.
+
+   In `release-please-config.json`:
+
+   ```json
+   { "draft": true, "force-tag-creation": true, "packages": { ".": {} } }
+   ```
+
+   `force-tag-creation` makes release-please create the tag for the draft, so
+   CI can build `ghcr.io/acme/trail:<tag>` from it. Then, in the workflow:
+
+   ```yaml
+   on:
+     push:
+       branches: [main]
+   permissions:
+     contents: write
+     packages: write
+   jobs:
+     release:
+       runs-on: ubuntu-latest
+       outputs:
+         created: ${{ steps.rp.outputs.release_created }}
+         tag: ${{ steps.rp.outputs.tag_name }}
+       steps:
+         - id: rp
+           uses: googleapis/release-please-action@v4
+     image:
+       needs: release
+       if: needs.release.outputs.created == 'true'
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v5
+           with: { ref: "${{ needs.release.outputs.tag }}" }
+         - uses: docker/login-action@v3
+           with:
+             registry: ghcr.io
+             username: ${{ github.actor }}
+             password: ${{ secrets.GITHUB_TOKEN }}
+         - uses: docker/build-push-action@v6
+           with:
+             push: true
+             tags: ghcr.io/${{ github.repository }}:${{ needs.release.outputs.tag }}
+         # Last step: publishing the draft sends the webhook that deploys it.
+         - run: gh release edit "$TAG" --draft=false --repo "$GITHUB_REPOSITORY"
+           env:
+             GH_TOKEN: ${{ github.token }}
+             TAG: ${{ needs.release.outputs.tag }}
+   ```
+
+   A release published by `GITHUB_TOKEN` does trigger the GitHub App's
+   webhook (only other workflows are not triggered by it).
+
+2. **Retries as the safety net.** An automatic deployment (release, push or
+   poll) that fails because the registry does not know the image
+   (`manifest unknown`, `name unknown`, a registry 404) goes back to the queue
+   and is retried after 1, 2, 4, 8, 15, 15 and 15 minutes. The Deployments
+   tab shows "Waiting for image, retry n at …"; cancelling it there stops the
+   retries. After 60 minutes of waiting it fails with the original error. When
+   a newer deployment of the app starts meanwhile, the waiting one is
+   cancelled. A deployment you start by hand fails at once and asks you to
+   deploy again once the image exists. Access errors (`denied`,
+   `unauthorized`) are never retried: log the node's Docker in to the registry
+   (`docker login ghcr.io`) instead. See
+   [ADR 0019](adr/0019-retry-automatic-deployments-until-the-image-exists.md).
+
+For branch pushes, tag the image with the commit
+(`ghcr.io/acme/trail:sha-${LAUNCHWAY_COMMIT_SHA_SHORT}` in Compose and
+`sha-${GITHUB_SHA::7}` in CI); the retries cover the time the build takes.
+
 ## Upgrade
 
 In the install directory:
@@ -568,6 +664,9 @@ docker compose ps                                  # container health
   reason. Replace host bind mounts with named volumes or with `configs:` that
   use inline `content`, and remove `privileged`, `network_mode: host`,
   `pid: host` and references to the `launchway-proxy` network.
+- **A deployment says "Waiting for image".** The registry did not have the
+  image yet; see [Automatic deployments](#automatic-deployments). If CI is
+  done, check that the tag in the Compose file matches the one CI pushed.
 - **The edge serves something unexpected.** `GET /api/v1/edge/config` returns
   the Caddyfile the API rendered, whether Caddy holds it (`inSync`) and the
   last load error; `POST /api/v1/edge/reload` loads it again.

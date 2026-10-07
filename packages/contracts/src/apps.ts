@@ -1,5 +1,6 @@
 import {
   DisplayName,
+  GitRef,
   RelativePath,
   RoutableServiceName,
   ServiceName,
@@ -111,6 +112,13 @@ export const ProxyServices = z
     example: ['oauth2-proxy'],
   });
 
+/** Branch whose pushes deploy the app (`push` webhook); null = no branch auto-deploy. */
+export const AutoDeployBranch = GitRef.openapi({
+  description:
+    'Branch whose pushes create an automatic deployment of the pushed commit (GitHub App connections; the app must subscribe to push events)',
+  example: 'main',
+});
+
 export const App = z
   .object({
     id: AppId,
@@ -128,6 +136,10 @@ export const App = z
     context: RelativePath.nullable().openapi({ description: 'Build context for dockerfile' }),
     nodeId: NodeId,
     autoDeployReleases: z.boolean(),
+    autoDeployPrereleases: z.boolean().openapi({
+      description: 'With autoDeployReleases: also deploy releases marked as prerelease',
+    }),
+    autoDeployBranch: AutoDeployBranch.nullable(),
     trustedMounts: TrustedMounts,
     proxyServices: ProxyServices,
     activeDeploymentId: DeploymentId.nullable(),
@@ -157,6 +169,8 @@ export const CreateAppInput = z
     context: RelativePath.optional(),
     nodeId: NodeId,
     autoDeployReleases: z.boolean().default(false),
+    autoDeployPrereleases: z.boolean().default(false),
+    autoDeployBranch: AutoDeployBranch.nullable().default(null),
     trustedMounts: TrustedMounts.default(false),
   })
   .superRefine(checkSourceXor)
@@ -176,6 +190,8 @@ export const UpdateAppInput = z
     context: RelativePath.optional(),
     nodeId: NodeId.optional(),
     autoDeployReleases: z.boolean().optional(),
+    autoDeployPrereleases: z.boolean().optional(),
+    autoDeployBranch: AutoDeployBranch.nullable().optional(),
     trustedMounts: TrustedMounts.optional(),
     proxyServices: ProxyServices.optional().openapi({
       description: 'Requires the admin role; takes effect with the next deployment',

@@ -47,6 +47,8 @@ export function SettingsTab({ app }: { app: App }) {
   const [context, setContext] = useState(app.context ?? '.');
   const [nodeId, setNodeId] = useState<string>(app.nodeId);
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployReleases);
+  const [autoDeployPrereleases, setAutoDeployPrereleases] = useState(app.autoDeployPrereleases);
+  const [autoDeployBranch, setAutoDeployBranch] = useState(app.autoDeployBranch ?? '');
   const isAdmin = useCan('admin');
   const [proxyServices, setProxyServices] = useState(app.proxyServices.join('\n'));
   const proxyServiceList = parseServiceList(proxyServices);
@@ -66,8 +68,13 @@ export function SettingsTab({ app }: { app: App }) {
       : { dockerfile, context }),
     nodeId,
     autoDeployReleases: autoDeploy,
+    autoDeployPrereleases,
+    autoDeployBranch: autoDeployBranch.trim() === '' ? null : autoDeployBranch.trim(),
     ...(isAdmin && proxyServicesChanged ? { proxyServices: proxyServiceList } : {}),
   });
+  const autoDeployBranchError = input.success
+    ? undefined
+    : input.error.issues.find((issue) => issue.path[0] === 'autoDeployBranch')?.message;
   const proxyServicesError = input.success
     ? undefined
     : input.error.issues.find((issue) => issue.path[0] === 'proxyServices')?.message;
@@ -203,6 +210,33 @@ export function SettingsTab({ app }: { app: App }) {
                 onCheckedChange={setAutoDeploy}
               />
             </div>
+            {autoDeploy && (
+              <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+                <div>
+                  <Label htmlFor="settings-auto-deploy-prereleases">Include prereleases</Label>
+                  <p className="text-xs text-muted-foreground">
+                    Releases marked as prerelease deploy too. Drafts never do.
+                  </p>
+                </div>
+                <Switch
+                  id="settings-auto-deploy-prereleases"
+                  checked={autoDeployPrereleases}
+                  onCheckedChange={setAutoDeployPrereleases}
+                />
+              </div>
+            )}
+            <Field
+              label="Deploy pushes to branch"
+              error={autoDeployBranchError}
+              description="Every push to this branch deploys the pushed commit (GitHub App connections). Leave empty to turn it off."
+            >
+              <Input
+                className="font-mono"
+                placeholder="main"
+                value={autoDeployBranch}
+                onChange={(event) => setAutoDeployBranch(event.target.value)}
+              />
+            </Field>
             <Field
               label="Proxy network services"
               error={proxyServicesError}

@@ -76,6 +76,8 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     context: row.context,
     nodeId: row.nodeId,
     autoDeployReleases: row.autoDeployReleases,
+    autoDeployPrereleases: row.autoDeployPrereleases,
+    autoDeployBranch: row.autoDeployBranch,
     trustedMounts: row.trustedMounts,
     proxyServices: row.proxyServices,
     activeDeploymentId,
@@ -271,6 +273,8 @@ export function createAppsService(deps: Deps): AppsService {
               context: usesDockerfile ? (input.context ?? '.') : null,
               nodeId: input.nodeId,
               autoDeployReleases: input.autoDeployReleases,
+              autoDeployPrereleases: input.autoDeployPrereleases,
+              autoDeployBranch: input.autoDeployBranch,
               trustedMounts: input.trustedMounts,
               createdAt: new Date(),
             })
@@ -344,6 +348,10 @@ export function createAppsService(deps: Deps): AppsService {
       if (input.autoDeployReleases !== undefined) {
         patch.autoDeployReleases = input.autoDeployReleases;
       }
+      if (input.autoDeployPrereleases !== undefined) {
+        patch.autoDeployPrereleases = input.autoDeployPrereleases;
+      }
+      if (input.autoDeployBranch !== undefined) patch.autoDeployBranch = input.autoDeployBranch;
       if (input.trustedMounts !== undefined) patch.trustedMounts = input.trustedMounts;
       if (input.composeFiles !== undefined) {
         Object.assign(patch, { composeFiles: input.composeFiles, dockerfile: null, context: null });

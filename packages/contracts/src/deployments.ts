@@ -22,12 +22,14 @@ export type DeploymentStatus = z.infer<typeof DeploymentStatus>;
 /**
  * Allowed transitions. In-progress states advance, fail or get cancelled; `running` is left
  * only by `superseded` (a newer deployment reached running) or `stopped`. Terminal states have
- * no exits. A rollback is a new deployment, never a transition.
+ * no exits. A rollback is a new deployment, never a transition. `building -> queued` is the
+ * image retry: an automatic deployment whose image does not exist yet waits for its next attempt
+ * (docs/adr/0019).
  */
 export const DEPLOYMENT_TRANSITIONS = {
   queued: ['cloning', 'failed', 'cancelled'],
   cloning: ['building', 'failed', 'cancelled'],
-  building: ['starting', 'failed', 'cancelled'],
+  building: ['starting', 'failed', 'cancelled', 'queued'],
   starting: ['running', 'failed', 'cancelled'],
   running: ['superseded', 'stopped'],
   superseded: [],
@@ -78,6 +80,24 @@ export function isInProgressStatus(status: DeploymentStatus): boolean {
 
 /** A deployment addressed to an offline node fails after this long in `queued`. */
 export const QUEUED_DEPLOYMENT_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * Why a deployment failed, as classified by the agent: `image-not-found` (the registry does not
+ * know an image or tag yet: manifest unknown, name unknown, 404), `policy` (Compose policy
+ * refused the project), `build` (clone, build or pull failed otherwise), `start` (`up` failed or
+ * a service did not become healthy) and `unknown`.
+ */
+export const DEPLOYMENT_FAILURE_REASONS = [
+  'image-not-found',
+  'policy',
+  'build',
+  'start',
+  'unknown',
+] as const;
+export const DeploymentFailureReason = z
+  .enum(DEPLOYMENT_FAILURE_REASONS)
+  .openapi('DeploymentFailureReason');
+export type DeploymentFailureReason = z.infer<typeof DeploymentFailureReason>;
 
 // --- Runtime state reported by the agent -------------------------------------------------------
 
@@ -138,6 +158,16 @@ export const Deployment = z
       .nullable()
       .openapi({ description: 'Failure reason or progress note' }),
     triggeredBy: UserId.nullable(),
+    failureReason: DeploymentFailureReason.nullable().openapi({
+      description:
+        'Classified cause of the last failed attempt; set while an image retry waits, too',
+    }),
+    retryCount: z.number().int().min(0).openapi({
+      description: 'Image retries scheduled so far (automatic deployments only)',
+    }),
+    nextAttemptAt: Timestamp.nullable().openapi({
+      description: 'While queued for an image retry: when the next attempt is dispatched',
+    }),
     services: z.array(ServiceStatus),
     createdAt: Timestamp,
     startedAt: Timestamp.nullable(),

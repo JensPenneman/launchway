@@ -2,6 +2,7 @@ import { join } from 'node:path';
 import {
   type AgentError,
   composeProjectName,
+  type DeploymentFailureReason,
   type DeploymentId,
   type DeploymentProgressPayload,
   type DeploymentResultPayload,
@@ -21,6 +22,7 @@ import {
 import { parseComposePs } from './compose-output.js';
 import { evaluateComposePolicy, parseComposeConfig } from './compose-policy.js';
 import { childEnv, type Runner, type RunResult, runProcess } from './exec.js';
+import { classifyFailure, type FailedStep } from './failure-reason.js';
 import { checkoutPlan, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
 import { Batcher, MAX_LINE_LENGTH, Tail } from './lines.js';
 import type { Send } from './outbox.js';
@@ -38,6 +40,8 @@ const TIMEOUTS = {
 /** `up --wait-timeout`, in seconds (below the `up` process timeout). */
 const WAIT_TIMEOUT_S = 600;
 const CONFIG_OUTPUT_LIMIT = 16 * 1024 * 1024;
+/** Output lines of a failed command that its classification looks at. */
+const CLASSIFY_LINES = 200;
 
 export interface DeploymentManagerOptions {
   logger: Logger;
@@ -71,11 +75,18 @@ interface Job {
 class StepError extends Error {
   readonly code: AgentError['code'];
   readonly retryable: boolean;
-  constructor(message: string, code: AgentError['code'] = 'internal-error', retryable = false) {
+  readonly reason: DeploymentFailureReason;
+  constructor(
+    message: string,
+    code: AgentError['code'] = 'internal-error',
+    retryable = false,
+    reason: DeploymentFailureReason = 'unknown',
+  ) {
     super(message);
     this.name = 'StepError';
     this.code = code;
     this.retryable = retryable;
+    this.reason = reason;
   }
 }
 
@@ -295,7 +306,7 @@ export class DeploymentManager {
     this.#options.send({
       id: requestId,
       type: 'deployment.result',
-      payload: { deploymentId, outcome: 'failed', error },
+      payload: { deploymentId, outcome: 'failed', error, reason: 'unknown' },
     });
   }
 }
@@ -303,6 +314,8 @@ export class DeploymentManager {
 interface ExecOptions {
   /** Short description for failure messages (`docker compose build`). */
   label: string;
+  /** Deployment step, for the failure reason. */
+  step: FailedStep;
   cwd: string;
   env: NodeJS.ProcessEnv;
   timeoutMs: number;
@@ -392,6 +405,7 @@ class DeploymentRun {
               message: 'Interrupted: the agent shut down',
               retryable: true,
             },
+            reason: 'unknown',
           },
         });
       } else {
@@ -401,15 +415,19 @@ class DeploymentRun {
       return;
     }
     let agentError: AgentError;
+    let reason: DeploymentFailureReason;
     if (error instanceof PolicyError) {
       agentError = { code: 'policy-violation', message: error.message, retryable: false };
+      reason = 'policy';
     } else if (error instanceof StepError) {
       agentError = { code: error.code, message: error.message, retryable: error.retryable };
+      reason = error.reason;
     } else {
       this.#log.error({ err: error }, 'unexpected deployment error');
       agentError = { code: 'internal-error', message: 'Unexpected agent error', retryable: true };
+      reason = 'unknown';
     }
-    this.#log.warn({ code: agentError.code }, 'deployment failed');
+    this.#log.warn({ code: agentError.code, reason }, 'deployment failed');
     const tail = this.#tail.values().join('\n');
     const message = tail
       ? `${agentError.message}\n--- last log lines ---\n${tail}`
@@ -420,6 +438,7 @@ class DeploymentRun {
         deploymentId,
         outcome: 'failed',
         error: { ...agentError, message: message.slice(0, 2000) },
+        reason,
       },
     });
   }
@@ -433,6 +452,7 @@ class DeploymentRun {
     for (const step of plan.steps) {
       await this.#exec('git', step.args, {
         label: `git ${step.args[0]}`,
+        step: 'checkout',
         cwd: step.inParent ? appDir : dir,
         env,
         timeoutMs: TIMEOUTS.git,
@@ -446,6 +466,7 @@ class DeploymentRun {
       for (const step of fetchCommitPlan(source.cloneUrl, source.commitSha, dir, false).steps) {
         await this.#exec('git', step.args, {
           label: `git ${step.args[0]}`,
+          step: 'checkout',
           cwd: dir,
           env,
           timeoutMs: TIMEOUTS.git,
@@ -453,7 +474,12 @@ class DeploymentRun {
       }
       head = await this.#head(dir, env);
       if (head !== source.commitSha) {
-        throw new StepError(`Checked out ${head} but the deployment expects ${source.commitSha}`);
+        throw new StepError(
+          `Checked out ${head} but the deployment expects ${source.commitSha}`,
+          'internal-error',
+          false,
+          'build',
+        );
       }
     }
     this.#system(`checked out ${head}`);
@@ -462,6 +488,7 @@ class DeploymentRun {
   async #head(dir: string, env: NodeJS.ProcessEnv): Promise<string> {
     const result = await this.#exec('git', ['rev-parse', '--verify', 'HEAD^{commit}'], {
       label: 'git rev-parse',
+      step: 'checkout',
       cwd: dir,
       env,
       timeoutMs: TIMEOUTS.ps,
@@ -497,6 +524,7 @@ class DeploymentRun {
       composeArgs(appTarget, 'config', '--format', 'json', '--no-env-resolution'),
       {
         label: 'docker compose config',
+        step: 'config',
         cwd: source.projectDir,
         env,
         timeoutMs: TIMEOUTS.config,
@@ -504,7 +532,14 @@ class DeploymentRun {
       },
     );
     const config = parseComposeConfig(configResult.stdout);
-    if (!config) throw new StepError('Could not read the Compose configuration');
+    if (!config) {
+      throw new StepError(
+        'Could not read the Compose configuration',
+        'internal-error',
+        false,
+        'build',
+      );
+    }
     const policy = evaluateComposePolicy(config, {
       projectName: project,
       proxyNetwork: payload.network.proxyNetwork,
@@ -541,12 +576,14 @@ class DeploymentRun {
       this.#progress('building', 'Building images');
       await this.#exec('docker', composeArgs(target, 'build', '--pull'), {
         label: 'docker compose build',
+        step: 'build',
         cwd,
         env,
         timeoutMs: TIMEOUTS.build,
       });
       await this.#exec('docker', composeArgs(target, 'pull', '--ignore-buildable'), {
         label: 'docker compose pull',
+        step: 'pull',
         cwd,
         env,
         timeoutMs: TIMEOUTS.pull,
@@ -567,13 +604,14 @@ class DeploymentRun {
         '--timeout',
         '60',
       ),
-      { label: 'docker compose up', cwd, env, timeoutMs: TIMEOUTS.up },
+      { label: 'docker compose up', step: 'up', cwd, env, timeoutMs: TIMEOUTS.up },
     );
     const ps = await this.#exec(
       'docker',
       composeArgs({ project }, 'ps', '--all', '--format', 'json'),
       {
         label: 'docker compose ps',
+        step: 'up',
         cwd: await workspace.neutralDir(),
         env,
         timeoutMs: TIMEOUTS.ps,
@@ -585,17 +623,27 @@ class DeploymentRun {
 
   async #exec(command: string, args: string[], options: ExecOptions): Promise<RunResult> {
     if (this.#signal.aborted) throw new Error('aborted');
-    const { label } = options;
+    const { label, step } = options;
     this.#system(`$ ${command} ${args.join(' ')}`);
+    // Kept unredacted in memory only: it is classified, never sent.
+    const output = new Tail<string>(CLASSIFY_LINES);
     const result = await this.#spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       signal: this.#signal,
       timeoutMs: options.timeoutMs,
-      onStderrLine: (line) => this.#line('stderr', line),
+      onStderrLine: (line) => {
+        output.push(line);
+        this.#line('stderr', line);
+      },
       ...(options.captureStdout
         ? { captureStdoutBytes: CONFIG_OUTPUT_LIMIT }
-        : { onStdoutLine: (line: string) => this.#line('stdout', line) }),
+        : {
+            onStdoutLine: (line: string) => {
+              output.push(line);
+              this.#line('stdout', line);
+            },
+          }),
     });
     if (result.aborted || this.#signal.aborted) throw new Error('aborted');
     if (result.timedOut) {
@@ -603,10 +651,20 @@ class DeploymentRun {
         `Timed out after ${Math.round(options.timeoutMs / 1000)} s: ${label}`,
         'timeout',
         true,
+        classifyFailure(step, []),
       );
     }
     if (result.code !== 0) {
-      throw new StepError(`Command failed (exit ${result.code ?? result.signal}): ${label}`);
+      const reason = classifyFailure(step, output.values());
+      const exit = `exit ${result.code ?? result.signal}`;
+      throw reason === 'image-not-found'
+        ? new StepError(
+            `Image not found in the registry (${exit}): ${label}`,
+            'internal-error',
+            true,
+            reason,
+          )
+        : new StepError(`Command failed (${exit}): ${label}`, 'internal-error', false, reason);
     }
     return result;
   }

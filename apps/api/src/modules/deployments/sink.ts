@@ -2,6 +2,7 @@ import {
   type AppId,
   type AppStatusPayload,
   canTransition,
+  type DeploymentFailureReason,
   type DeploymentId,
   type DeploymentLogPayload,
   type DeploymentProgressPayload,
@@ -16,7 +17,12 @@ import type { Deps } from '../../deps.js';
 import type { DeploymentSink } from '../../lib/agent-gateway.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
-import { createDispatcher } from './dispatcher.js';
+import {
+  createDispatcher,
+  IMAGE_RETRY_BUDGET_MS,
+  isAutomaticTrigger,
+  nextImageRetry,
+} from './dispatcher.js';
 import { logHubFor } from './log-hub.js';
 import { ACTIVE_STATUSES, agentActor, announceStatus, type DeploymentRow } from './model.js';
 import { deploymentLogLines, deployments } from './schema.js';
@@ -24,6 +30,9 @@ import { deploymentLogLines, deployments } from './schema.js';
 export const NODE_OFFLINE_MESSAGE = 'node went offline';
 export const LOST_DEPLOYMENT_MESSAGE =
   'The node no longer reports this deployment; its result was lost';
+export const MANUAL_IMAGE_HINT =
+  'The image does not exist in the registry yet. Deploy again once it has been pushed (automatic deployments wait for it).';
+
 /** Heartbeats in a row that must leave out a deployment before it is settled. */
 const RECONCILE_AFTER_HEARTBEATS = 2;
 /** Deployments claimed more recently than this are left alone (the deploy may be in flight). */
@@ -90,6 +99,82 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
       return null;
     }
     return row;
+  }
+
+  /** Appends a system line to the deployment's log, after the agent's lines. */
+  function appendSystemLine(id: DeploymentId, text: string): Promise<void> {
+    return serialize(id, async () => {
+      const [max] = await deps.db
+        .select({ value: sql<number | null>`max(${deploymentLogLines.seq})` })
+        .from(deploymentLogLines)
+        .where(eq(deploymentLogLines.deploymentId, id));
+      const seq = max?.value === null || max?.value === undefined ? 0 : Number(max.value) + 1;
+      const line: LogLine = {
+        seq,
+        timestamp: new Date().toISOString(),
+        stream: 'system',
+        line: text,
+      };
+      await deps.db.insert(deploymentLogLines).values({
+        deploymentId: id,
+        seq,
+        stream: 'system',
+        line: text,
+        loggedAt: new Date(line.timestamp),
+      });
+      hub.publish(id, { kind: 'log', line });
+    });
+  }
+
+  /**
+   * Puts an automatic deployment whose image does not exist yet back in the queue until
+   * `nextAttemptAt` (ADR 0019). The dispatcher sends it again once it is due.
+   */
+  async function scheduleImageRetry(
+    nodeId: NodeId,
+    row: DeploymentRow,
+    retry: { retryCount: number; nextAttemptAt: Date },
+  ): Promise<void> {
+    const at = retry.nextAttemptAt.toISOString();
+    const message = `Waiting for the image: retry ${retry.retryCount} at ${at}`;
+    const updated = await deps.db.transaction(async (tx) => {
+      await tx.select({ id: apps.id }).from(apps).where(eq(apps.id, row.appId)).for('update');
+      const [changed] = await tx
+        .update(deployments)
+        .set({
+          status: 'queued',
+          statusMessage: message,
+          failureReason: 'image-not-found',
+          retryCount: retry.retryCount,
+          nextAttemptAt: retry.nextAttemptAt,
+          startedAt: null,
+          finishedAt: null,
+        })
+        .where(and(eq(deployments.id, row.id), eq(deployments.status, row.status)))
+        .returning();
+      if (!changed) return null;
+      await recordAudit(tx, agentActor(nodeId), {
+        action: 'deployment.retry',
+        target: { type: 'deployment', id: row.id },
+        summary: {
+          appId: row.appId,
+          reason: 'image-not-found',
+          status: { from: row.status, to: 'queued' },
+          retryCount: retry.retryCount,
+          nextAttemptAt: at,
+        },
+      });
+      return changed;
+    });
+    if (!updated) return;
+    logger.info(
+      { deploymentId: row.id, retryCount: retry.retryCount, nextAttemptAt: at },
+      'image not found; deployment requeued',
+    );
+    await appendSystemLine(row.id, `Image not found in the registry. ${message}.`);
+    announceStatus(deps, updated, false);
+    // Another queued deployment of the app may go first; this one waits until it is due.
+    await dispatcher.dispatchApp(row.appId);
   }
 
   return {
@@ -160,6 +245,19 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
         );
         return;
       }
+      const failureReason: DeploymentFailureReason | null =
+        payload.outcome === 'failed' ? (payload.reason ?? 'unknown') : null;
+      if (
+        failureReason === 'image-not-found' &&
+        isAutomaticTrigger(row.trigger) &&
+        canTransition(row.status, 'queued')
+      ) {
+        const retry = nextImageRetry(row.trigger, row.retryCount, new Date());
+        if (retry) {
+          await scheduleImageRetry(nodeId, row, retry);
+          return;
+        }
+      }
       const target: DeploymentStatus =
         payload.outcome === 'succeeded'
           ? 'running'
@@ -195,7 +293,12 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
           .update(deployments)
           .set({
             status: target,
-            statusMessage: payload.outcome === 'failed' ? payload.error.message : null,
+            statusMessage:
+              payload.outcome === 'failed'
+                ? failureMessage(row, failureReason, payload.error.message)
+                : null,
+            failureReason: target === 'running' ? null : (failureReason ?? row.failureReason),
+            nextAttemptAt: null,
             ...(payload.outcome === 'succeeded' ? { services: payload.services } : {}),
             startedAt: row.startedAt ?? now,
             finishedAt: target === 'running' ? null : now,
@@ -209,6 +312,7 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
           summary: {
             appId: row.appId,
             status: { from: row.status, to: target },
+            ...(failureReason ? { reason: failureReason } : {}),
             ...(superseded.length > 0 ? { superseded: superseded.map((s) => s.id) } : {}),
           },
         });
@@ -346,4 +450,17 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
       }
     },
   };
+}
+
+/** Status message of a failed deployment: the agent's error plus advice for missing images. */
+export function failureMessage(
+  row: Pick<DeploymentRow, 'trigger' | 'retryCount'>,
+  reason: DeploymentFailureReason | null,
+  error: string,
+): string {
+  if (reason !== 'image-not-found') return error;
+  if (!isAutomaticTrigger(row.trigger)) return `${MANUAL_IMAGE_HINT}\n${error}`;
+  if (row.retryCount === 0) return error;
+  const minutes = Math.round(IMAGE_RETRY_BUDGET_MS / 60_000);
+  return `Gave up after ${row.retryCount} retries over ${minutes} minutes: the image still does not exist in the registry.\n${error}`;
 }

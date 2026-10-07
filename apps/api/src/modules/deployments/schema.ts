@@ -2,6 +2,7 @@ import {
   type AppId,
   DEPLOYMENT_STATUSES,
   DEPLOYMENT_TRIGGERS,
+  type DeploymentFailureReason,
   type DeploymentId,
   LOG_STREAMS,
   type NodeId,
@@ -49,6 +50,12 @@ export const deployments = pgTable(
     triggeredById: text('triggered_by_id')
       .$type<UserId>()
       .references(() => users.id, { onDelete: 'set null' }),
+    /** Classified cause of the last failed attempt (DEPLOYMENT_FAILURE_REASONS). */
+    failureReason: text('failure_reason').$type<DeploymentFailureReason>(),
+    /** Image retries scheduled so far (ADR 0019). */
+    retryCount: integer('retry_count').notNull().default(0),
+    /** A queued image retry is not dispatched before this. */
+    nextAttemptAt: tz('next_attempt_at'),
     /** Per-service result reported by the agent. */
     services: jsonb('services').$type<ServiceStatus[]>().notNull().default(sql`'[]'::jsonb`),
     startedAt: tz('started_at'),

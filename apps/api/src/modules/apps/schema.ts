@@ -32,6 +32,10 @@ export const apps = pgTable(
       .notNull()
       .references(() => nodes.id, { onDelete: 'restrict' }),
     autoDeployReleases: boolean('auto_deploy_releases').notNull().default(false),
+    /** With autoDeployReleases: prereleases deploy too. */
+    autoDeployPrereleases: boolean('auto_deploy_prereleases').notNull().default(false),
+    /** Pushes to this branch create an automatic deployment of the pushed commit. */
+    autoDeployBranch: text('auto_deploy_branch'),
     /** Admin decision: bind mounts below the node's allowed roots and foreign volumes. */
     trustedMounts: boolean('trusted_mounts').notNull().default(false),
     /** Services attached to the proxy network without a route (sorted, unique). */

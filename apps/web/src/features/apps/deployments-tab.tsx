@@ -51,6 +51,7 @@ import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
 import { formatDateTime, formatDuration, formatRelative, shortSha } from '@/lib/format';
 import { cn } from '@/lib/utils';
+import { imageRetryLabel } from './image-retry';
 
 interface DeploymentsTabProps {
   app: App;
@@ -109,6 +110,11 @@ export function DeploymentsTab({ app, openDeploymentId, onOpenDeployment }: Depl
                 >
                   <TableCell>
                     <DeploymentStatusBadge status={deployment.status} />
+                    {imageRetryLabel(deployment) && (
+                      <p className="mt-1 text-muted-foreground text-xs">
+                        {imageRetryLabel(deployment)}
+                      </p>
+                    )}
                   </TableCell>
                   <TableCell className="font-mono text-sm">{deployment.ref}</TableCell>
                   <TableCell className="hidden font-mono text-xs sm:table-cell">
@@ -328,6 +334,12 @@ function DeploymentDetail({ deploymentId, app }: { deploymentId: string; app: Ap
       </SheetHeader>
       <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
         {deployment.isError && <ErrorAlert error={deployment.error} />}
+        {deployment.data && imageRetryLabel(deployment.data) && (
+          <p className="rounded-lg border border-amber-500/40 p-3 text-sm">
+            {imageRetryLabel(deployment.data)}. The image is not in the registry yet; Launchway
+            keeps retrying for up to an hour.
+          </p>
+        )}
         {deployment.data?.statusMessage && (
           <p
             className={cn(

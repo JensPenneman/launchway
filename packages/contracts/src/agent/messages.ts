@@ -9,7 +9,7 @@ import {
   ServiceName,
   Timestamp,
 } from '../common.js';
-import { AppLogLine, LogLine, ServiceStatus } from '../deployments.js';
+import { AppLogLine, DeploymentFailureReason, LogLine, ServiceStatus } from '../deployments.js';
 import { AppId, DeploymentId, NodeId } from '../ids.js';
 import { AllowedBindRoots, DockerInfo, NODE_CREDENTIAL_PATTERN } from '../nodes.js';
 import { z } from '../zod.js';
@@ -58,7 +58,14 @@ export const DeploymentResultPayload = z.discriminatedUnion('outcome', [
     outcome: z.literal('succeeded'),
     services: z.array(ServiceStatus),
   }),
-  z.object({ deploymentId: DeploymentId, outcome: z.literal('failed'), error: AgentError }),
+  z.object({
+    deploymentId: DeploymentId,
+    outcome: z.literal('failed'),
+    error: AgentError,
+    reason: DeploymentFailureReason.optional().describe(
+      'Classified cause; absent from older agents (the server treats that as unknown)',
+    ),
+  }),
   z.object({ deploymentId: DeploymentId, outcome: z.literal('cancelled') }),
 ]);
 export type DeploymentResultPayload = z.infer<typeof DeploymentResultPayload>;

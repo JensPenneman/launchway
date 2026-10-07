@@ -72,6 +72,11 @@ queued ──▶ cloning ──▶ building ──▶ starting ──▶ running
    (any non-terminal state) ───────────────────────────────▶ cancelled
 ```
 
+*Image retry (ADR 0019): an automatic deployment that fails in `building`
+because its image does not exist yet returns to `queued` with `retryCount`
+and `nextAttemptAt` (backoff 1, 2, 4, 8, 15, 15, 15 minutes, 60 minutes in
+total). Manual deployments fail at once.*
+
 `App.activeDeploymentId` points at the `running` deployment. A newer
 deployment reaching `running` marks the previous one `superseded`. A rollback is
 simply a new deployment of an older ref (images are cached, so it is fast).
@@ -132,7 +137,11 @@ An app points at `owner/repo` through a GitHubConnection and declares:
 Deployable refs: GitHub **releases** (tags) first-class — list, pick, deploy.
 Branch heads and raw commits are accepted too (`ref` is a string; the API
 resolves it to a commit SHA at deployment creation). Optional per app:
-`autoDeployReleases: true` deploys every `release.published` webhook event.
+`autoDeployReleases: true` deploys every published release (drafts never;
+prereleases only with `autoDeployPrereleases`), and `autoDeployBranch`
+deploys every push to that branch (the pushed commit; ref = the branch).
+Automatic deployments retry while their image does not exist yet
+([ADR 0019](adr/0019-retry-automatic-deployments-until-the-image-exists.md)).
 
 ### What the agent does for one deployment
 
@@ -329,9 +338,12 @@ export interface DnsProvider {
   releases every 5 min when `autoDeployReleases` is on).
 - **Webhooks** at `POST /api/v1/webhooks/github`: HMAC `X-Hub-Signature-256`
   verified with timing-safe comparison; events handled: `release`
-  (published → deployment when auto-deploy is on), `installation`,
-  `installation_repositories`, `ping`. *(v0.1 does not auto-deploy drafts or
-  prereleases; such deployments carry the trigger `auto`.)*
+  (`published`/`released`, or `edited` from draft to published → deployment
+  when auto-deploy is on; drafts never, prereleases only with
+  `autoDeployPrereleases`), `push` (to `App.autoDeployBranch` → deployment of
+  the pushed commit; the App must subscribe to `push`), `installation`,
+  `installation_repositories`, `ping`. *(Such deployments carry the trigger
+  `auto` and are deduplicated per tag or commit.)*
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; }` so another host could be added later.
 
@@ -357,7 +369,9 @@ export interface DnsProvider {
   types carry the `id` the reply must echo. Unknown message types are
   ignored with a warning (forward compatibility); `hello` carries the
   protocol version and the server refuses incompatible agents with a clear
-  error that the UI shows.
+  error that the UI shows. A failed `deployment.result` carries a classified
+  `reason` (`image-not-found`, `policy`, `build`, `start`, `unknown`; absent
+  from older agents).
 - Reconnects with exponential backoff and jitter; the server marks a node
   `offline` after 45 s without heartbeat. A deployment addressed to an offline
   node stays `queued` until the node has been gone for 10 minutes, then

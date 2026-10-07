@@ -43,6 +43,16 @@ export interface DeploymentsService {
    * of that ref already exists for the app.
    */
   createForRelease(app: AppRow, tag: string, actor: RequestActor): Promise<Deployment | null>;
+  /**
+   * Deploys a pushed commit of the app's `autoDeployBranch` (ref = the branch, commit = the
+   * pushed SHA); skipped (null) when a deployment of that commit already exists for the app.
+   */
+  createForPush(
+    app: AppRow,
+    branch: string,
+    commitSha: string,
+    actor: RequestActor,
+  ): Promise<Deployment | null>;
   list(appId: AppId, query: DeploymentListQuery): Promise<DeploymentPage>;
   get(id: DeploymentId): Promise<Deployment>;
   cancel(id: DeploymentId, actor: RequestActor): Promise<Deployment>;
@@ -100,30 +110,69 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
     return row;
   }
 
+  interface InsertOptions {
+    /** `background`: do not wait for the agent's acknowledgement (webhook deliveries). */
+    dispatch?: 'await' | 'background';
+    /** Known commit (push events); skips resolving the ref. */
+    commitSha?: string;
+    /**
+     * Skip the insert when a deployment of the app matches (checked under the app row lock, so
+     * concurrent deliveries of the same release or push create one deployment).
+     */
+    unlessExists?: SQL;
+  }
+
+  function insert(
+    app: AppRow,
+    ref: string,
+    trigger: DeploymentTrigger,
+    actor: RequestActor,
+    options?: InsertOptions & { unlessExists?: undefined },
+  ): Promise<Deployment>;
+  function insert(
+    app: AppRow,
+    ref: string,
+    trigger: DeploymentTrigger,
+    actor: RequestActor,
+    options: InsertOptions,
+  ): Promise<Deployment | null>;
   async function insert(
     app: AppRow,
     ref: string,
     trigger: DeploymentTrigger,
     actor: RequestActor,
-    /** `background`: do not wait for the agent's acknowledgement (webhook deliveries). */
-    dispatch: 'await' | 'background' = 'await',
-  ): Promise<Deployment> {
-    const connection = await getConnection(deps.db, app.connectionId);
+    options: InsertOptions = {},
+  ): Promise<Deployment | null> {
+    const dispatch = options.dispatch ?? 'await';
     let commitSha: string;
-    try {
-      ({ sha: commitSha } = await providerFor(deps, connection).resolveRef(
-        app.repoOwner,
-        app.repoName,
-        ref,
-      ));
-    } catch (error) {
-      if (error instanceof GitProviderError && error.kind === 'not-found') {
-        throw invalidField('body.ref', `Ref not found in ${app.repoOwner}/${app.repoName}`);
+    if (options.commitSha) {
+      commitSha = options.commitSha;
+    } else {
+      const connection = await getConnection(deps.db, app.connectionId);
+      try {
+        ({ sha: commitSha } = await providerFor(deps, connection).resolveRef(
+          app.repoOwner,
+          app.repoName,
+          ref,
+        ));
+      } catch (error) {
+        if (error instanceof GitProviderError && error.kind === 'not-found') {
+          throw invalidField('body.ref', `Ref not found in ${app.repoOwner}/${app.repoName}`);
+        }
+        throw toGitProblem(error);
       }
-      throw toGitProblem(error);
     }
 
     const row = await deps.db.transaction(async (tx) => {
+      if (options.unlessExists) {
+        await tx.select({ id: apps.id }).from(apps).where(eq(apps.id, app.id)).for('update');
+        const [existing] = await tx
+          .select({ id: deployments.id })
+          .from(deployments)
+          .where(and(eq(deployments.appId, app.id), options.unlessExists))
+          .limit(1);
+        if (existing) return null;
+      }
       const [created] = await tx
         .insert(deployments)
         .values({
@@ -144,6 +193,7 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       });
       return created;
     });
+    if (!row) return null;
     deps.events.publish({
       topic: 'deployments',
       action: 'created',
@@ -191,7 +241,18 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
         .where(and(eq(deployments.appId, app.id), eq(deployments.ref, tag)))
         .limit(1);
       if (existing) return null;
-      return insert(app, tag, 'auto', actor, 'background');
+      return insert(app, tag, 'auto', actor, {
+        dispatch: 'background',
+        unlessExists: eq(deployments.ref, tag),
+      });
+    },
+
+    async createForPush(app, branch, commitSha, actor) {
+      return insert(app, branch, 'auto', actor, {
+        dispatch: 'background',
+        commitSha,
+        unlessExists: eq(deployments.commitSha, commitSha),
+      });
     },
 
     async list(appId, query) {

@@ -17,6 +17,10 @@ export const ALLOWED_CAPABILITIES: readonly string[] = [
 ];
 
 const MOUNT_TYPES_ALLOWED = ['volume', 'tmpfs', 'image'];
+/** `driver_opts.type` values the local volume driver may mount (network filesystems and tmpfs). */
+const VOLUME_TYPES_ALLOWED = ['nfs', 'nfs4', 'cifs', 'smb3', 'tmpfs'];
+/** Namespace modes that stay inside the container (besides `service:<name>`). */
+const PRIVATE_NAMESPACE_MODES = ['private', 'shareable', 'none'];
 const NamespaceMode = z.string().nullish();
 
 const PortSpec = z.looseObject({
@@ -37,6 +41,19 @@ const Service = z.looseObject({
   cap_add: z.array(z.string()).nullish(),
   security_opt: z.array(z.string()).nullish(),
   devices: z.array(z.unknown()).nullish(),
+  device_cgroup_rules: z.array(z.string()).nullish(),
+  cgroup_parent: z.string().nullish(),
+  runtime: z.string().nullish(),
+  gpus: z.unknown().optional(),
+  deploy: z
+    .looseObject({
+      resources: z
+        .looseObject({
+          reservations: z.looseObject({ devices: z.array(z.unknown()).nullish() }).nullish(),
+        })
+        .nullish(),
+    })
+    .nullish(),
   volumes_from: z.array(z.string()).nullish(),
   container_name: z.string().nullish(),
   provider: z.unknown().optional(),
@@ -73,6 +90,7 @@ const Network = z
     name: z.string().nullish(),
     external: z.unknown().optional(),
     driver: z.string().nullish(),
+    driver_opts: z.record(z.string(), z.unknown()).nullish(),
   })
   .nullable();
 const FileObject = z
@@ -114,9 +132,11 @@ export interface PolicyResult {
 
 const isExternal = (value: unknown) =>
   value === true || (typeof value === 'object' && value !== null);
-const isHostMode = (value: string | null | undefined) => value === 'host';
-const isContainerMode = (value: string | null | undefined) =>
-  typeof value === 'string' && value.startsWith('container:');
+/** Only `service:<name>` of a service in the same project may share a namespace. */
+const isOwnService = (value: string, services: Record<string, unknown>) =>
+  value.startsWith('service:') && Object.hasOwn(services, value.slice('service:'.length));
+/** `no-new-privileges` is the only security option an app may set. */
+const isAllowedSecurityOpt = (value: string) => /^no-new-privileges([:=]true)?$/i.test(value);
 /** Local build contexts are absolute after Compose resolved them; URLs and `target:` are remote. */
 const isLocalPath = (value: string) => value.startsWith('/') || /^[A-Za-z]:[\\/]/.test(value);
 
@@ -154,13 +174,15 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
   for (const [name, service] of Object.entries(config.services)) {
     const at = `service "${name}"`;
     if (service.privileged) reject(`${at}: privileged is not allowed`);
-    if (isHostMode(service.network_mode)) reject(`${at}: network_mode host is not allowed`);
-    if (isContainerMode(service.network_mode)) {
-      reject(`${at}: network_mode ${service.network_mode} is not allowed`);
+    const networkMode = service.network_mode;
+    if (networkMode && networkMode !== 'none' && !isOwnService(networkMode, config.services)) {
+      reject(`${at}: network_mode ${networkMode} is not allowed (use none or service:<name>)`);
     }
     for (const key of ['pid', 'ipc', 'uts', 'userns_mode', 'cgroup'] as const) {
       const mode = service[key];
-      if (isHostMode(mode) || isContainerMode(mode)) reject(`${at}: ${key} ${mode} is not allowed`);
+      if (mode && !PRIVATE_NAMESPACE_MODES.includes(mode) && !isOwnService(mode, config.services)) {
+        reject(`${at}: ${key} ${mode} is not allowed`);
+      }
     }
     for (const cap of service.cap_add ?? []) {
       if (!ALLOWED_CAPABILITIES.includes(normalizeCapability(cap))) {
@@ -170,11 +192,21 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
       }
     }
     for (const option of service.security_opt ?? []) {
-      if (/unconfined|label[:=]disable|systempaths/i.test(option)) {
-        reject(`${at}: security_opt ${option} is not allowed`);
+      if (!isAllowedSecurityOpt(option)) {
+        reject(`${at}: security_opt ${option} is not allowed (only no-new-privileges)`);
       }
     }
     if (service.devices && service.devices.length > 0) reject(`${at}: devices are not allowed`);
+    if (service.device_cgroup_rules && service.device_cgroup_rules.length > 0) {
+      reject(`${at}: device_cgroup_rules are not allowed`);
+    }
+    if (service.cgroup_parent) reject(`${at}: cgroup_parent is not allowed`);
+    if (service.runtime) reject(`${at}: a custom runtime is not allowed`);
+    if (service.gpus !== undefined && service.gpus !== null) reject(`${at}: gpus are not allowed`);
+    const reservedDevices = service.deploy?.resources?.reservations?.devices;
+    if (reservedDevices && reservedDevices.length > 0) {
+      reject(`${at}: device reservations are not allowed`);
+    }
     for (const from of service.volumes_from ?? []) {
       if (from.startsWith('container:')) reject(`${at}: volumes_from ${from} is not allowed`);
     }
@@ -216,6 +248,9 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
         : Object.values(extra ?? {});
       for (const value of extraValues) {
         if (isLocalPath(value)) checkFile(`${at} additional_contexts`, value);
+        else if (/^oci-layout:/i.test(value)) {
+          reject(`${at}: additional_contexts "${value}" is not allowed`);
+        }
       }
       if (build.network === 'host') reject(`${at}: build network host is not allowed`);
       if (build.privileged) reject(`${at}: privileged builds are not allowed`);
@@ -242,30 +277,48 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
     if (!name.startsWith(`${ctx.projectName}_`)) {
       reject(`${at}: custom volume name "${name}" is not allowed`);
     }
-    const opts = volume?.driver_opts ?? {};
-    const type = String(opts.type ?? '');
-    const o = String(opts.o ?? '');
-    const device = String(opts.device ?? '');
-    if (
-      type === 'none' ||
-      type === 'bind' ||
-      /(^|,)r?bind(,|$)/.test(o) ||
-      device.startsWith('/')
-    ) {
-      reject(`${at}: volumes backed by host paths are not allowed`);
+    const driver = volume?.driver;
+    if (driver && driver !== 'local') reject(`${at}: volume driver "${driver}" is not allowed`);
+    const opts = volume?.driver_opts;
+    if (opts && Object.keys(opts).length > 0) {
+      const type = String(opts.type ?? '');
+      const o = String(opts.o ?? '');
+      const device = String(opts.device ?? '');
+      const unknownOpts = Object.keys(opts).filter((opt) => !['type', 'o', 'device'].includes(opt));
+      // Network shares (`:/export`, `//server/share`) and tmpfs only; never a host path.
+      const hostPath =
+        type === 'cifs' || type === 'smb3' ? !device.startsWith('//') : device.startsWith('/');
+      if (
+        !VOLUME_TYPES_ALLOWED.includes(type) ||
+        unknownOpts.length > 0 ||
+        hostPath ||
+        /(^|,)(r?bind|lowerdir|upperdir|workdir)(=|,|$)/.test(o)
+      ) {
+        reject(
+          `${at}: volumes backed by host paths are not allowed (driver_opts: nfs, cifs or tmpfs only)`,
+        );
+      }
     }
   }
 
   for (const [key, network] of Object.entries(config.networks ?? {})) {
     const at = `network "${key}"`;
-    const name = network?.name ?? key;
+    const name = network?.name ?? `${ctx.projectName}_${key}`;
     if (proxyNames.has(key) || proxyNames.has(name)) {
       reject(`${at}: the proxy network is attached by Slipway; do not declare it`);
     } else if (network && isExternal(network.external)) {
       reject(`${at}: external networks are not allowed`);
+    } else if (!name.startsWith(`${ctx.projectName}_`)) {
+      reject(`${at}: custom network name "${name}" is not allowed`);
     }
-    if (name === 'host' || network?.driver === 'host')
+    if (name === 'host' || network?.driver === 'host') {
       reject(`${at}: host networking is not allowed`);
+    } else if (network?.driver && network.driver !== 'bridge') {
+      reject(`${at}: network driver "${network.driver}" is not allowed`);
+    }
+    if (network?.driver_opts && Object.keys(network.driver_opts).length > 0) {
+      reject(`${at}: network driver_opts are not allowed`);
+    }
   }
 
   for (const kind of ['configs', 'secrets'] as const) {

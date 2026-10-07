@@ -424,9 +424,11 @@ export interface DnsProvider {
 - **Deployments on GitHub**: Launchway mirrors every deployment to GitHub's
   Deployments API (environment `production`, or `preview/pr-<n>` for
   previews, which are transient) and posts its status as it moves
-  (`in_progress`, `success` with the app's first route or the preview host as
-  environment URL and the deployment page as log link, `failure`, `inactive`,
-  `error`). The GitHub id is kept in `deployments.github_deployment_id`. It is
+  (`in_progress`, also once per image retry while it waits for its image,
+  `success` with the app's first route or the preview host as environment URL
+  and the deployment page as log link, `failure`, and `inactive` when
+  superseded, stopped or cancelled). The GitHub id is kept in
+  `deployments.github_deployment_id`. It is
   best effort: a missing permission or a GitHub outage is logged and never
   fails a deployment. Apps opt out with `App.githubDeployments: false`. Apps
   created before these permissions must be updated on GitHub, and

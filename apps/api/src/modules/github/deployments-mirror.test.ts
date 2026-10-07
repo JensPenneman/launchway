@@ -12,6 +12,7 @@ import {
   createDeploymentsMirror,
   githubDeploymentState,
   githubEnvironment,
+  githubStatus,
   type MirrorSnapshot,
   type MirrorStore,
 } from './deployments-mirror.js';
@@ -55,6 +56,32 @@ class FakeOctokit implements OctokitLike {
       .filter((call) => call.route.endsWith('/statuses'))
       .map((call) => call.params.state);
   }
+
+  /** `[state, description]` of every posted status. */
+  posted() {
+    return this.calls
+      .filter((call) => call.route.endsWith('/statuses'))
+      .map((call) => [call.params.state, call.params.description]);
+  }
+}
+
+type DeploymentFields = MirrorSnapshot['deployment'];
+
+/** Deployment fields of a snapshot, for `githubStatus`. */
+function deploymentOf(fields: Partial<DeploymentFields>): DeploymentFields {
+  return {
+    id: 'dep_01' as DeploymentId,
+    appId: 'app_01' as AppId,
+    commitSha: 'a'.repeat(40),
+    status: 'queued',
+    statusMessage: null,
+    githubDeploymentId: null,
+    environmentName: null,
+    failureReason: null,
+    retryCount: 0,
+    nextAttemptAt: null,
+    ...fields,
+  };
 }
 
 const connection = (overrides: Partial<ConnectionRow> = {}): ConnectionRow => ({
@@ -88,15 +115,7 @@ class MemoryStore implements MirrorStore {
   ): DeploymentId {
     const id = generateId('dep');
     this.snapshots.set(id, {
-      deployment: {
-        id,
-        appId: 'app_01' as AppId,
-        commitSha: 'a'.repeat(40),
-        status,
-        statusMessage: null,
-        githubDeploymentId: null,
-        environmentName: overrides.environmentName ?? null,
-      },
+      deployment: deploymentOf({ id, status, environmentName: overrides.environmentName ?? null }),
       app: { repoOwner: 'octo', repoName: 'trail', githubDeployments: !overrides.optOut },
       connection: overrides.conn ?? connection(),
       environmentUrl: 'https://trail.example.com',
@@ -106,12 +125,13 @@ class MemoryStore implements MirrorStore {
   }
 
   set(id: DeploymentId, status: DeploymentStatus, statusMessage: string | null = null) {
+    this.patch(id, { status, statusMessage });
+  }
+
+  patch(id: DeploymentId, fields: Partial<DeploymentFields>) {
     const snapshot = this.snapshots.get(id);
     if (!snapshot) throw new Error('unknown');
-    this.snapshots.set(id, {
-      ...snapshot,
-      deployment: { ...snapshot.deployment, status, statusMessage },
-    });
+    this.snapshots.set(id, { ...snapshot, deployment: { ...snapshot.deployment, ...fields } });
   }
 
   async load(id: DeploymentId) {
@@ -144,7 +164,44 @@ describe('state mapping', () => {
       superseded: 'inactive',
       stopped: 'inactive',
       failed: 'failure',
-      cancelled: 'error',
+      cancelled: 'inactive',
+    });
+  });
+
+  it('describes image retries and a failure after them', () => {
+    const at = new Date('2026-10-07T10:04:00Z');
+    expect(
+      githubStatus(
+        deploymentOf({ retryCount: 3, nextAttemptAt: at, failureReason: 'image-not-found' }),
+      ),
+    ).toEqual({
+      state: 'in_progress',
+      description: 'Waiting for the image (retry 3, next attempt 2026-10-07T10:04:00.000Z)',
+      retry: 3,
+    });
+    // Queued without a retry, or claimed for its retry: nothing to post.
+    expect(githubStatus(deploymentOf({}))).toBeNull();
+    expect(githubStatus(deploymentOf({ retryCount: 3 }))).toBeNull();
+
+    const gaveUp = deploymentOf({
+      status: 'failed',
+      failureReason: 'image-not-found',
+      retryCount: 7,
+      statusMessage: 'Gave up after 7 retries over 60 minutes: the image still does not exist',
+    });
+    expect(githubStatus(gaveUp)).toEqual({
+      state: 'failure',
+      description: 'Failed: the image never appeared (gave up after 7 retries)',
+      retry: null,
+    });
+    // A manual deployment fails at once and keeps the agent's message.
+    expect(
+      githubStatus({ ...gaveUp, retryCount: 0, statusMessage: 'manifest unknown' })?.description,
+    ).toBe('Failed: manifest unknown');
+    expect(githubStatus(deploymentOf({ status: 'cancelled' }))).toEqual({
+      state: 'inactive',
+      description: 'Cancelled',
+      retry: null,
     });
   });
 
@@ -253,9 +310,48 @@ describe('deployments mirror', () => {
       'in_progress',
       'failure',
       'in_progress',
-      'error',
+      'inactive',
       'success',
       'inactive',
+    ]);
+  });
+
+  it('posts one status per image retry and says when the image never appeared', async () => {
+    const id = store.add('starting');
+    await mirror.sync(id, true);
+    const waiting = (retryCount: number, at: string) =>
+      store.patch(id, {
+        status: 'queued',
+        statusMessage: `Waiting for the image: retry ${retryCount} at ${at}`,
+        failureReason: 'image-not-found',
+        retryCount,
+        nextAttemptAt: new Date(at),
+      });
+
+    waiting(1, '2026-10-07T10:01:00.000Z');
+    expect(await mirror.sync(id, false)).toBe('updated');
+    // Repeated events of the same retry post nothing.
+    expect(await mirror.sync(id, false)).toBe('unchanged');
+    // Sent again: claimed (no next attempt), then the attempt itself.
+    store.patch(id, { nextAttemptAt: null });
+    expect(await mirror.sync(id, false)).toBe('unchanged');
+    store.patch(id, { status: 'starting', statusMessage: null });
+    expect(await mirror.sync(id, false)).toBe('unchanged');
+
+    waiting(2, '2026-10-07T10:03:00.000Z');
+    expect(await mirror.sync(id, false)).toBe('updated');
+    store.patch(id, {
+      status: 'failed',
+      statusMessage: 'Gave up after 2 retries over 60 minutes: the image still does not exist',
+      nextAttemptAt: null,
+    });
+    expect(await mirror.sync(id, false)).toBe('updated');
+
+    expect(octokit.posted()).toEqual([
+      ['in_progress', 'Starting'],
+      ['in_progress', 'Waiting for the image (retry 1, next attempt 2026-10-07T10:01:00.000Z)'],
+      ['in_progress', 'Waiting for the image (retry 2, next attempt 2026-10-07T10:03:00.000Z)'],
+      ['failure', 'Failed: the image never appeared (gave up after 2 retries)'],
     ]);
   });
 

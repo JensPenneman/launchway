@@ -38,8 +38,12 @@ approval on every installation.
 3. **Status mapping.** `cloning`/`building`/`starting` -> `in_progress`,
    `running` -> `success` (with `environment_url` = `https://<first route host>`
    and `log_url` = `<publicUrl>/apps/<appId>?deployment=<id>`), `failed` ->
-   `failure`, `superseded`/`stopped` -> `inactive`, `cancelled` -> `error`.
-   `queued` posts nothing (a new GitHub deployment is `pending`).
+   `failure`, `superseded`/`stopped`/`cancelled` -> `inactive` (a cancel is an
+   operator decision, not a failure). `queued` posts nothing (a new GitHub
+   deployment is `pending`), except while it waits for its image (ADR 0019):
+   one `in_progress` status per retry, "Waiting for the image (retry <n>, next
+   attempt <ISO time>)". A failure after the retries says the image never
+   appeared (`failureReason` `image-not-found`).
 4. **Best effort.** Steps of one deployment run one at a time and coalesce;
    each step reads the current state, so GitHub converges on the latest status.
    Rate-limited answers (429, or 403 with an exhausted quota or `Retry-After`)

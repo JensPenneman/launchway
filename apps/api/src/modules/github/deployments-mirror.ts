@@ -1,5 +1,6 @@
 import {
   type AppId,
+  type DeploymentFailureReason,
   type DeploymentId,
   type DeploymentStatus,
   isInProgressStatus,
@@ -30,11 +31,12 @@ import { githubConnections } from './schema.js';
 import { DENIAL_LOG_INTERVAL_MS, githubConnectionState } from './state.js';
 
 /** States of a GitHub deployment status that Launchway posts. */
-export type GitHubDeploymentState = 'in_progress' | 'success' | 'failure' | 'inactive' | 'error';
+export type GitHubDeploymentState = 'in_progress' | 'success' | 'failure' | 'inactive';
 
 /**
  * Launchway status -> GitHub deployment status. `queued` posts nothing: a new GitHub deployment
- * is `pending` until the first status arrives.
+ * is `pending` until the first status arrives (a deployment waiting for its image is the
+ * exception, see `githubStatus`). A cancel is an operator decision, not a failure: `inactive`.
  */
 export function githubDeploymentState(status: DeploymentStatus): GitHubDeploymentState | null {
   switch (status) {
@@ -50,9 +52,8 @@ export function githubDeploymentState(status: DeploymentStatus): GitHubDeploymen
       return 'failure';
     case 'superseded':
     case 'stopped':
-      return 'inactive';
     case 'cancelled':
-      return 'error';
+      return 'inactive';
   }
 }
 
@@ -80,6 +81,11 @@ export interface MirrorSnapshot {
     readonly githubDeploymentId: number | null;
     /** `production`, or `preview/pr-<n>` for previews; null is treated as production. */
     readonly environmentName: string | null;
+    readonly failureReason: DeploymentFailureReason | null;
+    /** Image retries scheduled so far (ADR 0019). */
+    readonly retryCount: number;
+    /** Set while a queued image retry waits to be sent. */
+    readonly nextAttemptAt: Date | null;
   };
   readonly app: {
     readonly repoOwner: string;
@@ -143,6 +149,9 @@ export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>
           statusMessage: row.deployment.statusMessage,
           githubDeploymentId: row.deployment.githubDeploymentId,
           environmentName: row.deployment.environmentName,
+          failureReason: row.deployment.failureReason,
+          retryCount: row.deployment.retryCount,
+          nextAttemptAt: row.deployment.nextAttemptAt,
         },
         app: {
           repoOwner: row.app.repoOwner,
@@ -204,10 +213,44 @@ const STATE_DESCRIPTIONS: Record<DeploymentStatus, string> = {
   cancelled: 'Cancelled',
 };
 
-function statusDescription(status: DeploymentStatus, message: string | null): string {
-  const base = STATE_DESCRIPTIONS[status];
-  const text = status === 'failed' && message ? `${base}: ${message}` : base;
+function truncate(text: string): string {
   return text.length > DESCRIPTION_MAX ? `${text.slice(0, DESCRIPTION_MAX - 3)}...` : text;
+}
+
+/** A GitHub deployment status to post. */
+export interface GitHubStatus {
+  readonly state: GitHubDeploymentState;
+  readonly description: string;
+  /** Set while the deployment waits for its image: each retry posts once. */
+  readonly retry: number | null;
+}
+
+/**
+ * What GitHub should show for a deployment, or null for nothing (queued). A deployment waiting
+ * for its image (queued with a retry scheduled) is `in_progress` with the retry and the time of
+ * the next attempt; one that failed after its image retries says the image never appeared.
+ */
+export function githubStatus(deployment: MirrorSnapshot['deployment']): GitHubStatus | null {
+  const { status, statusMessage, failureReason, retryCount, nextAttemptAt } = deployment;
+  if (status === 'queued' && retryCount > 0 && nextAttemptAt) {
+    return {
+      state: 'in_progress',
+      description: truncate(
+        `Waiting for the image (retry ${retryCount}, next attempt ${nextAttemptAt.toISOString()})`,
+      ),
+      retry: retryCount,
+    };
+  }
+  const state = githubDeploymentState(status);
+  if (state === null) return null;
+  let description = STATE_DESCRIPTIONS[status];
+  if (status === 'failed' && failureReason === 'image-not-found' && retryCount > 0) {
+    const retries = retryCount === 1 ? '1 retry' : `${retryCount} retries`;
+    description = `Failed: the image never appeared (gave up after ${retries})`;
+  } else if (status === 'failed' && statusMessage) {
+    description = `${description}: ${statusMessage}`;
+  }
+  return { state, description: truncate(description), retry: null };
 }
 
 const defaultSleep = (ms: number) =>
@@ -245,13 +288,22 @@ export function createDeploymentsMirror(
   const retry = { sleep: options.sleep ?? defaultSleep, now: options.now ?? Date.now };
   const now = retry.now;
   const shared = githubConnectionState(deps.events);
-  /** Last GitHub state posted per deployment, so repeated events post nothing. */
-  const posted = new Map<DeploymentId, GitHubDeploymentState>();
+  /** Last GitHub status posted per deployment, so repeated events post nothing. */
+  const posted = new Map<DeploymentId, Pick<GitHubStatus, 'state' | 'retry'>>();
   const queues = new Map<DeploymentId, QueueEntry>();
 
-  function remember(id: DeploymentId, state: GitHubDeploymentState) {
+  /**
+   * True when GitHub already shows `status`: the same state, and while waiting for an image the
+   * same retry. Attempts between retries post nothing new, so a retry costs one status.
+   */
+  function isPosted(id: DeploymentId, status: GitHubStatus): boolean {
+    const last = posted.get(id);
+    return last?.state === status.state && (status.retry === null || last.retry === status.retry);
+  }
+
+  function remember(id: DeploymentId, status: GitHubStatus) {
     posted.delete(id);
-    posted.set(id, state);
+    posted.set(id, { state: status.state, retry: status.retry });
     if (posted.size > MAX_REMEMBERED) {
       const oldest = posted.keys().next().value;
       if (oldest !== undefined) posted.delete(oldest);
@@ -318,7 +370,7 @@ export function createDeploymentsMirror(
     if (!snapshot?.app.githubDeployments) return 'skipped';
     const { deployment, app, connection } = snapshot;
     const repo = { owner: app.repoOwner, repo: app.repoName };
-    const target = githubDeploymentState(deployment.status);
+    const target = githubStatus(deployment);
     let githubId = deployment.githubDeploymentId;
     let outcome: MirrorOutcome = 'updated';
 
@@ -361,7 +413,7 @@ export function createDeploymentsMirror(
         );
       }
 
-      if (target === null || posted.get(id) === target) {
+      if (target === null || isPosted(id, target)) {
         return outcome === 'created' ? outcome : 'unchanged';
       }
       const client = await octokitFor(connection);
@@ -377,10 +429,10 @@ export function createDeploymentsMirror(
           {
             ...repo,
             deployment_id: githubId,
-            state: target,
-            description: statusDescription(deployment.status, deployment.statusMessage),
+            state: target.state,
+            description: target.description,
             ...(logUrl ? { log_url: logUrl } : {}),
-            ...(target === 'success' && snapshot.environmentUrl
+            ...(target.state === 'success' && snapshot.environmentUrl
               ? { environment_url: snapshot.environmentUrl }
               : {}),
           },

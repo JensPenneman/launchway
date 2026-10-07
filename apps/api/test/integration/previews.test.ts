@@ -197,6 +197,8 @@ describe('pull request previews against PostgreSQL', () => {
     ).json()) as DnsProviderAccount;
     await api.request(`/api/v1/dns/accounts/${account.id}/sync`, json('POST'));
 
+    // The settings row may not exist yet when this file runs first.
+    await db.insert(settings).values({ id: 1 }).onConflictDoNothing();
     const [current] = await db.select().from(settings).where(eq(settings.id, 1));
     original = {
       anchorHostname: current?.anchorHostname ?? null,
@@ -347,9 +349,13 @@ describe('pull request previews against PostgreSQL', () => {
     });
     expect(await auditActions(row.id)).toEqual(['preview.create']);
 
-    // The edge renders the preview route with the preview alias.
-    const edge = await (await api.request('/api/v1/edge/config')).json();
-    expect(JSON.stringify(edge)).toContain(`reverse_proxy ${slug}-pr-5-web:8080`);
+    // Until the preview's deployment runs, its host answers with the placeholder page instead
+    // of a proxy to the preview alias, which does not resolve yet.
+    const edge = JSON.stringify(await (await api.request('/api/v1/edge/config')).json());
+    expect(edge).toContain(
+      `placeholder (503), preview #5 of app ${slug} has no running deployment`,
+    );
+    expect(edge).not.toContain(`reverse_proxy ${slug}-pr-5-web`);
   });
 
   it('deploys every push and cancels pushes that never left the queue', async () => {

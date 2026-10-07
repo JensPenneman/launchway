@@ -12,12 +12,17 @@ import { type CaddyAdmin, CaddyError, createCaddyAdmin } from './caddy.js';
 import { type EdgeRenderInput, renderEdge } from './render.js';
 import { loadEdgeInput } from './state.js';
 
-/** Change-feed topics that can change the rendered configuration. */
+/**
+ * Change-feed topics that can change the rendered configuration. `deployments` covers every
+ * status change (a site proxies only while its deployment runs, else it shows the placeholder);
+ * `previews` covers a preview linked to its route or removed with its deployments.
+ */
 const EDGE_TOPICS: ReadonlySet<EventTopic> = new Set([
   'routes',
   'domains',
   'settings',
   'deployments',
+  'previews',
   'nodes',
   'apps',
 ]);

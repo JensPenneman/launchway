@@ -33,6 +33,17 @@ function route(hostname: string, overrides: Partial<EdgeRoute> = {}): EdgeRoute 
   };
 }
 
+/** Services of a running deployment, without published ports. */
+function running(...names: string[]): ServiceStatus[] {
+  return names.map((service) => ({
+    service,
+    containerId: `c-${service}`,
+    state: 'running',
+    health: 'healthy',
+    publishedPorts: [],
+  }));
+}
+
 const shopServices: ServiceStatus[] = [
   {
     service: 'web',
@@ -88,7 +99,7 @@ function fullInput(): EdgeRenderInput {
       route('deploy.example.com'),
     ],
     apps: [
-      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: null },
+      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: running('web') },
       { id: SHOP, slug: 'shop', nodeId: REMOTE, runningServices: shopServices },
       { id: IDLE, slug: 'idle', nodeId: REMOTE, runningServices: null },
     ],
@@ -106,6 +117,7 @@ describe('renderEdge (golden files)', () => {
     expect(rendered.map((r) => r.hostname)).toEqual([
       'docs.example.com',
       'forced.example.com',
+      'idle.example.com',
       'nas.example.com',
       'old.example.com',
       'radarr.example.com',
@@ -169,7 +181,7 @@ describe('renderEdge (golden files)', () => {
           target: { kind: 'app', appId: SHOP, service: 'api', port: 9000 },
         }),
       ],
-      apps: [{ id: SHOP, slug: 'shop', nodeId: REMOTE, runningServices: null }],
+      apps: [{ id: SHOP, slug: 'shop', nodeId: REMOTE, runningServices: running('api') }],
       nodes: [],
     });
     expect(caddyfile).toContain('reverse_proxy shop-api:9000');
@@ -199,7 +211,7 @@ describe('renderEdge (golden files)', () => {
       routes: [
         route('trail-pr-4.preview.example.com', {
           target: { kind: 'app', appId: TRAIL, service: 'web', port: 8080 },
-          preview: { number: 4, runningServices: null },
+          preview: { number: 4, runningServices: running('web') },
         }),
         route('shop-pr-9.preview.example.com', {
           target: { kind: 'app', appId: SHOP, service: 'web', port: 3000 },
@@ -223,7 +235,9 @@ describe('renderEdge (golden files)', () => {
     // Off the edge: the preview's own published port, never the production one (18080).
     expect(caddyfile).toContain('reverse_proxy 192.168.1.30:18090');
     expect(caddyfile).not.toContain('18080');
-    expect(caddyfile).toContain('preview #10 of app shop has no running deployment');
+    expect(caddyfile).toContain(
+      'placeholder (503), preview #10 of app shop has no running deployment',
+    );
   });
 
   it('neutralizes Caddy placeholders and whitespace in user-supplied URLs', () => {
@@ -274,6 +288,108 @@ describe('renderEdge (golden files)', () => {
   });
 });
 
+/**
+ * App routes whose target does not run: a preview before its deployment, an app that was never
+ * deployed (protected, with extra directives), a renamed service, and a running app for contrast.
+ */
+function notRunningInput(): EdgeRenderInput {
+  sequence = 0;
+  return {
+    settings: {
+      publicUrl: null,
+      acmeEmail: 'ops@example.com',
+      forwardAuthUrl: 'http://gate-proxy:4180/oauth2/auth',
+      edgeNodeId: EDGE,
+    },
+    routes: [
+      route('trail-pr-11.preview.example.com', {
+        target: { kind: 'app', appId: TRAIL, service: 'web', port: 8080 },
+        preview: { number: 11, runningServices: null },
+      }),
+      route('idle.example.com', {
+        target: { kind: 'app', appId: IDLE, service: 'web', port: 80 },
+        protected: true,
+        extraDirectives: 'request_header -X-API-KEY',
+      }),
+      route('shop.example.com', {
+        target: { kind: 'app', appId: SHOP, service: 'web', port: 3000 },
+        hsts: false,
+      }),
+      route('trail.example.com', {
+        target: { kind: 'app', appId: TRAIL, service: 'web', port: 8080 },
+      }),
+    ],
+    apps: [
+      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: running('web', 'worker') },
+      { id: SHOP, slug: 'shop', nodeId: EDGE, runningServices: running('frontend') },
+      { id: IDLE, slug: 'idle', nodeId: EDGE, runningServices: null },
+    ],
+    nodes: [{ id: EDGE, name: 'local', lanIp: '192.168.1.10' }],
+  };
+}
+
+describe('renderEdge (targets that do not run)', () => {
+  it('answers 503 with a placeholder page and keeps the site options', async () => {
+    const { caddyfile, rendered } = renderEdge(notRunningInput());
+    await expect(caddyfile).toMatchFileSnapshot('./__golden__/not-running.caddyfile');
+    // Placeholder sites are served (certificates, domain activation) like any other site.
+    expect(rendered.map((r) => r.hostname)).toEqual([
+      'idle.example.com',
+      'shop.example.com',
+      'trail-pr-11.preview.example.com',
+      'trail.example.com',
+    ]);
+    // The preview never falls back to the running production deployment.
+    expect(caddyfile).not.toContain('reverse_proxy trail-pr-11-web');
+    expect(caddyfile.match(/^\trespond <<HTML$/gm)).toHaveLength(3);
+    expect(caddyfile).toContain('\treverse_proxy trail-web:8080\n}');
+  });
+
+  it('proxies once the deployment runs, also when it never reported its services', () => {
+    const input = notRunningInput();
+    const { caddyfile } = renderEdge({
+      ...input,
+      routes: input.routes.map((r) =>
+        r.preview ? { ...r, preview: { number: 11, runningServices: running('web') } } : r,
+      ),
+      apps: input.apps.map((app) => ({ ...app, runningServices: [] })),
+    });
+    expect(caddyfile).not.toContain('respond <<HTML');
+    expect(caddyfile).toContain('reverse_proxy trail-pr-11-web:8080');
+    expect(caddyfile).toContain('reverse_proxy idle-web:80');
+    expect(caddyfile).toContain('reverse_proxy shop-web:3000');
+  });
+
+  it('keeps the host name inert inside the page', () => {
+    sequence = 0;
+    const { caddyfile } = renderEdge({
+      settings: { publicUrl: null, acmeEmail: null, forwardAuthUrl: null, edgeNodeId: null },
+      routes: [
+        route('HTML.example.com', {
+          target: { kind: 'app', appId: IDLE, service: 'web', port: 80 },
+        }),
+        route('x{env.LAUNCHWAY_SECRET_KEY}<b>.example.com', {
+          target: { kind: 'app', appId: IDLE, service: 'web', port: 80 },
+        }),
+      ],
+      apps: [{ id: IDLE, slug: 'idle', nodeId: EDGE, runningServices: null }],
+      nodes: [],
+    });
+    const pages = caddyfile.match(/<<HTML\n[\s\S]*?\n\t\tHTML 503/g) ?? [];
+    expect(pages).toHaveLength(2);
+    for (const page of pages) {
+      // The marker inside would end the heredoc early; braces would be Caddy placeholders.
+      const body = page.slice('<<HTML'.length, -'HTML 503'.length);
+      expect(body).not.toContain('HTML');
+      expect(body).not.toMatch(/[{}]|<b>/);
+    }
+    expect(caddyfile).toContain('\t\t<h1>html.example.com</h1>');
+    expect(caddyfile).toContain(
+      '\t\t<h1>x&#123;env.launchway&#95;secret&#95;key&#125;&#60;b&#62;.example.com</h1>',
+    );
+  });
+});
+
 /** The passkey gate as a Launchway app: Pocket ID routed, oauth2-proxy attached without a route. */
 function gateInput(overrides: Partial<EdgeRenderInput['settings']> = {}): EdgeRenderInput {
   sequence = 0;
@@ -304,8 +420,13 @@ function gateInput(overrides: Partial<EdgeRenderInput['settings']> = {}): EdgeRe
       }),
     ],
     apps: [
-      { id: LOGIN, slug: 'login', nodeId: EDGE, runningServices: null },
-      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: null },
+      {
+        id: LOGIN,
+        slug: 'login',
+        nodeId: EDGE,
+        runningServices: running('pocket-id', 'oauth2-proxy'),
+      },
+      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: running('web') },
     ],
     nodes: [{ id: EDGE, name: 'local', lanIp: '192.168.1.10' }],
   };

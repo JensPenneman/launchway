@@ -152,6 +152,41 @@ describe('edge reconciler', () => {
     await vi.advanceTimersByTimeAsync(1000);
     expect(renders).toBe(2);
   });
+
+  it('re-renders when a deployment starts or stops running, or is removed', async () => {
+    vi.useFakeTimers();
+    const deps = createTestDeps();
+    let renders = 0;
+    const reconciler = createEdgeReconciler(deps, {
+      caddy: fakeCaddy(),
+      debounceMs: 10,
+      loadInput: () => {
+        renders += 1;
+        return Promise.resolve(input('verified'));
+      },
+    });
+    reconciler.start();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(renders).toBe(1);
+
+    const changes = [
+      ...(['running', 'stopped', 'failed', 'superseded'] as const).map((status) => ({
+        topic: 'deployments' as const,
+        action: 'updated' as const,
+        data: { status },
+      })),
+      { topic: 'deployments' as const, action: 'deleted' as const },
+      // Removing a preview removes its deployments.
+      { topic: 'previews' as const, action: 'deleted' as const },
+      { topic: 'apps' as const, action: 'deleted' as const },
+    ];
+    for (const change of changes) {
+      deps.events.publish({ ...change, resourceId: null });
+      await vi.advanceTimersByTimeAsync(20);
+    }
+    expect(renders).toBe(1 + changes.length);
+    deps.lifecycle.beginShutdown();
+  });
 });
 
 describe('edge reconciler retries', () => {

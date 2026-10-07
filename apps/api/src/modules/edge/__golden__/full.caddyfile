@@ -35,7 +35,28 @@ forced.example.com {
 	reverse_proxy http://host.docker.internal:7878
 }
 
-# idle.example.com: skipped, app idle has no running deployment
+# route rt_01jbh8m4x2f8k9z0a1b2c3d403 (app): placeholder (503), app idle has no running deployment
+idle.example.com {
+	encode zstd gzip
+	header ?Strict-Transport-Security "max-age=31536000"
+	header Content-Type "text/html; charset=utf-8"
+	header Cache-Control "no-store"
+	header Retry-After "30"
+	respond <<HTML
+		<!doctype html>
+		<html lang="en">
+		<head>
+		<meta charset="utf-8">
+		<meta name="viewport" content="width=device-width, initial-scale=1">
+		<title>idle.example.com &mdash; deployment in progress / not running</title>
+		</head>
+		<body style="font-family: system-ui, sans-serif; margin: 3rem">
+		<h1>idle.example.com</h1>
+		<p>Deployment in progress / not running. Try again in a moment.</p>
+		</body>
+		</html>
+		HTML 503
+}
 
 # route rt_01jbh8m4x2f8k9z0a1b2c3d405 (external)
 nas.example.com {

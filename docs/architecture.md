@@ -329,6 +329,14 @@ whose head is a branch of its repository (fork pull requests are ignored)
   (`reverse_proxy <slug>-pr-<n>-<service>:<port>`), or off the edge node the
   port the preview's running deployment publishes. Each preview host name
   gets its own certificate (HTTP-01), like every route.
+- **Targets that do not run**: an app or preview route whose app (preview)
+  has no `running` deployment, or whose running deployment lacks the routed
+  service (renamed), renders a placeholder instead of `reverse_proxy`: a small
+  static page answering `503` with `Cache-Control: no-store` and
+  `Retry-After: 30`, so requests no longer wait for an alias that does not
+  resolve. The gate, HSTS and extra directives stay; `GET /edge/config` names
+  the reason above each placeholder site. Every deployment status change
+  re-renders the edge.
 - Routes to apps on other nodes use upstream `<node.lanIp>:<publishedPort>`.
   Routes of kind `external` use whatever `host:port` the user entered
   (e.g. `host.docker.internal:7878` for a service on the Windows host).

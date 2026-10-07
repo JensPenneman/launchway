@@ -107,7 +107,74 @@ function comment(text: string): string {
   return `# ${text.replace(/[\r\n]+/g, ' ')}`;
 }
 
-type Handler = { kind: 'lines'; lines: string[] } | { kind: 'skip'; reason: string };
+type Handler =
+  | { kind: 'lines'; lines: string[] }
+  /** The target exists but does not run: the site answers with the placeholder page. */
+  | { kind: 'placeholder'; reason: string }
+  | { kind: 'skip'; reason: string };
+
+/** Seconds a client is asked to wait (`Retry-After`) while a host shows the placeholder. */
+const PLACEHOLDER_RETRY_AFTER_SECONDS = 30;
+
+/**
+ * A host name as text of the placeholder page: lower case, every character outside a host name
+ * becomes a numeric entity. The page then holds no markup, quote or Caddy placeholder brace of
+ * its own, and no upper case that could end its heredoc (marker `HTML`).
+ */
+function pageText(hostname: string): string {
+  return hostname
+    .toLowerCase()
+    .replace(/[^a-z0-9.*-]/gu, (char) => `&#${char.codePointAt(0) ?? 63};`);
+}
+
+/**
+ * Handler of a site whose app (or preview) does not run: a small static page answering 503,
+ * never cached, instead of a proxy to an alias that does not resolve (every request would wait
+ * for a DNS timeout and end in a 502). No scripts.
+ */
+function placeholderLines(hostname: string): string[] {
+  const host = pageText(hostname);
+  return [
+    'header Content-Type "text/html; charset=utf-8"',
+    'header Cache-Control "no-store"',
+    `header Retry-After "${PLACEHOLDER_RETRY_AFTER_SECONDS}"`,
+    'respond <<HTML',
+    '\t<!doctype html>',
+    '\t<html lang="en">',
+    '\t<head>',
+    '\t<meta charset="utf-8">',
+    '\t<meta name="viewport" content="width=device-width, initial-scale=1">',
+    `\t<title>${host} &mdash; deployment in progress / not running</title>`,
+    '\t</head>',
+    '\t<body style="font-family: system-ui, sans-serif; margin: 3rem">',
+    `\t<h1>${host}</h1>`,
+    '\t<p>Deployment in progress / not running. Try again in a moment.</p>',
+    '\t</body>',
+    '\t</html>',
+    '\tHTML 503',
+  ];
+}
+
+/** Services of the deployment behind an app route: the preview's for a preview route. */
+function runningServicesOf(route: EdgeRoute, app: EdgeApp): readonly ServiceStatus[] | null {
+  return route.preview ? route.preview.runningServices : app.runningServices;
+}
+
+/**
+ * Why an app route cannot be proxied: its app (or, for a preview route, the preview) has no
+ * running deployment, or the routed service is not part of it (renamed). Null when it runs. An
+ * empty service list was never reported; such a deployment is proxied as before.
+ */
+function notRunning(route: EdgeRoute, app: EdgeApp, service: string): string | null {
+  const preview = route.preview ?? null;
+  const subject = preview ? `preview #${preview.number} of app ${app.slug}` : `app ${app.slug}`;
+  const runningServices = runningServicesOf(route, app);
+  if (!runningServices) return `${subject} has no running deployment`;
+  if (runningServices.length > 0 && !runningServices.some((s) => s.service === service)) {
+    return `service ${service} is not part of the running deployment of ${subject}`;
+  }
+  return null;
+}
 
 function siteBlock(address: string, body: readonly string[]): string {
   return [`${token(address)} {`, ...body.map((line) => (line ? `\t${line}` : '')), '}'].join('\n');
@@ -192,22 +259,17 @@ function handler(
         } catch {
           return { kind: 'skip', reason: 'the service alias is too long' };
         }
+        const reason = notRunning(route, app, target.service);
+        if (reason) return { kind: 'placeholder', reason };
         return { kind: 'lines', lines: [`reverse_proxy ${token(alias)}:${target.port}`] };
       }
       const node = nodes.get(app.nodeId);
       if (!node?.lanIp) {
         return { kind: 'skip', reason: `node ${node?.name ?? app.nodeId} has no LAN address` };
       }
-      const runningServices = preview ? preview.runningServices : app.runningServices;
-      if (!runningServices) {
-        return {
-          kind: 'skip',
-          reason: preview
-            ? `preview #${preview.number} of app ${app.slug} has no running deployment`
-            : `app ${app.slug} has no running deployment`,
-        };
-      }
-      const service = runningServices.find((s) => s.service === target.service);
+      const reason = notRunning(route, app, target.service);
+      if (reason) return { kind: 'placeholder', reason };
+      const service = runningServicesOf(route, app)?.find((s) => s.service === target.service);
       const published = service?.publishedPorts
         .filter((p) => p.containerPort === target.port && p.protocol === 'tcp')
         .sort((a, b) => a.hostPort - b.hostPort)[0];
@@ -290,7 +352,7 @@ function platformAddress(publicUrl: string): { address: string; host: string; ht
 
 export interface RenderedEdge {
   readonly caddyfile: string;
-  /** Routes that got a site block, in output order. */
+  /** Routes that got a site block (placeholders included), in output order. */
   readonly rendered: readonly EdgeRoute[];
 }
 
@@ -339,7 +401,6 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
   const seen = new Set<string>(platform ? [platform.host] : []);
   const rendered: EdgeRoute[] = [];
   for (const route of routes) {
-    const label = comment(`route ${route.id} (${route.target.kind})`);
     if (!isRenderable(route)) {
       blocks.push(
         comment(`${route.hostname}: skipped, DNS preflight not passed (${route.domain.status})`),
@@ -368,7 +429,12 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
     }
     seen.add(route.hostname);
     rendered.push(route);
-    blocks.push([label, siteBlock(route.hostname, siteBody(route, result.lines))].join('\n'));
+    const label = `route ${route.id} (${route.target.kind})`;
+    const [heading, lines] =
+      result.kind === 'placeholder'
+        ? [`${label}: placeholder (503), ${result.reason}`, placeholderLines(route.hostname)]
+        : [label, result.lines];
+    blocks.push([comment(heading), siteBlock(route.hostname, siteBody(route, lines))].join('\n'));
   }
 
   return { caddyfile: `${blocks.join('\n\n')}\n`, rendered };

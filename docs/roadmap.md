@@ -70,8 +70,9 @@ features that are deliberately out of scope for v0.1 are listed in
 - `forward_auth` copies only the `X-Auth-Request-User`, `-Email` and `-Groups`
   headers (oauth2-proxy style). Other gates may need other headers or a login
   redirect (`handle_errors`).
-- Without Caddy (development), every relevant change logs an edge load error;
-  log an unreachable admin API at `warn`.
+- Without Caddy (development), every relevant change logs an edge load error
+  and failed loads are retried with backoff (up to every 5 minutes); log an
+  unreachable admin API at `warn`.
 
 ## DNS and domains
 

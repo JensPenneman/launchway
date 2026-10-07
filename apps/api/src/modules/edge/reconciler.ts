@@ -16,6 +16,10 @@ const EDGE_TOPICS: ReadonlySet<EventTopic> = new Set([
   'apps',
 ]);
 
+/** First retry after a failed scheduled load; doubles up to the maximum. */
+const RETRY_INITIAL_MS = 5_000;
+const RETRY_MAX_MS = 5 * 60_000;
+
 /** Domain states that become `active` once Caddy serves them. */
 const ACTIVATABLE_DOMAIN_STATUSES: ReadonlySet<DomainStatus> = new Set(['verified']);
 
@@ -67,6 +71,13 @@ export function createEdgeReconciler(
   let chain: Promise<unknown> = Promise.resolve();
   let timer: NodeJS.Timeout | undefined;
   let started = false;
+  /** Delay of the next retry while scheduled loads fail (0: the last one succeeded). */
+  let retryMs = 0;
+
+  /** Tells the UI the load state changed (not an edge topic, so it cannot trigger a reload). */
+  function announce(): void {
+    deps.events.publish({ topic: 'edge', action: 'updated', resourceId: null });
+  }
 
   function snapshot(caddyfile: string, renderedAt: Date): EdgeConfig {
     return {
@@ -89,11 +100,13 @@ export function createEdgeReconciler(
         const message = error instanceof Error ? error.message : String(error);
         lastError = { message, at: new Date().toISOString() };
         log.error({ err: error }, 'loading the edge configuration failed');
+        announce();
         throw error instanceof CaddyError ? error.toProblem() : error;
       }
       applied = { caddyfile, at: new Date() };
       lastError = null;
       log.info({ sites: rendered.length }, 'edge configuration loaded');
+      announce();
     }
     // Also when nothing was reloaded: a forced domain that passes its DNS check later is already
     // served. Activation only touches `verified` domains, so it cannot loop.
@@ -118,18 +131,26 @@ export function createEdgeReconciler(
     return next;
   }
 
-  function schedule(): void {
+  function schedule(delayMs = debounceMs): void {
     if (deps.lifecycle.shuttingDown) return;
     clearTimeout(timer);
     timer = setTimeout(() => {
       timer = undefined;
-      apply().catch((error: unknown) => {
-        // Load failures were logged in run(); anything else (e.g. the database) is logged here.
-        if (!(error instanceof ProblemError)) {
-          log.error({ err: error }, 'edge reconciliation failed');
-        }
-      });
-    }, debounceMs);
+      apply().then(
+        () => {
+          retryMs = 0;
+        },
+        (error: unknown) => {
+          // Load failures were logged in run(); anything else (e.g. the database) is logged here.
+          if (!(error instanceof ProblemError)) {
+            log.error({ err: error }, 'edge reconciliation failed');
+          }
+          // Caddy may be restarting (upgrade): try again rather than wait for another change.
+          retryMs = retryMs === 0 ? RETRY_INITIAL_MS : Math.min(retryMs * 2, RETRY_MAX_MS);
+          if (!timer) schedule(retryMs);
+        },
+      );
+    }, delayMs);
     timer.unref();
   }
 

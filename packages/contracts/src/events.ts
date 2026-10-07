@@ -16,6 +16,8 @@ export const EVENT_TOPICS = [
   'users',
   'invitations',
   'tokens',
+  /** The edge configuration was (or failed to be) loaded into Caddy. */
+  'edge',
 ] as const;
 export const EventTopic = z.enum(EVENT_TOPICS).openapi('EventTopic');
 export type EventTopic = z.infer<typeof EventTopic>;

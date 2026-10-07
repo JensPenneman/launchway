@@ -26,6 +26,7 @@ import { createSettingsService, type SettingsService } from '../settings/service
 import { domains } from './schema.js';
 import {
   createResolver,
+  type DnsCheckResult,
   type DnsLookup,
   evaluateDns,
   expectedRecordFor,
@@ -154,22 +155,32 @@ export function createDomainsService(
     }
   }
 
-  /** Stores a check result; returns the updated row and whether the status changed. */
+  /**
+   * Stores a check result; returns the updated row and whether the status changed. The status is
+   * derived from the row as it is now (locked), not as it was before the slow DNS lookups: the
+   * edge may have marked the domain `active` meanwhile. A failed lookup keeps the status.
+   */
   async function applyCheck(
-    row: DomainRow,
-    ok: boolean,
-    message: string,
+    initial: DomainRow,
+    result: DnsCheckResult,
     checkedAt: Date,
     actor: RequestActor,
     audit: 'always' | 'on-change',
   ): Promise<{ row: DomainRow; changed: boolean }> {
-    const status: DomainStatus = ok
-      ? row.status === 'active'
-        ? 'active'
-        : 'verified'
-      : 'misconfigured';
-    const changed = status !== row.status || message !== row.statusMessage;
+    const { ok, message } = result;
+    let changed = false;
+    let status: DomainStatus = initial.status;
     const updated = await deps.db.transaction(async (tx) => {
+      const [row] = await tx.select().from(domains).where(eq(domains.id, initial.id)).for('update');
+      if (!row) throw notFound(`Domain ${initial.id} does not exist`);
+      status = result.inconclusive
+        ? row.status
+        : ok
+          ? row.status === 'active'
+            ? 'active'
+            : 'verified'
+          : 'misconfigured';
+      changed = status !== row.status || message !== row.statusMessage;
       const [after] = await tx
         .update(domains)
         .set({ status, statusMessage: message, lastCheckedAt: checkedAt })
@@ -189,7 +200,7 @@ export function createDomainsService(
       deps.events.publish({
         topic: 'domains',
         action: 'updated',
-        resourceId: row.id,
+        resourceId: initial.id,
         data: { status },
       });
     }
@@ -206,7 +217,7 @@ export function createDomainsService(
       lookupError: error,
     });
     const checkedAt = new Date();
-    const applied = await applyCheck(row, result.ok, result.message, checkedAt, actor, audit);
+    const applied = await applyCheck(row, result, checkedAt, actor, audit);
     const verification: DomainVerification = {
       domainId: row.id,
       hostname: row.hostname,

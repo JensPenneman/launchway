@@ -150,8 +150,12 @@ describe('evaluateDns', () => {
       'Expected a CNAME to home.example.com; found no records',
     );
     expect(
-      evaluateDns('app.example.com', cname, none, { ...context, lookupError: 'ESERVFAIL' }).message,
-    ).toBe('DNS lookup of app.example.com failed (ESERVFAIL)');
+      evaluateDns('app.example.com', cname, none, { ...context, lookupError: 'ESERVFAIL' }),
+    ).toEqual({
+      ok: false,
+      inconclusive: true,
+      message: 'DNS lookup of app.example.com failed (ESERVFAIL)',
+    });
     expect(evaluateDns('app.example.com', null, none, context)).toMatchObject({ ok: false });
   });
 });

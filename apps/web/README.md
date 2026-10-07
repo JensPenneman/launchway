@@ -19,7 +19,6 @@ pnpm --filter @slipway/web test:e2e   # Playwright smoke tests against a mock-AP
 | `src/api/<resource>.ts` | Thin resource modules: request functions and TanStack Query `queryOptions`. |
 | `src/api/keys.ts` | Query-key roots and `keysForTopic()`, used by `useLiveEvents` to invalidate on `GET /events`. |
 | `src/api/events.ts` | SSE hooks: the platform change feed and the deployment / container log streams. |
-| `src/api/provisional.ts` | Lenient schemas for responses the contracts on `main` lack (`/apps/{id}/status`, `/dns/ddns`, edge load state). |
 | `src/features` | Page sections (app tabs, settings sections, domain/zone panels). |
 | `src/components` | Shared building blocks; `ui/` holds the vendored shadcn/ui components. |
 | `src/lib/api` | The `openapi-fetch` client generated from the OpenAPI document (`pnpm openapi:generate`). |

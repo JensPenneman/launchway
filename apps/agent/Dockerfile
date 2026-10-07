@@ -3,9 +3,10 @@
 # Build from the repository root:  docker build -f apps/agent/Dockerfile -t slipway-agent .
 #
 # Base image choice: the official node:<v>-alpine image, with the docker CLI and its plugins
-# copied from the official docker:<v>-cli image (same musl/Alpine userland, versions pinned by
-# tag and updated by Dependabot) and git from Alpine packages. This keeps Node on the exact LTS
-# line used everywhere else, which distribution packages of Node do not guarantee.
+# copied from the official docker:<v>-cli image (same musl/Alpine userland; major versions set
+# by the ARGs below, which Dependabot cannot update) and git from Alpine packages. This keeps
+# Node on the exact LTS line used everywhere else, which distribution packages of Node do not
+# guarantee.
 
 ARG NODE_VERSION=24
 ARG DOCKER_VERSION=29

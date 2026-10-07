@@ -18,7 +18,7 @@ import {
   type UpdateAppInput,
   type UpdateEnvVarInput,
 } from '@slipway/contracts';
-import { and, asc, desc, eq, inArray, lt, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';
 import { isForeignKeyViolation, isUniqueViolation } from '../../db/errors.js';
@@ -33,6 +33,7 @@ import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
 import { conflict, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
+import { announceStatus } from '../deployments/model.js';
 import { deployments } from '../deployments/schema.js';
 import { findRunningDeployment, markRunningStopped } from '../deployments/service.js';
 import { githubConnections } from '../github/schema.js';
@@ -115,6 +116,37 @@ export function createAppsService(deps: Deps): AppsService {
     const [row] = forUpdate ? await query.for('update') : await query;
     if (!row) throw notFound('App not found');
     return row;
+  }
+
+  /**
+   * Cancels the app's queued deployments that were not sent yet, under the app row lock that
+   * dispatching takes, so none of them goes out after a stop or delete (the result of the
+   * deployment being cancelled would otherwise dispatch the next one).
+   */
+  async function cancelUnsent(id: AppId, actor: RequestActor, reason: string): Promise<void> {
+    const cancelled = await deps.db.transaction(async (tx) => {
+      await loadRow(tx, id, true);
+      const rows = await tx
+        .update(deployments)
+        .set({ status: 'cancelled', statusMessage: reason, finishedAt: new Date() })
+        .where(
+          and(
+            eq(deployments.appId, id),
+            eq(deployments.status, 'queued'),
+            isNull(deployments.startedAt),
+          ),
+        )
+        .returning();
+      for (const row of rows) {
+        await recordAudit(tx, actor, {
+          action: 'deployment.cancel',
+          target: { type: 'deployment', id: row.id },
+          summary: { appId: id, reason },
+        });
+      }
+      return rows;
+    });
+    for (const row of cancelled) announceStatus(deps, row, true);
   }
 
   async function activeDeploymentId(db: Executor, id: AppId) {
@@ -343,6 +375,7 @@ export function createAppsService(deps: Deps): AppsService {
 
     async remove(id, query, actor) {
       const app = await loadRow(deps.db, id);
+      await cancelUnsent(id, actor, 'Cancelled: the app is being deleted');
       const pending = await deps.db
         .select({
           id: deployments.id,
@@ -536,6 +569,7 @@ export function createAppsService(deps: Deps): AppsService {
 
     async stop(id, actor) {
       const app = await loadRow(deps.db, id);
+      await cancelUnsent(id, actor, 'Cancelled: the app was stopped');
       let services: AppRuntimeStatus['services'];
       try {
         services = await deps.agents.stopApp(app.nodeId, target(app));

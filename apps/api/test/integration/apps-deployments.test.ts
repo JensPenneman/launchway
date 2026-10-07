@@ -508,9 +508,18 @@ describe('apps and deployments against PostgreSQL', () => {
       { event: 'end', data: { reason: 'completed' } },
     ]);
 
+    // Stopping cancels what has not been sent yet, so it cannot start the app again afterwards.
+    await deploy(app.id, 'v1.1.0');
+    const waiting = await deploy(app.id, 'v2.0.0');
+    expect(waiting.startedAt).toBeNull();
+
     const stopped = await api.request(`/api/v1/apps/${app.id}/stop`, json('POST'));
     expect(stopped.status).toBe(200);
     expect((await getDeployment(deployment.id)).status).toBe('stopped');
+    expect(await getDeployment(waiting.id)).toMatchObject({
+      status: 'cancelled',
+      statusMessage: 'Cancelled: the app was stopped',
+    });
 
     gateway.disconnect(node);
     const offline = await (await api.request(`/api/v1/apps/${app.id}/status`)).json();

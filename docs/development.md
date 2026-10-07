@@ -28,6 +28,15 @@ pnpm dev                                       # API on :3000, web UI on :5173 (
   exists (`pnpm build`).
 - The API applies pending migrations at start. `pnpm db:migrate` does the same on demand.
 
+`pnpm dev` does not start an agent, so a development install has no node and deployments stay
+`queued`. To run one against your local API (it needs Docker):
+
+1. In the UI, open Nodes → Add node and copy the join token.
+2. `cp apps/agent/.env.example apps/agent/.env`, then set `SLIPWAY_SERVER_URL=ws://localhost:3000`
+   and `SLIPWAY_JOIN_TOKEN` to the copied token.
+3. `pnpm --filter @slipway/agent dev`. The agent stores its node credential and the checkouts in
+   `apps/agent/.workspace/` (git-ignored).
+
 ## Commands
 
 | Command | What it does |
@@ -109,7 +118,8 @@ to the single registry in `apps/api/src/modules/index.ts`:
 export const modules: readonly ModuleDefinition[] = [
   { name: 'health', mount: 'api', register: registerHealthRoutes },
   { name: 'settings', mount: 'v1', register: registerSettingsRoutes },
-  // { name: 'apps', mount: 'v1', register: registerAppsRoutes },
+  { name: 'apps', mount: 'v1', register: registerAppsRoutes },
+  // ...
 ];
 ```
 
@@ -193,11 +203,11 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 - Prefer constraints in the database (unique indexes, CHECKs, foreign keys) over checks in code,
   and turn violations into problems: `isUniqueViolation(error)` maps to `conflict()`,
   `isForeignKeyViolation(error)` maps to `invalidField(...)`.
-- **Module authors must not run `drizzle-kit generate` (`pnpm db:generate`) and must not commit
-  files under `apps/api/drizzle/`.** Change `schema.ts` only. The integration stage generates the
-  next migration once, for all modules together. Parallel generations would produce conflicting
-  migrations and snapshots. If you need the new schema locally, apply it to a throwaway database
-  with `pnpm --filter @slipway/api exec drizzle-kit push` (never against shared data).
+- Schema changes come with their migration: change `schema.ts`, run `pnpm db:generate`, review
+  the SQL and commit it together with the files under `apps/api/drizzle/meta/` in the same change
+  (CI fails when the schema and the committed migrations differ). Never edit or delete a migration
+  that was merged to `main`; add a new one. To try a schema quickly, apply it to a throwaway
+  database with `pnpm --filter @slipway/api exec drizzle-kit push` (never against shared data).
 
 ### Errors
 

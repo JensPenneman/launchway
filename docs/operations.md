@@ -71,8 +71,9 @@ in for the flags. The installer:
 2. creates the `slipway-proxy` network (`10.210.0.0/24`, dynamic addresses
    from `10.210.0.128/25` so nothing takes Caddy's `10.210.0.2`);
 3. copies `compose.yaml` and the `Caddyfile` from next to the script (when run
-   from a checkout) or downloads them from GitHub (`SLIPWAY_REF`, default
-   `main`);
+   from a checkout) or downloads them from GitHub (`SLIPWAY_REF`; default
+   the release tag `vX.Y.Z` when a release version is pinned, `main` for
+   `latest` and `edge`);
 4. writes `.env` (mode `0600`) and generates `SLIPWAY_SECRET_KEY`,
    `POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN` and `SLIPWAY_SETUP_TOKEN`;
    values already in `.env` are kept;

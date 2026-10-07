@@ -37,8 +37,11 @@ local Docker host, and would give the proxy access to the Docker socket.
   configuration (autosaved in the `caddy-config` volume), even while the API
   is down. The bootstrap Caddyfile in `deploy/` holds only global options and
   is read when nothing was loaded yet.
-- The admin API listens on `0.0.0.0:2019` inside the container, so the API
-  reaches it as `http://caddy:2019`. Port 2019 is never published on the host.
+- The admin API listens on a unix socket, `/run/caddy-admin/admin.sock`, in
+  the `caddy-admin` volume that only the `caddy` and `slipway` containers
+  mount. It never listens on a TCP port. *(Amended during the v0.1 review: the
+  first version listened on `0.0.0.0:2019`, which every app container on
+  `slipway-proxy` could reach.)*
 - Certificates come from Let's Encrypt only: the global options set `email`
   and `cert_issuer acme`, so Caddy tries no fallback CA (the zone's CAA records
   may allow only Let's Encrypt).
@@ -58,11 +61,9 @@ local Docker host, and would give the proxy access to the Docker socket.
 - Broken configurations are rejected before they reach traffic, and the
   rendered file can be inspected through the API.
 - The edge keeps serving while the API is stopped or being upgraded.
-- The admin API has no authentication. Anything that can reach port 2019 on
-  Caddy's networks can replace the edge configuration, including app
-  containers on `slipway-proxy`. This is accepted for v0.1, where only the
-  platform's own users decide what is deployed. Binding the admin endpoint to a
-  network shared only by `slipway` and `caddy` is a candidate hardening step.
+- The admin API has no authentication. Only processes that can open the
+  socket file (the `caddy` and `slipway` containers) can change the edge
+  configuration; app containers on `slipway-proxy` cannot reach it.
 - Certificates live in the `caddy-data` volume, which must be backed up.
 - A new domain is not served until its DNS is correct, unless forced.
 - Only HTTP and HTTPS are routed in v0.1. Apps that need other protocols

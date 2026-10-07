@@ -13,8 +13,6 @@ features that are deliberately out of scope for v0.1 are listed in
 - Agent WebSocket upgrades are not rate-limited on failed authentication and
   are not restricted to the Docker networks (§14). The local bootstrap token is
   likewise accepted from anywhere that reaches the API ([ADR 0010](adr/0010-composition-root-wiring.md)).
-- Caddy's admin API stays reachable from app containers on `slipway-proxy`
-  ([ADR 0003](adr/0003-caddy-edge-with-admin-api.md) lists the hardening options).
 - Changing the e-mail address (`PATCH /me`) does not ask for the password again.
 - Logout and session revocation are audited but publish no change event; there
   is no `sessions` topic.

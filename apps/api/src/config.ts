@@ -14,7 +14,10 @@ export interface Config {
   readonly listen: { readonly host: string; readonly port: number };
   /** SLIPWAY_PUBLIC_URL override of Setting.publicUrl (origin, no trailing slash). */
   readonly publicUrl: string | null;
+  /** `unix:///path/to/admin.sock` (default) or `http://host:port` (development and tests). */
   readonly caddyAdminUrl: string;
+  /** The `admin` listener the rendered Caddyfile repeats; derived from caddyAdminUrl. */
+  readonly caddyAdminListen: string;
   readonly proxyNetwork: string;
   /** CIDRs whose X-Forwarded-* headers are trusted. */
   readonly trustedProxies: readonly string[];
@@ -37,6 +40,19 @@ export class ConfigError extends Error {
 }
 
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../../web/dist', import.meta.url));
+/** Caddy's admin socket on the volume shared by the `caddy` and `slipway` containers only. */
+export const DEFAULT_CADDY_ADMIN_SOCKET = '/run/caddy-admin/admin.sock';
+
+/**
+ * The Caddy `admin` listener for an admin URL. A unix socket keeps the admin API off every
+ * network (app containers share `slipway-proxy` with Caddy); `|0222` lets the non-root API
+ * connect. A TCP URL is for development and tests: Caddy then listens on all interfaces.
+ */
+export function caddyAdminListen(adminUrl: string): string {
+  const url = new URL(adminUrl);
+  if (url.protocol === 'unix:') return `unix/${url.pathname}|0222`;
+  return `0.0.0.0:${url.port || 2019}`;
+}
 
 const listenAddress = z
   .string()
@@ -87,7 +103,9 @@ const EnvSchema = z.object({
   SLIPWAY_SECRET_KEY: secretKey,
   SLIPWAY_LISTEN: listenAddress,
   SLIPWAY_PUBLIC_URL: PublicUrl.optional(),
-  SLIPWAY_CADDY_ADMIN_URL: z.url({ protocol: /^https?$/ }).default('http://caddy:2019'),
+  SLIPWAY_CADDY_ADMIN_URL: z
+    .url({ protocol: /^(https?|unix)$/ })
+    .default(`unix://${DEFAULT_CADDY_ADMIN_SOCKET}`),
   SLIPWAY_PROXY_NETWORK: z.string().min(1).max(64).default('slipway-proxy'),
   SLIPWAY_TRUSTED_PROXIES: cidrList,
   SLIPWAY_ACME_EMAIL: Email.optional(),
@@ -121,6 +139,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     listen: e.SLIPWAY_LISTEN,
     publicUrl: e.SLIPWAY_PUBLIC_URL ? new URL(e.SLIPWAY_PUBLIC_URL).origin : null,
     caddyAdminUrl: e.SLIPWAY_CADDY_ADMIN_URL.replace(/\/+$/, ''),
+    caddyAdminListen: caddyAdminListen(e.SLIPWAY_CADDY_ADMIN_URL),
     proxyNetwork: e.SLIPWAY_PROXY_NETWORK,
     trustedProxies: e.SLIPWAY_TRUSTED_PROXIES,
     acmeEmail: e.SLIPWAY_ACME_EMAIL ?? null,

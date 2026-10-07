@@ -12,8 +12,11 @@ import {
 
 /** Upstream of the platform's own site on the proxy network. */
 export const PLATFORM_UPSTREAM = 'slipway:3000';
-/** Caddy admin listener; must be repeated in every config (see docs/development.md). */
-export const CADDY_ADMIN_LISTEN = '0.0.0.0:2019';
+/**
+ * Default Caddy admin listener: a unix socket on a volume only `caddy` and `slipway` mount, never
+ * a TCP port on the shared proxy network. Must be repeated in every config (docs/development.md).
+ */
+export const CADDY_ADMIN_LISTEN = 'unix//run/caddy-admin/admin.sock|0222';
 
 /**
  * Domain states whose routes are rendered: the DNS preflight passed (`verified`) or Caddy already
@@ -56,6 +59,8 @@ export interface EdgeNode {
 
 export interface EdgeRenderInput {
   readonly settings: EdgeSettings;
+  /** The `admin` listener (`Config.caddyAdminListen`); defaults to the unix socket. */
+  readonly adminListen?: string;
   readonly routes: readonly EdgeRoute[];
   readonly apps: readonly EdgeApp[];
   readonly nodes: readonly EdgeNode[];
@@ -213,7 +218,7 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
   const gate = settings.forwardAuthUrl !== null;
   const blocks: string[] = [];
 
-  const global = ['{', `\tadmin ${CADDY_ADMIN_LISTEN}`];
+  const global = ['{', `\tadmin ${token(input.adminListen ?? CADDY_ADMIN_LISTEN)}`];
   if (settings.acmeEmail) global.push(`\temail ${token(settings.acmeEmail)}`);
   global.push('\tcert_issuer acme', '}');
   blocks.push(

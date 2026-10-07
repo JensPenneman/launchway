@@ -340,11 +340,12 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 The v0.1 modules are merged and wired. Known gaps and follow-ups, grouped by area, are in
 [roadmap.md](roadmap.md). Points that matter while changing the code:
 
-- Every Caddyfile the API pushes repeats the global options block (`admin 0.0.0.0:2019`, `email`,
-  `cert_issuer acme`; see `renderEdge`). Without `admin`, Caddy moves its admin API to localhost
-  and, with `--resume`, keeps that state across restarts.
-- Caddy's admin API stays reachable from app containers on `slipway-proxy`; ADR 0003 lists the
-  hardening options.
+- Every Caddyfile the API pushes repeats the global options block (`admin
+  unix//run/caddy-admin/admin.sock|0222`, `email`, `cert_issuer acme`; see `renderEdge`). Without
+  `admin`, Caddy moves its admin API to localhost and, with `--resume`, keeps that state across
+  restarts. The listener follows `SLIPWAY_CADDY_ADMIN_URL`: a `unix://` URL renders the socket, an
+  `http://` URL (development and tests only) renders `0.0.0.0:<port>`. Never use a TCP admin
+  address where app containers share Caddy's network.
 - Routed services join the proxy network when they are deployed, so a new route of a running app
   takes effect with its next deployment ([ADR 0011](adr/0011-domain-activation-and-edge-rules.md)).
 - The API reference page (Scalar) loads its bundle from a CDN. Self-host it if outbound access

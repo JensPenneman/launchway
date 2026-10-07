@@ -5,10 +5,11 @@
 # Caddy runs with --resume, so it keeps the last loaded configuration across
 # restarts and reads this file only when nothing has been loaded yet.
 #
-# The admin API listens on all interfaces of the container so that the API can
-# reach it as caddy:2019 on the slipway-proxy network. Never publish port 2019.
+# The admin API listens on a unix socket in the caddy-admin volume, which only
+# the caddy and slipway containers mount. It has no authentication, so it must
+# never listen on a TCP port: app containers share the slipway-proxy network.
 {
-	admin 0.0.0.0:2019
+	admin unix//run/caddy-admin/admin.sock|0222
 	email {$SLIPWAY_ACME_EMAIL}
 	cert_issuer acme
 }

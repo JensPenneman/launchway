@@ -44,19 +44,22 @@ export type CaddyTransport = (
   body: string,
   contentType: string,
   timeoutMs: number,
+  /** Unix socket to connect to instead of the URL's host (the URL then only names the path). */
+  socketPath?: string,
 ) => Promise<{ status: number; body: string }>;
 
 /**
  * POST with node:http(s). Not `fetch`: undici always sends `Sec-Fetch-Mode: cors`, which makes
  * Caddy treat the call as a browser request and reject it ("not allowed to access from origin").
  */
-export const nodeHttpTransport: CaddyTransport = (url, body, contentType, timeoutMs) =>
+export const nodeHttpTransport: CaddyTransport = (url, body, contentType, timeoutMs, socketPath) =>
   new Promise((resolve, reject) => {
     const target = new URL(url);
     const send = target.protocol === 'https:' ? httpsRequest : httpRequest;
     const request = send(
       target,
       {
+        ...(socketPath ? { socketPath } : {}),
         method: 'POST',
         headers: { 'content-type': contentType, 'content-length': Buffer.byteLength(body) },
         signal: AbortSignal.timeout(timeoutMs),
@@ -96,12 +99,15 @@ export function createCaddyAdmin(
   adminUrl: string,
   transport: CaddyTransport = nodeHttpTransport,
 ): CaddyAdmin {
-  const base = adminUrl.replace(/\/+$/, '');
+  const parsed = new URL(adminUrl);
+  // Over a unix socket Caddy only accepts the Host values "", 127.0.0.1 and ::1.
+  const socketPath = parsed.protocol === 'unix:' ? parsed.pathname : undefined;
+  const base = socketPath ? 'http://127.0.0.1' : adminUrl.replace(/\/+$/, '');
 
   async function post(path: string, body: string, contentType: string, timeoutMs: number) {
     let response: { status: number; body: string };
     try {
-      response = await transport(`${base}${path}`, body, contentType, timeoutMs);
+      response = await transport(`${base}${path}`, body, contentType, timeoutMs, socketPath);
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
       throw new CaddyError(reason, true, error);

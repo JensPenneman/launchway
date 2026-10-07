@@ -1,6 +1,6 @@
 {
   "name": "@launchway/contracts",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Zod schemas and TypeScript types shared by the Launchway API, agent and web UI.",
   "license": "Apache-2.0",

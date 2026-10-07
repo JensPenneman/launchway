@@ -1,6 +1,6 @@
 {
   "name": "@launchway/agent",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "private": true,
   "description": "Launchway node agent: owns Docker on its node and runs Compose projects for the control plane.",
   "license": "Apache-2.0",

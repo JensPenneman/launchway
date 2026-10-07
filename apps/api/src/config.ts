@@ -135,9 +135,11 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   const parsed = EnvSchema.safeParse(input);
   if (!parsed.success) {
     throw new ConfigError(
-      parsed.error.issues.map(
-        (issue) => `${issue.path.join('.') || 'environment'}: ${issue.message}`,
-      ),
+      parsed.error.issues.map((issue) => {
+        const name = issue.path.join('.') || 'environment';
+        const missing = issue.code === 'invalid_type' && input[name] === undefined;
+        return `${name}: ${missing ? 'is required (see deploy/.env.example)' : issue.message}`;
+      }),
     );
   }
   const e = parsed.data;

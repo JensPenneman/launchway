@@ -11,6 +11,12 @@ export const MIGRATIONS_FOLDER = fileURLToPath(new URL('../../drizzle', import.m
 /** Arbitrary constant; serializes migrations when several API instances start at once. */
 const MIGRATION_LOCK_ID = 7_340_215_017;
 
+/**
+ * PostgreSQL errors that waiting does not fix: wrong password or user, unknown database
+ * (invalid_password, invalid_authorization_specification, invalid_catalog_name).
+ */
+const PERMANENT_CONNECT_ERRORS = new Set(['28P01', '28000', '3D000']);
+
 async function connectWithRetry(
   pool: pg.Pool,
   logger: Logger,
@@ -20,9 +26,15 @@ async function connectWithRetry(
     try {
       return await pool.connect();
     } catch (err) {
-      if (attempt >= attempts) throw err;
+      const code = (err as { code?: unknown }).code;
+      if (attempt >= attempts || (typeof code === 'string' && PERMANENT_CONNECT_ERRORS.has(code))) {
+        throw err;
+      }
       const delayMs = Math.min(500 * 2 ** (attempt - 1), 5_000);
-      logger.warn({ attempt, delayMs }, 'database not reachable yet, retrying');
+      logger.warn(
+        { attempt, delayMs, code, reason: err instanceof Error ? err.message : String(err) },
+        'database not reachable yet, retrying',
+      );
       await sleep(delayMs);
     }
   }

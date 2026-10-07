@@ -63,5 +63,8 @@ describe('loadConfig', () => {
 
   it('requires the database URL and secret key', () => {
     expect(() => loadConfig({})).toThrow(/DATABASE_URL[\s\S]*SLIPWAY_SECRET_KEY/);
+    expect(() => loadConfig({ DATABASE_URL: 'postgres://db/slipway' })).toThrow(
+      'SLIPWAY_SECRET_KEY: is required (see deploy/.env.example)',
+    );
   });
 });

@@ -163,13 +163,43 @@ migration that has been merged to `main`; add a new one instead.
 
 ## Releases
 
-Releases are automated with release-please. It keeps a release pull request
-open that collects the changelog from the Conventional Commits on `main`.
-Merging that pull request tags `vX.Y.Z`, publishes the GitHub Release and
-builds the multi-arch, signed images `ghcr.io/jenspenneman/launchway` and
-`ghcr.io/jenspenneman/launchway-agent`. Every merge to `main` also publishes
-`edge` images. Rebuilding an older release (Images workflow, `version` input)
-moves `latest`, `X.Y` and `X` only when no newer release has them.
+release-please keeps a release pull request open that proposes the next
+version and collects the changelog from the Conventional Commits on `main`.
+Every commit on `main` carries the maintainer's GPG signature, so that pull
+request is never merged on GitHub. The maintainer publishes it with a script,
+from a clean `main` that is up to date with `origin`:
+
+```sh
+scripts/release.sh   # asks before it changes anything; --yes skips the questions
+```
+
+The script checks that the working tree is clean, that `main` equals
+`origin/main`, that exactly one release pull request is open and is one
+commit on top of that `main` (so the changelog covers everything the release
+ships), and that the tag does not exist yet. Then it:
+
+1. cherry-picks the release commit onto `main` with `-x`, makes the
+   maintainer its author and verifies the commit's signature;
+2. creates the signed tag `vX.Y.Z` and pushes `main` and the tag together,
+   so release-please, which runs on that push, already finds the release;
+3. publishes the GitHub release with the version's section of
+   `CHANGELOG.md` as its notes;
+4. closes the release pull request with a comment and deletes its branch.
+
+When the release pull request is not one commit on top of `main`,
+release-please has not processed the latest push yet: wait for the Release
+Please workflow, then run the script again. If the script stops before the
+push, it moves `main` back and deletes the tag; if it stops after the push,
+it prints the commands that are left. It pushes to `main` directly, so it
+needs a role that may bypass the `main` ruleset.
+
+Publishing the release starts the Images workflow through its `release`
+event. It builds the multi-arch, signed images
+`ghcr.io/jenspenneman/launchway` and `ghcr.io/jenspenneman/launchway-agent`
+from the tag; the script waits for that run and dispatches the workflow
+itself when none starts. Every push to `main` also publishes `edge` images.
+Rebuilding an older release (Images workflow, `version` input) moves
+`latest`, `X.Y` and `X` only when no newer release has them.
 
 The first release, `v0.1.0`, was pinned with `"release-as"` in
 `release-please-config.json`; that line was removed right after the tag, so
@@ -184,11 +214,11 @@ One-time repository settings, checked before a release is announced:
   private packages on their first push. Make both public (Package settings →
   Change visibility) and link them to the repository; check with
   `docker logout ghcr.io && docker manifest inspect ghcr.io/jenspenneman/launchway:edge`.
-- **Release pull request CI:** a pull request opened with `GITHUB_TOKEN`
-  starts no workflows. Store a GitHub App or fine-grained token with
-  `contents` and `pull-requests` write access as the `RELEASE_PLEASE_TOKEN`
-  secret, so CI runs on the release pull request; otherwise a ruleset that
-  requires CI needs a bypass for it.
+- **Release pull request token (optional):** a pull request opened with
+  `GITHUB_TOKEN` starts no workflows, which does not matter for a release
+  pull request that is never merged. A fine-grained token with `contents` and
+  `pull-requests` write access in the `RELEASE_PLEASE_TOKEN` secret makes CI
+  run on it anyway.
 
 ## License
 

@@ -387,7 +387,10 @@ Running the installer again does the same and also refreshes `compose.yaml`
 and the `Caddyfile`. With `LAUNCHWAY_VERSION=latest`, this moves to the newest
 release. If `.env` pins a version, change `LAUNCHWAY_VERSION` first. Release
 images are also tagged with their minor version (for example `0.1`), which
-receives patch releases only.
+receives patch releases only. Every release is a GPG-signed tag `vX.Y.Z` with
+a GitHub release that carries its changelog; its images are built from that
+tag and signed with cosign ([SECURITY.md](../SECURITY.md) shows how to verify
+them).
 
 The API applies database migrations when it starts. Migrations only move
 forward, so take a [backup](#backup) before upgrading: going back to an older

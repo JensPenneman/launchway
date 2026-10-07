@@ -19,3 +19,4 @@ deploy
 docs
 apps/api/openapi.json
 apps/web/src/lib/api/schema.gen.ts
+scripts

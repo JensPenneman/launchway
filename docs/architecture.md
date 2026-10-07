@@ -435,8 +435,10 @@ connections, DNS provider accounts, platform settings) · audit log.
   commitlint (lefthook `commit-msg`); `pre-commit` runs Biome on staged files;
   `pre-push` runs typecheck and unit tests.
 - **Releases**: release-please (GitHub Action) opens a release PR from the
-  conventional commits; merging it tags `vX.Y.Z`, publishes the GitHub
-  Release with the changelog, and triggers the image workflow: multi-arch
+  conventional commits. The maintainer publishes it with `scripts/release.sh`
+  instead of merging it: a signed cherry-pick of its commit onto `main`, the
+  signed tag `vX.Y.Z` and the GitHub Release with the changelog, which
+  triggers the image workflow: multi-arch
   (`amd64`, `arm64`) images `ghcr.io/jenspenneman/launchway` and
   `ghcr.io/jenspenneman/launchway-agent`, with SBOM and provenance attestations,
   signed with cosign (keyless). `main` also publishes `:edge` images.

@@ -1,5 +1,7 @@
 import { type RouteTarget, serviceAlias } from '@launchway/contracts';
-import { invalidField } from '../../lib/problem.js';
+import { invalidField, ProblemError } from '../../lib/problem.js';
+import type { CaddyAdmin } from '../edge/caddy.js';
+import { validateExtraDirectives } from '../edge/directives.js';
 
 /** A routed service of another app, as stored. */
 export interface RoutedService {
@@ -37,4 +39,33 @@ export function findAliasClash(
   return others.find(
     (other) => other.service !== null && `${other.slug}-${other.service}` === alias,
   );
+}
+
+/** The site options extra directives are validated with. */
+export interface DirectivesSite {
+  readonly hostname: string;
+  readonly protected: boolean;
+  readonly compress: boolean;
+  readonly hsts: boolean;
+}
+
+/**
+ * Validates a route's extra directives with Caddy (`/adapt` through `caddy`) in the context of
+ * their site. Returns the warnings; a rejection is a 400 for `body.extraDirectives` carrying
+ * Caddy's message. Call outside transactions: it may wait on Caddy.
+ */
+export async function checkRouteDirectives(
+  caddy: Pick<CaddyAdmin, 'adapt'>,
+  site: DirectivesSite,
+  directives: string | null,
+): Promise<string[]> {
+  if (directives === null) return [];
+  const result = await validateExtraDirectives(caddy, site, directives);
+  if (!result.ok) {
+    throw new ProblemError('validation-failed', {
+      detail: `Caddy rejected the extra directives: ${result.message}`,
+      errors: [{ path: 'body.extraDirectives', message: result.message, code: 'invalid_value' }],
+    });
+  }
+  return [...result.warnings];
 }

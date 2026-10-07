@@ -1,6 +1,12 @@
 import type { AppId, DomainId, NodeId, RouteId, ServiceStatus } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
-import { type EdgeRenderInput, type EdgeRoute, renderEdge } from './render.js';
+import {
+  type EdgeRenderInput,
+  type EdgeRoute,
+  extraDirectiveLines,
+  renderDirectivesProbe,
+  renderEdge,
+} from './render.js';
 
 // Fixed ids keep the golden files stable.
 const EDGE = 'node_01jbh8m4x2f8k9z0a1b2c3d4e5' as NodeId;
@@ -8,6 +14,7 @@ const REMOTE = 'node_01jbh8m4x2f8k9z0a1b2c3d4e6' as NodeId;
 const TRAIL = 'app_01jbh8m4x2f8k9z0a1b2c3d4e7' as AppId;
 const SHOP = 'app_01jbh8m4x2f8k9z0a1b2c3d4e8' as AppId;
 const IDLE = 'app_01jbh8m4x2f8k9z0a1b2c3d4e9' as AppId;
+const LOGIN = 'app_01jbh8m4x2f8k9z0a1b2c3d4ea' as AppId;
 
 let sequence = 0;
 function route(hostname: string, overrides: Partial<EdgeRoute> = {}): EdgeRoute {
@@ -190,5 +197,129 @@ describe('renderEdge (golden files)', () => {
     });
     expect(caddyfile).not.toContain('{env.');
     expect(caddyfile).toContain('redir https://example.com/?q=%7Benv.LAUNCHWAY_SECRET_KEY%7D 307');
+  });
+
+  it('renders the extra directives verbatim after the options and before the upstream', () => {
+    sequence = 0;
+    const { caddyfile } = renderEdge({
+      settings: { publicUrl: null, acmeEmail: null, forwardAuthUrl: null, edgeNodeId: null },
+      routes: [
+        route('x.example.com', {
+          extraDirectives: '\r\nrequest_header -X-API-KEY  \r\n\r\n@closed path /setup*\n',
+          target: { kind: 'redirect', to: 'https://example.com', permanent: true },
+        }),
+      ],
+      apps: [],
+      nodes: [],
+    });
+    expect(caddyfile).toContain(
+      [
+        'x.example.com {',
+        '\tencode zstd gzip',
+        '\theader ?Strict-Transport-Security "max-age=31536000"',
+        '\trequest_header -X-API-KEY',
+        '',
+        '\t@closed path /setup*',
+        '\tredir https://example.com{uri} 308',
+        '}',
+      ].join('\n'),
+    );
+  });
+});
+
+/** The passkey gate as a Launchway app: Pocket ID routed, oauth2-proxy attached without a route. */
+function gateInput(overrides: Partial<EdgeRenderInput['settings']> = {}): EdgeRenderInput {
+  sequence = 0;
+  return {
+    settings: {
+      publicUrl: null,
+      acmeEmail: 'ops@example.com',
+      forwardAuthUrl: null,
+      forwardAuthTarget: { appId: LOGIN, service: 'oauth2-proxy', port: 4180, uri: '/oauth2/auth' },
+      edgeNodeId: EDGE,
+      ...overrides,
+    },
+    routes: [
+      route('login.example.com', {
+        target: { kind: 'app', appId: LOGIN, service: 'pocket-id', port: 1411 },
+        extraDirectives: [
+          'handle /oauth2/* {',
+          '\treverse_proxy login-oauth2-proxy:4180',
+          '}',
+          '@closed path /setup* /signup* /api/signup*',
+          'respond @closed 404',
+          'request_header -X-API-KEY',
+        ].join('\n'),
+      }),
+      route('trail.example.com', {
+        target: { kind: 'app', appId: TRAIL, service: 'web', port: 8080 },
+        protected: true,
+      }),
+    ],
+    apps: [
+      { id: LOGIN, slug: 'login', nodeId: EDGE, runningServices: null },
+      { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: null },
+    ],
+    nodes: [{ id: EDGE, name: 'local', lanIp: '192.168.1.10' }],
+  };
+}
+
+describe('renderEdge (forward-auth app target)', () => {
+  it('reaches the gate by alias and never renders the attach-only service as a site', async () => {
+    const { caddyfile, rendered } = renderEdge(gateInput());
+    await expect(caddyfile).toMatchFileSnapshot('./__golden__/gate-target.caddyfile');
+    expect(caddyfile).toContain('forward_auth http://login-oauth2-proxy:4180 {');
+    expect(caddyfile).toContain('\t\turi /oauth2/auth');
+    expect(rendered.map((r) => r.hostname)).toEqual(['login.example.com', 'trail.example.com']);
+    expect(caddyfile).not.toMatch(/^login-oauth2-proxy/m);
+  });
+
+  it('fails closed when the gate app does not run on the edge node', () => {
+    const input = gateInput();
+    const { caddyfile, rendered } = renderEdge({
+      ...input,
+      apps: input.apps.map((app) => (app.id === LOGIN ? { ...app, nodeId: REMOTE } : app)),
+    });
+    expect(caddyfile).toContain(
+      '# forward auth: unavailable, the forward-auth app login does not run on the edge node',
+    );
+    expect(caddyfile).not.toContain('(gate)');
+    expect(caddyfile).toContain(
+      '# trail.example.com: skipped, protected but the forward-auth gate is unavailable',
+    );
+    expect(rendered.map((r) => r.hostname)).not.toContain('trail.example.com');
+  });
+
+  it('fails closed when the gate app is gone', () => {
+    const input = gateInput();
+    const { caddyfile } = renderEdge({
+      ...input,
+      apps: input.apps.filter((app) => app.id !== LOGIN),
+    });
+    expect(caddyfile).toContain('# forward auth: unavailable, the forward-auth app does not exist');
+    expect(caddyfile).not.toContain('trail.example.com {');
+  });
+});
+
+describe('extra directive helpers', () => {
+  it('normalizes line endings and drops surrounding blank lines', () => {
+    expect(extraDirectiveLines('\n\nencode gzip\r\n\theader X 1  \n\n')).toEqual([
+      'encode gzip',
+      '\theader X 1',
+    ]);
+    expect(extraDirectiveLines(null)).toEqual([]);
+  });
+
+  it('renders a probe with just one site and reports where the directives start', () => {
+    const probe = renderDirectivesProbe(
+      { hostname: 'login.example.com', protected: true, compress: false, hsts: false },
+      'respond /x 404\nrequest_header -X-API-KEY',
+    );
+    const lines = probe.caddyfile.split('\n');
+    expect(lines[probe.firstLine - 1]).toBe('\trespond /x 404');
+    expect(lines[probe.firstLine]).toBe('\trequest_header -X-API-KEY');
+    expect(probe.lineCount).toBe(2);
+    expect(probe.caddyfile).toContain('\timport gate');
+    expect(probe.caddyfile.match(/^\S.* \{$/gm)).toEqual(['(gate) {', 'login.example.com {']);
   });
 });

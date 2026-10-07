@@ -1,5 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { Settings, UpdateSettingsInput } from '@launchway/contracts';
+import { Settings, UpdateSettingsInput, UpdateSettingsResult } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';
@@ -25,13 +25,14 @@ const updateSettings = createRoute({
   operationId: 'updateSettings',
   tags: ['Settings'],
   summary: 'Update the platform settings',
-  description: 'Partial update; `null` clears a value. Requires the admin role. Audited.',
+  description:
+    'Partial update; `null` clears a value. At most one of `forwardAuthUrl` and `forwardAuthTarget` may be set. Changing either re-renders the edge; `hints` lists follow-ups such as an app that must be redeployed to attach the gate service. Requires the admin role. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('admin')],
   request: { body: jsonBody(UpdateSettingsInput) },
   responses: {
-    200: jsonResponse(Settings, 'The updated settings'),
-    ...problemResponses(400, 401, 403),
+    200: jsonResponse(UpdateSettingsResult, 'The updated settings and follow-up hints'),
+    ...problemResponses(400, 401, 403, 409),
   },
 });
 

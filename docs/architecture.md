@@ -48,15 +48,15 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
 | **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
-| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug`. |
+| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route). |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app. Has a state machine and logs. |
 | **Node** | A machine running the agent. Reports Docker info, LAN IP, architecture, health. One node is the `edge` (runs Caddy). |
 | **DnsProviderAccount** | Credentials for one DNS provider (kind + encrypted credentials). |
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
 | **Domain** | A fully-qualified name Launchway serves (`trail.example.com`). Optionally bound to a zone so Launchway manages its record. |
-| **Route** | What a domain serves: an app service port, an external host:port, or a redirect. Options: `protected` (forward auth), `compress`, `hsts`. |
-| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth upstream, edge node. |
+| **Route** | What a domain serves: an app service port, an external host:port, or a redirect. Options: `protected` (forward auth), `compress`, `hsts`, and admin-only `extraDirectives` (verbatim Caddyfile). |
+| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth gate (external URL or app service), edge node. |
 | **AuditEvent** | Who changed what, when, from where. Written for every mutation. |
 
 IDs are prefixed type IDs (`typeid-js`, UUIDv7 underneath): `user_…`, `sess_…`,
@@ -155,11 +155,13 @@ resolves it to a commit SHA at deployment creation). Optional per app:
    volumes and custom volume names. The Docker socket, `/`, system paths, the
    agent workspace, mount propagation and the platform's volumes stay refused
    ([ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md)).*
-3. Write `.env` (mode 0600) from the app's environment variables and the
-   override file `compose.launchway.yaml`: attaches routed services to
+3. Write `.env` (mode 0600) from the app's environment variables plus the
+   platform variables (below) and the override file `compose.launchway.yaml`:
+   attaches the services in the payload's `attach` list (routed services,
+   `App.proxyServices` and the forward-auth target service) to
    `launchway-proxy` with their aliases, adds the labels, and — when the app is
    not on the edge node — publishes each routed service port on the node's
-   LAN IP so the edge can reach it. *(While no edge node is set, every app
+   LAN IP so the edge can reach it. Attach-only services publish nothing. *(While no edge node is set, every app
    counts as on the edge. Routes are applied here, so a route added to a
    running app takes effect with its next deployment;
    [ADR 0011](adr/0011-domain-activation-and-edge-rules.md).)*
@@ -173,6 +175,36 @@ resolves it to a commit SHA at deployment creation). Optional per app:
 
 Rollback = redeploy an older ref. Stop/remove an app = `compose down`
 (`--volumes` only on explicit "delete data").
+
+### Platform environment variables
+
+Every deployment's environment contains, next to the app's own variables:
+
+| Variable | Value |
+|---|---|
+| `LAUNCHWAY_APP` | App slug |
+| `LAUNCHWAY_APP_ID` | App ID (`app_…`) |
+| `LAUNCHWAY_DEPLOYMENT_ID` | Deployment ID (`dep_…`) |
+| `LAUNCHWAY_REF` | The deployed ref as requested (tag, branch or SHA) |
+| `LAUNCHWAY_COMMIT_SHA` | Resolved commit (40 hex characters) |
+| `LAUNCHWAY_COMMIT_SHA_SHORT` | Its first 7 characters |
+| `LAUNCHWAY_NODE` | Name of the node that runs the deployment |
+
+They are written to `.env`, so Compose files can interpolate them
+(`${LAUNCHWAY_COMMIT_SHA}`) and services that load `.env` through `env_file`
+receive them (synthesized Dockerfile apps do). User variables may not start
+with `LAUNCHWAY_`; the API rejects such keys, and stored rows from before that
+rule are left out of the payload
+([ADR 0016](adr/0016-proxy-attachment-forward-auth-target-and-extra-directives.md)).
+
+### Proxy network without a route
+
+`App.proxyServices` (admin only) lists services that join `launchway-proxy`
+as `<slug>-<service>` without a public route, e.g. an oauth2-proxy that only
+the edge's `forward_auth` calls. The service of the forward-auth target
+(section 5) is attached the same way. Aliases are unique across apps, whether
+they come from a route, `proxyServices` or the forward-auth target. Like
+routes, attachments take effect with the app's next deployment.
 
 ## 5. Edge, TLS and public exposure
 
@@ -192,8 +224,24 @@ Rollback = redeploy an older ref. Stop/remove an app = `compose down`
 
   The platform's own domain (`Setting.publicUrl`) is rendered the same way with
   upstream `launchway:3000`. `(gate)` is `forward_auth <Setting.forwardAuthUrl>`
-  — an existing passkey gate such as oauth2-proxy + Pocket ID, deployed as a
-  normal Launchway app and reachable on `launchway-proxy`.
+  or, for `Setting.forwardAuthTarget = { appId, service, port, uri }`,
+  `forward_auth http://<slug>-<service>:<port>` with `uri <uri>` — a passkey
+  gate such as oauth2-proxy + Pocket ID, deployed as a normal Launchway app and
+  reachable on `launchway-proxy`. At most one of the two is set. A target the
+  edge cannot reach by alias (app gone or not on the edge node) keeps protected
+  routes off the edge, as an unset gate does. Changing either setting
+  re-renders the edge; the settings update answers with `hints`, e.g. that the
+  gate app must be redeployed before its service is on the proxy network.
+- **Extra directives** *(note)*: `Route.extraDirectives` (admin only, at most
+  4 KiB) is rendered verbatim inside the site block after the option
+  directives and before `reverse_proxy`/`redir`, e.g. `handle /oauth2/* { … }`
+  on a login host. On save the API checks the structure (quotes closed, braces
+  balanced, the site block is never closed) and validates a throwaway
+  Caddyfile with just that site through Caddy's `/adapt`; Caddy's message is
+  returned with line numbers of the directives. When Caddy is unreachable, the
+  structural check stands and the answer carries a warning. Extra directives
+  are trusted admin configuration
+  ([ADR 0016](adr/0016-proxy-attachment-forward-auth-target-and-extra-directives.md)).
 - **Certificates**: Let's Encrypt through Caddy (`email`, `cert_issuer acme`
   so no fallback CA is tried — the zone's CAA may allow only Let's Encrypt).
   A route is only rendered once its domain passed the **DNS preflight**
@@ -440,6 +488,8 @@ Agent (`launchway-agent` container):
 - Webhook signatures verified before parsing; replay protection by delivery ID.
 - Session fixation prevented (new session ID on login), sessions revocable.
 - Authorization checked per route; `viewer` cannot read secrets or tokens.
+  Route `extraDirectives` and `App.proxyServices` change what the edge serves
+  and reaches: admin only.
 - No shell string execution anywhere; all external input validated with Zod.
 - Compose policy (section 4) enforced on the agent, not only in the UI.
 - Internal endpoints (`/internal/*`, agent WebSocket upgrades without a valid

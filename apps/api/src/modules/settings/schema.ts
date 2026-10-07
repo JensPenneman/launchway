@@ -1,6 +1,6 @@
-import type { NodeId } from '@launchway/contracts';
+import type { ForwardAuthTarget, NodeId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { boolean, check, inet, pgTable, smallint, text } from 'drizzle-orm/pg-core';
+import { boolean, check, inet, jsonb, pgTable, smallint, text } from 'drizzle-orm/pg-core';
 import { timestamps, tz } from '../../db/columns.js';
 import { nodes } from '../nodes/schema.js';
 
@@ -17,10 +17,18 @@ export const settings = pgTable(
     publicIpv4: inet('public_ipv4'),
     publicIpv4CheckedAt: tz('public_ipv4_checked_at'),
     forwardAuthUrl: text('forward_auth_url'),
+    /** Forward-auth gate run as an app service (`ForwardAuthTarget`); XOR forward_auth_url. */
+    forwardAuthTarget: jsonb('forward_auth_target').$type<ForwardAuthTarget>(),
     edgeNodeId: text('edge_node_id')
       .$type<NodeId>()
       .references(() => nodes.id, { onDelete: 'set null' }),
     ...timestamps(),
   },
-  (t) => [check('settings_singleton', sql`${t.id} = 1`)],
+  (t) => [
+    check('settings_singleton', sql`${t.id} = 1`),
+    check(
+      'settings_one_forward_auth',
+      sql`${t.forwardAuthUrl} IS NULL OR ${t.forwardAuthTarget} IS NULL`,
+    ),
+  ],
 );

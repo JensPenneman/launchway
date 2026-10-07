@@ -194,4 +194,99 @@ describe('edge configuration loaded into a real Caddy', () => {
     expect(unreachable.status).toBe(503);
     expect(await unreachable.json()).toMatchObject({ type: 'service-unavailable' });
   });
+
+  it('loads a gate reached by alias and a site with extra directives', async () => {
+    const appId = 'app_01jbh8m4x2f8k9z0a1b2c3d405';
+    const { caddyfile } = renderEdge({
+      adminListen: '0.0.0.0:2019',
+      settings: {
+        publicUrl: null,
+        acmeEmail: 'ops@example.com',
+        forwardAuthUrl: null,
+        forwardAuthTarget: { appId, service: 'oauth2-proxy', port: 4180, uri: '/oauth2/auth' },
+        edgeNodeId: null,
+      },
+      routes: [
+        {
+          id: 'rt_01jbh8m4x2f8k9z0a1b2c3d405',
+          domainId: 'dom_01jbh8m4x2f8k9z0a1b2c3d405',
+          hostname: 'login.example.com',
+          domain: { status: 'verified', force: false },
+          target: { kind: 'app', appId, service: 'pocket-id', port: 1411 },
+          protected: false,
+          compress: true,
+          hsts: true,
+          extraDirectives: [
+            'handle /oauth2/* {',
+            '\treverse_proxy login-oauth2-proxy:4180',
+            '}',
+            '@closed path /setup* /signup* /api/signup*',
+            'respond @closed 404',
+            'request_header -X-API-KEY',
+          ].join('\n'),
+        },
+        {
+          id: 'rt_01jbh8m4x2f8k9z0a1b2c3d406',
+          domainId: 'dom_01jbh8m4x2f8k9z0a1b2c3d406',
+          hostname: 'private.example.com',
+          domain: { status: 'verified', force: false },
+          target: { kind: 'external', scheme: 'http', host: 'host.docker.internal', port: 8080 },
+          protected: true,
+          compress: true,
+          hsts: true,
+        },
+      ],
+      apps: [
+        {
+          id: appId,
+          slug: 'login',
+          nodeId: 'node_01jbh8m4x2f8k9z0a1b2c3d405',
+          runningServices: null,
+        },
+      ],
+      nodes: [],
+    });
+    expect(caddyfile).toContain('forward_auth http://login-oauth2-proxy:4180 {');
+    await createCaddyAdmin(adminUrl).load(caddyfile);
+    expect(hostsOf(await runningConfig())).toEqual(
+      expect.arrayContaining(['login.example.com', 'private.example.com']),
+    );
+  });
+
+  it('validates extra directives of a route with Caddy on save', async () => {
+    const domain = await insertDomain(db);
+    const [route] = await db
+      .insert(routes)
+      .values({
+        domainId: domain.id,
+        targetKind: 'external',
+        externalScheme: 'http',
+        externalHost: 'host.docker.internal',
+        externalPort: 8097,
+      })
+      .returning({ id: routes.id });
+    const base = createTestDeps({ db, auth: fixedAuth(testPrincipal('admin')) });
+    const app = createApp({ ...base, config: { ...base.config, caddyAdminUrl: adminUrl } });
+
+    const rejected = await app.request(`/api/v1/routes/${route?.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ extraDirectives: 'encode gzip\nbogus_directive on' }),
+    });
+    expect(rejected.status).toBe(400);
+    const problem = (await rejected.json()) as { errors: { path: string; message: string }[] };
+    expect(problem.errors[0]?.path).toBe('body.extraDirectives');
+    expect(problem.errors[0]?.message).toMatch(/line 2.*bogus_directive/);
+
+    const accepted = await app.request(`/api/v1/routes/${route?.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ extraDirectives: 'request_header -X-API-KEY' }),
+    });
+    expect(accepted.status).toBe(200);
+    expect(await accepted.json()).toMatchObject({
+      extraDirectives: 'request_header -X-API-KEY',
+      warnings: [],
+    });
+  });
 });

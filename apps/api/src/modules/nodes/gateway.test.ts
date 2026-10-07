@@ -135,6 +135,7 @@ function deployPayload(deploymentId: DeploymentId): DeployPayload {
     build: { kind: 'compose', composeFiles: ['compose.yaml'] },
     env: {},
     routes: [{ service: 'web', port: 8080, alias: 'trail-web' }],
+    attach: [],
     network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
   };
 }

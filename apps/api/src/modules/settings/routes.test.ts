@@ -60,4 +60,32 @@ describe('settings routes (authorization and validation)', () => {
     expect(res.status).toBe(400);
     expect(await res.json()).toMatchObject({ status: 400 });
   });
+
+  it('accepts only one forward-auth form per request and validates the target', async () => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
+    const target = {
+      appId: 'app_01jbh8m4x2f8k9z0a1b2c3d4ea',
+      service: 'oauth2-proxy',
+      port: 4180,
+      uri: '/oauth2/auth',
+    };
+    const both = await app.request(
+      '/api/v1/settings',
+      patch({ forwardAuthUrl: 'http://gate:4180/', forwardAuthTarget: target }),
+    );
+    expect(both.status).toBe(400);
+    expect(await both.json()).toMatchObject({
+      errors: [{ path: 'body.forwardAuthTarget', message: expect.stringMatching(/not both/) }],
+    });
+    const bad = await app.request(
+      '/api/v1/settings',
+      patch({ forwardAuthTarget: { ...target, service: 'caddy', uri: 'oauth2/auth' } }),
+    );
+    expect(bad.status).toBe(400);
+    const problem = (await bad.json()) as { errors: { path: string }[] };
+    expect(problem.errors.map((e) => e.path).sort()).toEqual([
+      'body.forwardAuthTarget.service',
+      'body.forwardAuthTarget.uri',
+    ]);
+  });
 });

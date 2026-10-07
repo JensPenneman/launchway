@@ -509,6 +509,7 @@ class DeploymentRun {
       projectName: project,
       proxyNetwork: payload.network.proxyNetwork,
       routes: payload.routes,
+      attach: payload.attach,
       isInsideCheckout: (path) => isInsideReal(root, path),
       projectDir: source.projectDir,
       workspaceRoot: workspace.root,

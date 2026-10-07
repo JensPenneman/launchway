@@ -6,6 +6,7 @@ import {
   generateId,
   type Node,
   type NodeJoinToken,
+  type SettingsHint,
   StartAppManifestInput,
   UpdateNodeInput,
   UpdateSettingsInput,
@@ -53,6 +54,13 @@ export function renderCaddyfile(): string {
   const blocks: string[] = [
     `{\n\temail ${db.settings.acmeEmail ?? 'unset'}\n\tcert_issuer acme\n}`,
   ];
+  const gateTarget = db.settings.forwardAuthTarget;
+  const gateApp = gateTarget && db.apps.find((app) => app.id === gateTarget.appId);
+  if (gateTarget && gateApp) {
+    blocks.push(
+      `(gate) {\n\tforward_auth http://${gateApp.slug}-${gateTarget.service}:${gateTarget.port} {\n\t\turi ${gateTarget.uri}\n\t\tcopy_headers X-Auth-Request-User X-Auth-Request-Email X-Auth-Request-Groups\n\t}\n}`,
+    );
+  }
   if (db.settings.forwardAuthUrl) {
     blocks.push(
       `(gate) {\n\tforward_auth ${db.settings.forwardAuthUrl} {\n\t\turi /\n\t\tcopy_headers X-Forwarded-User X-Forwarded-Email\n\t}\n}`,
@@ -70,6 +78,7 @@ export function renderCaddyfile(): string {
     if (route.protected) lines.push('import gate');
     if (route.compress) lines.push('encode zstd gzip');
     if (route.hsts) lines.push('header ?Strict-Transport-Security "max-age=31536000"');
+    if (route.extraDirectives) lines.push(...route.extraDirectives.split('\n'));
     const target = route.target;
     if (target.kind === 'app') {
       const app = db.apps.find((item) => item.id === target.appId);
@@ -117,6 +126,29 @@ export const platformHandlers = [
     if (denied) return denied;
     const { data, error } = await parseBody(request, UpdateSettingsInput);
     if (error) return error;
+    const nextUrl =
+      data.forwardAuthUrl === undefined ? db.settings.forwardAuthUrl : data.forwardAuthUrl;
+    const nextTarget =
+      data.forwardAuthTarget === undefined ? db.settings.forwardAuthTarget : data.forwardAuthTarget;
+    if (nextUrl && nextTarget) {
+      return problem(
+        'validation-failed',
+        'Set either forwardAuthUrl or forwardAuthTarget; clear the other one with null.',
+      );
+    }
+    const hints: SettingsHint[] = [];
+    if (data.forwardAuthTarget) {
+      const target = data.forwardAuthTarget;
+      const app = db.apps.find((item) => item.id === target.appId);
+      if (!app) return problem('validation-failed', 'Unknown app.');
+      if (!app.proxyServices.includes(target.service)) {
+        hints.push({
+          code: 'redeploy-required',
+          appId: app.id,
+          message: `Redeploy app ${app.slug} to attach ${target.service} to the proxy network. Until then protected routes cannot reach the gate.`,
+        });
+      }
+    }
     Object.assign(db.settings, data, { updatedAt: now() });
     if (data.publicUrl !== undefined) db.settings.effectivePublicUrl = data.publicUrl;
     if (data.edgeNodeId !== undefined) {
@@ -125,7 +157,7 @@ export const platformHandlers = [
     }
     recordAudit('settings.update', 'settings', null, { fields: Object.keys(data) });
     db.emit('settings', 'updated', null);
-    return HttpResponse.json(db.settings);
+    return HttpResponse.json({ ...db.settings, hints });
   }),
   http.get(`${API}/edge/config`, () => guard('admin') ?? HttpResponse.json(edgeStatus())),
   http.post(`${API}/edge/reload`, () => {

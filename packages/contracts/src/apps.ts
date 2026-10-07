@@ -1,4 +1,10 @@
-import { DisplayName, RelativePath, ServiceName, Timestamp } from './common.js';
+import {
+  DisplayName,
+  RelativePath,
+  RoutableServiceName,
+  ServiceName,
+  Timestamp,
+} from './common.js';
 import { ServiceStatus } from './deployments.js';
 import { RepositoryRef } from './github.js';
 import { AppId, DeploymentId, EnvVarId, GitHubConnectionId, NodeId } from './ids.js';
@@ -91,6 +97,19 @@ export const TrustedMounts = z.boolean().openapi({
   description:
     "Allows bind mounts below the node's allowedBindRoots, external volumes and custom volume names. Setting it requires the admin role.",
 });
+/**
+ * Services attached to the proxy network without a public route (e.g. a forward-auth gate the
+ * edge calls by its alias). Admin only to change.
+ */
+export const ProxyServices = z
+  .array(RoutableServiceName)
+  .max(20)
+  .refine((names) => new Set(names).size === names.length, 'Service names must be unique')
+  .openapi({
+    description:
+      'Services attached to the proxy network as <slug>-<service> without a route (admin only to change)',
+    example: ['oauth2-proxy'],
+  });
 
 export const App = z
   .object({
@@ -110,6 +129,7 @@ export const App = z
     nodeId: NodeId,
     autoDeployReleases: z.boolean(),
     trustedMounts: TrustedMounts,
+    proxyServices: ProxyServices,
     activeDeploymentId: DeploymentId.nullable(),
     createdAt: Timestamp,
     updatedAt: Timestamp,
@@ -157,6 +177,9 @@ export const UpdateAppInput = z
     nodeId: NodeId.optional(),
     autoDeployReleases: z.boolean().optional(),
     trustedMounts: TrustedMounts.optional(),
+    proxyServices: ProxyServices.optional().openapi({
+      description: 'Requires the admin role; takes effect with the next deployment',
+    }),
   })
   .superRefine((value, ctx) => {
     checkSourceXor(value, ctx);
@@ -170,12 +193,34 @@ export type UpdateAppInput = z.infer<typeof UpdateAppInput>;
 // --- Environment variables ---------------------------------------------------------------------
 
 export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-export const EnvKey = z
+
+/** Prefix of the variables Launchway sets on every deployment; user keys may not use it. */
+export const PLATFORM_ENV_PREFIX = 'LAUNCHWAY_';
+
+/** Variables Launchway adds to the environment of every deployment (spec section 4). */
+export const PLATFORM_ENV_KEYS = [
+  'LAUNCHWAY_APP',
+  'LAUNCHWAY_APP_ID',
+  'LAUNCHWAY_DEPLOYMENT_ID',
+  'LAUNCHWAY_REF',
+  'LAUNCHWAY_COMMIT_SHA',
+  'LAUNCHWAY_COMMIT_SHA_SHORT',
+  'LAUNCHWAY_NODE',
+] as const;
+export type PlatformEnvKey = (typeof PLATFORM_ENV_KEYS)[number];
+
+/** Syntax of an environment variable name, platform variables included. */
+export const EnvKeyName = z
   .string()
   .min(1)
   .max(255)
-  .regex(ENV_KEY_PATTERN, 'Must match [A-Za-z_][A-Za-z0-9_]*')
-  .openapi({ example: 'DATABASE_URL' });
+  .regex(ENV_KEY_PATTERN, 'Must match [A-Za-z_][A-Za-z0-9_]*');
+
+/** Name of a user-defined variable: `LAUNCHWAY_*` is reserved for the platform variables. */
+export const EnvKey = EnvKeyName.refine(
+  (key) => !key.startsWith(PLATFORM_ENV_PREFIX),
+  `Keys starting with ${PLATFORM_ENV_PREFIX} are reserved for the variables Launchway sets (${PLATFORM_ENV_KEYS.join(', ')})`,
+).openapi({ example: 'DATABASE_URL' });
 
 export const EnvValue = z
   .string()
@@ -186,7 +231,7 @@ export const EnvValue = z
 export const EnvVar = z
   .object({
     id: EnvVarId,
-    key: EnvKey,
+    key: EnvKeyName.openapi({ example: 'DATABASE_URL' }),
     secret: z.boolean(),
     value: z.string().nullable().openapi({ description: 'null when secret' }),
     createdAt: Timestamp,

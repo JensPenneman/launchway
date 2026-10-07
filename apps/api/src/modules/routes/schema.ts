@@ -46,6 +46,8 @@ export const routes = pgTable(
     protected: boolean('protected').notNull().default(false),
     compress: boolean('compress').notNull().default(true),
     hsts: boolean('hsts').notNull().default(true),
+    /** Admin-supplied Caddyfile directives rendered verbatim inside the site block. */
+    extraDirectives: text('extra_directives'),
     ...timestamps(),
   },
   (t) => [

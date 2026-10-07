@@ -347,6 +347,7 @@ export function createApps(): App[] {
     context: null,
     autoDeployReleases: false,
     trustedMounts: false,
+    proxyServices: [] as string[],
   };
   return [
     {
@@ -654,6 +655,7 @@ export function createRoutes(): Route[] {
     protected: false,
     compress: true,
     hsts: true,
+    extraDirectives: null,
     createdAt: ago(60 * 24 * 20),
     updatedAt: ago(60 * 24 * 2),
   };
@@ -693,6 +695,7 @@ export function createSettings(): Settings {
     publicIpv4: '203.0.113.45',
     publicIpv4CheckedAt: ago(2),
     forwardAuthUrl: 'http://gate-proxy:4180/oauth2/auth',
+    forwardAuthTarget: null,
     edgeNodeId: EDGE_NODE_ID,
     updatedAt: ago(60 * 24),
   };

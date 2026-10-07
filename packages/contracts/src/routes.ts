@@ -34,6 +34,37 @@ export type RouteTarget = z.infer<typeof RouteTarget>;
 
 export const ROUTE_OPTION_DEFAULTS = { protected: false, compress: true, hsts: true } as const;
 
+/** Upper bound of `Route.extraDirectives` in UTF-8 bytes. */
+export const EXTRA_DIRECTIVES_MAX_BYTES = 4096;
+
+/** UTF-8 length of a string in bytes. */
+function utf8Length(value: string): number {
+  let bytes = 0;
+  for (const char of value) {
+    const code = char.codePointAt(0) ?? 0;
+    bytes += code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+  }
+  return bytes;
+}
+
+/**
+ * Caddyfile directives rendered verbatim inside the route's site block (admin only; trusted
+ * configuration). Validated with Caddy's `/adapt` on save.
+ */
+export const ExtraDirectives = z
+  .string()
+  .max(EXTRA_DIRECTIVES_MAX_BYTES)
+  .refine(
+    (value) => utf8Length(value) <= EXTRA_DIRECTIVES_MAX_BYTES,
+    `Must be at most ${EXTRA_DIRECTIVES_MAX_BYTES} bytes`,
+  )
+  .refine((value) => !value.includes('\0'), 'Must not contain NUL characters')
+  .openapi({
+    description:
+      'Caddyfile directives placed inside the site block after the option directives and before the upstream (admin only)',
+    example: 'handle /oauth2/* {\n\treverse_proxy login-oauth2-proxy:4180\n}',
+  });
+
 const routeOptions = {
   protected: z.boolean().openapi({ description: 'Require forward auth (Setting.forwardAuthUrl)' }),
   compress: z.boolean().openapi({ description: 'encode zstd gzip' }),
@@ -47,6 +78,9 @@ export const Route = z
     hostname: Hostname,
     target: RouteTarget,
     ...routeOptions,
+    extraDirectives: ExtraDirectives.nullable().openapi({
+      description: 'Verbatim Caddyfile directives inside the site block; null when none',
+    }),
     createdAt: Timestamp,
     updatedAt: Timestamp,
   })
@@ -69,6 +103,9 @@ export const CreateRouteInput = z
     protected: routeOptions.protected.default(ROUTE_OPTION_DEFAULTS.protected),
     compress: routeOptions.compress.default(ROUTE_OPTION_DEFAULTS.compress),
     hsts: routeOptions.hsts.default(ROUTE_OPTION_DEFAULTS.hsts),
+    extraDirectives: ExtraDirectives.nullable().optional().openapi({
+      description: 'Requires the admin role; empty or null means none',
+    }),
   })
   .openapi('CreateRouteInput');
 export type CreateRouteInput = z.infer<typeof CreateRouteInput>;
@@ -79,10 +116,22 @@ export const UpdateRouteInput = z
     protected: z.boolean().optional(),
     compress: z.boolean().optional(),
     hsts: z.boolean().optional(),
+    extraDirectives: ExtraDirectives.nullable().optional().openapi({
+      description: 'Requires the admin role; empty or null clears them',
+    }),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one field')
   .openapi('UpdateRouteInput');
 export type UpdateRouteInput = z.infer<typeof UpdateRouteInput>;
+
+/** Answer of route create/update: the route plus non-fatal validation warnings. */
+export const RouteSaveResult = Route.extend({
+  warnings: z.array(z.string()).openapi({
+    description:
+      'Non-fatal notes, e.g. extra directives only got a structural check because Caddy was unreachable',
+  }),
+}).openapi('RouteSaveResult');
+export type RouteSaveResult = z.infer<typeof RouteSaveResult>;
 
 /** Failure of a load attempt into Caddy (validation or admin API error). */
 export const EdgeError = z

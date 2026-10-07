@@ -34,6 +34,8 @@ export const apps = pgTable(
     autoDeployReleases: boolean('auto_deploy_releases').notNull().default(false),
     /** Admin decision: bind mounts below the node's allowed roots and foreign volumes. */
     trustedMounts: boolean('trusted_mounts').notNull().default(false),
+    /** Services attached to the proxy network without a route (sorted, unique). */
+    proxyServices: text('proxy_services').array().notNull().default(sql`'{}'::text[]`),
     ...timestamps(),
   },
   (t) => [

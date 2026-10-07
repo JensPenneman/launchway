@@ -110,7 +110,7 @@ export function createDispatcher(deps: Deps): Dispatcher {
     const connection = await getConnection(deps.db, app.connectionId);
     const clone = await providerFor(deps, connection).cloneCredentials(app.repoOwner, app.repoName);
     const [node] = await deps.db
-      .select({ lanIp: nodes.lanIp, allowedBindRoots: nodes.allowedBindRoots })
+      .select({ lanIp: nodes.lanIp, name: nodes.name, allowedBindRoots: nodes.allowedBindRoots })
       .from(nodes)
       .where(eq(nodes.id, deployment.nodeId));
     const appRoutes = await deps.db
@@ -118,15 +118,17 @@ export function createDispatcher(deps: Deps): Dispatcher {
       .from(routes)
       .innerJoin(domains, eq(domains.id, routes.domainId))
       .where(and(eq(routes.appId, app.id), eq(routes.targetKind, 'app')));
-    const { edgeNodeId } = await settings.get();
+    const { edgeNodeId, forwardAuthTarget } = await settings.get();
     return buildDeployPayload({
       deployment,
       app,
+      node: { name: node?.name ?? deployment.nodeId },
       clone,
       env: await loadDecryptedEnv(deps.db, deps.secrets, app.id),
       routes: appRoutes.flatMap((r) =>
         r.service !== null && r.port !== null ? [{ service: r.service, port: r.port }] : [],
       ),
+      forwardAuthTarget,
       proxyNetwork: deps.config.proxyNetwork,
       nodeLanIp: node?.lanIp ?? null,
       nodeAllowedBindRoots: node?.allowedBindRoots ?? [],

@@ -70,6 +70,30 @@ describe('buildOverride', () => {
     ]);
     expect(override.services.db?.ports).toBeUndefined();
   });
+
+  it('attaches attach-only services with their alias and never publishes them', () => {
+    const override = buildOverride(config, {
+      ...payload('192.168.1.20'),
+      attach: [
+        { service: 'web', alias: 'trail-web' },
+        { service: 'db', alias: 'trail-db' },
+        { service: 'missing', alias: 'trail-missing' },
+      ],
+    }) as { services: Record<string, { networks?: unknown; ports?: unknown }> };
+    expect(override.services.db?.networks).toEqual({
+      back: {},
+      'launchway-proxy': { aliases: ['trail-db'] },
+    });
+    expect(override.services.db?.ports).toBeUndefined();
+    // A routed service listed in attach too keeps one alias and its published ports.
+    expect(override.services.web?.networks).toEqual({
+      default: {},
+      back: {},
+      'launchway-proxy': { aliases: ['trail-web'] },
+    });
+    expect(override.services.web?.ports).toHaveLength(2);
+    expect(override.services.missing).toBeUndefined();
+  });
 });
 
 describe('synthesizeCompose', () => {

@@ -358,5 +358,19 @@ The v0.1 modules are merged and wired. Known gaps and follow-ups, grouped by are
   address where app containers share Caddy's network.
 - Routed services join the proxy network when they are deployed, so a new route of a running app
   takes effect with its next deployment ([ADR 0011](adr/0011-domain-activation-and-edge-rules.md)).
+  The same holds for `App.proxyServices` and the forward-auth target service: the payload's
+  `attach` list is computed when the deployment is dispatched (`deployments/payload.ts`).
+- Network aliases (`<slug>-<service>`) form one space across route targets, `proxyServices` and
+  the forward-auth target. Check new attachments with `assertAliasesFree` under `ALIASES_LOCK`
+  (`modules/routes/attach.ts`) instead of querying routes alone.
+- The payload builder adds the platform variables `LAUNCHWAY_APP`, `LAUNCHWAY_APP_ID`,
+  `LAUNCHWAY_DEPLOYMENT_ID`, `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA`, `LAUNCHWAY_COMMIT_SHA_SHORT`
+  and `LAUNCHWAY_NODE` to every deployment (`PLATFORM_ENV_KEYS` in contracts). `EnvKey` rejects
+  user keys starting with `LAUNCHWAY_`; use `EnvKeyName` where platform keys are valid (the agent
+  payload, stored rows).
+- `Route.extraDirectives` is rendered verbatim (`extraDirectiveLines` in `edge/render.ts`).
+  Validation goes through `checkRouteDirectives` (`routes/validation.ts`, built on
+  `edge/directives.ts`); unit tests pass a fake `adapt`, as `createRoutesService(deps, { caddy })`
+  accepts one too.
 - The API reference page (Scalar) loads its bundle from a CDN. Self-host it if outbound access
   must be avoided.

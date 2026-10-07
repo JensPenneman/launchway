@@ -1,5 +1,5 @@
 import type { ZodType } from 'zod';
-import { AppSlug, AppSource, EnvKey } from '../apps.js';
+import { AppSlug, AppSource, EnvKeyName } from '../apps.js';
 import {
   CommitSha,
   GitRef,
@@ -123,10 +123,20 @@ export const DeployRoute = z.object({
 export type DeployRoute = z.infer<typeof DeployRoute>;
 
 /**
+ * A service attached to the proxy network under `alias` without publishing a port: the services
+ * of the app's routes, its `proxyServices` and the forward-auth target service.
+ */
+export const DeployAttach = z.object({
+  service: RoutableServiceName,
+  alias: z.string().min(1).max(63),
+});
+export type DeployAttach = z.infer<typeof DeployAttach>;
+
+/**
  * Everything the agent needs for one deployment (spec sections 4 and 9). The agent clones
  * `source` into `<workspace>/apps/<appId>/<deploymentId>`, runs the Compose policy check, writes
  * `.env` (0600) from `env` and the override `compose.launchway.yaml` (proxy network + aliases for
- * `routes`, labels, LAN publishing when `network.publishOnIp` is set), then runs
+ * `routes` and `attach`, labels, LAN publishing when `network.publishOnIp` is set), then runs
  * `docker compose -p launchway-<slug> ... build --pull`, `pull`, `up -d --wait --remove-orphans`.
  */
 /** Mount policy of one deployment; agents treat a missing policy as untrusted. */
@@ -152,8 +162,17 @@ export const DeployPayload = z.object({
       ),
   }),
   build: AppSource,
-  env: z.record(EnvKey, z.string()).describe('Decrypted environment; never logged'),
+  env: z
+    .record(EnvKeyName, z.string())
+    .describe('Decrypted environment plus the LAUNCHWAY_* platform variables; never logged'),
   routes: z.array(DeployRoute).max(100),
+  attach: z
+    .array(DeployAttach)
+    .max(100)
+    .default([])
+    .describe(
+      'Services to attach to the proxy network with their alias (no ports published). Absent from older servers.',
+    ),
   network: z.object({
     proxyNetwork: z.string().min(1).max(64),
     publishOnIp: IpAddress.nullable().describe(

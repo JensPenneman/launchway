@@ -231,6 +231,48 @@ All API and agent variables are described in section 13 of the architecture
 and in [ADR 0009](adr/0009-v0-1-specification-interpretations.md). After
 editing `.env`, apply the change with `docker compose up -d --wait`.
 
+## Forward auth and extra directives
+
+Protected routes ask a gate whether a request may pass. Set it under
+Settings → Platform → Forward auth, either as an external URL or as a service
+of a Launchway app. A passkey gate built from Pocket ID and oauth2-proxy runs
+as one app (here with the slug `login`) and is wired up like this:
+
+1. In the app's settings, an admin adds `oauth2-proxy` to **Proxy network
+   services**. The service then joins the proxy network as
+   `login-oauth2-proxy` without a public route.
+2. Route the login host name (for example `login.example.com`) to the
+   `pocket-id` service.
+3. Under Settings → Platform, choose **App service**: app `login`, service
+   `oauth2-proxy`, port `4180`, URI `/oauth2/auth`. The answer says when the
+   app has to be redeployed before the edge can reach the service.
+4. Redeploy the app if asked, then mark routes as protected.
+
+Admins can add **extra Caddy directives** to a route (route editor → Extra
+Caddy directives). They go verbatim inside the site block, after the option
+directives and before the upstream, and Caddy checks them when you save. For
+the login host:
+
+```caddy
+# oauth2-proxy answers its own endpoints; everything else goes to Pocket ID.
+handle /oauth2/* {
+	reverse_proxy login-oauth2-proxy:4180
+}
+
+# Close the sign-up and setup pages to the internet.
+@closed path /setup* /signup* /api/signup*
+respond @closed 404
+
+# Never pass a client-supplied API key through.
+request_header -X-API-KEY
+```
+
+`respond` only takes one path, so several paths need a named matcher
+(`@closed`) as above. Over the API the same text is the route's
+`extraDirectives` (`PATCH /api/v1/routes/{id}`, admin role). The answer
+lists `warnings` when Caddy could not be reached and only the structural
+check ran.
+
 ## Add a node
 
 A node is any machine with Docker that runs the agent. The agent connects
@@ -463,7 +505,11 @@ docker compose ps                                  # container health
 - **`429 rate-limited`.** Setup, sign-in, passkey, invitation and token
   endpoints are rate-limited per client address; wait for `Retry-After`.
 - **A new route answers 502.** Routed services join the edge network when they
-  are deployed: redeploy the app after adding its first route.
+  are deployed: redeploy the app after adding its first route. The same
+  applies to proxy network services and to the forward-auth app service.
+- **Protected routes are not served.** `GET /api/v1/edge/config` says why in
+  the Caddyfile comments. `forward auth: unavailable` means the gate app is
+  gone or does not run on the edge node.
 - **A domain gets no certificate.** Routes are only rendered once their
   domain passes the DNS check, unless it is forced; `active` means the edge
   serves the domain. Certificate errors show in `docker compose logs caddy`

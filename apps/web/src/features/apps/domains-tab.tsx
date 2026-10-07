@@ -1,5 +1,7 @@
 import {
   type App,
+  EXTRA_DIRECTIVES_MAX_BYTES,
+  ExtraDirectives,
   Hostname,
   Port,
   ROUTE_OPTION_DEFAULTS,
@@ -9,6 +11,7 @@ import {
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Globe, Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
+import { toast } from 'sonner';
 import { appStatusQuery } from '@/api/apps';
 import {
   createDomain,
@@ -47,6 +50,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
+import { Textarea } from '@/components/ui/textarea';
 import { VerifyButton } from '@/features/domains/verify-button';
 import { AUTO_ZONE, ZoneSelect, zoneIdInput } from '@/features/domains/zone-select';
 import { useCan } from '@/hooks/use-me';
@@ -58,6 +62,26 @@ interface RouteOptions {
   protected: boolean;
   compress: boolean;
   hsts: boolean;
+}
+
+/** Ready-made extra directives (Caddyfile) an admin can start from. */
+const DIRECTIVE_EXAMPLES: readonly { label: string; text: string }[] = [
+  {
+    label: 'Send /oauth2/* to another service',
+    text: 'handle /oauth2/* {\n\treverse_proxy login-oauth2-proxy:4180\n}',
+  },
+  {
+    label: 'Close sign-up and setup paths',
+    text: '@closed path /setup* /signup* /api/signup*\nrespond @closed 404',
+  },
+  { label: 'Drop a request header', text: 'request_header -X-API-KEY' },
+];
+
+/** Whether protected routes have a gate (an external URL or an app service). */
+function hasForwardAuth(
+  settings: { forwardAuthUrl: string | null; forwardAuthTarget: unknown } | undefined,
+) {
+  return Boolean(settings?.forwardAuthUrl || settings?.forwardAuthTarget);
 }
 
 const OPTION_LABELS: Record<keyof RouteOptions, { label: string; hint: string }> = {
@@ -83,7 +107,7 @@ function OptionSwitches({
             <Label htmlFor={`route-${option}`}>{OPTION_LABELS[option].label}</Label>
             <p className="text-xs text-muted-foreground">
               {option === 'protected' && !forwardAuthConfigured
-                ? 'Set a forward-auth URL in platform settings first'
+                ? 'Set up forward auth in platform settings first'
                 : OPTION_LABELS[option].hint}
             </p>
           </div>
@@ -373,7 +397,7 @@ function AddRouteDialog({ app }: { app: App }) {
           <OptionSwitches
             value={options}
             onChange={setOptions}
-            forwardAuthConfigured={Boolean(settings.data?.forwardAuthUrl)}
+            forwardAuthConfigured={hasForwardAuth(settings.data)}
           />
           <DialogFooter>
             <Button type="submit" disabled={!ready || save.isPending}>
@@ -395,17 +419,25 @@ function EditRouteDialog({ route }: { route: Route }) {
     hsts: route.hsts,
   });
   const [port, setPort] = useState(route.target.kind === 'app' ? String(route.target.port) : '');
+  const isAdmin = useCan('admin');
+  const [directives, setDirectives] = useState(route.extraDirectives ?? '');
+  const directivesChanged = directives.trim() !== (route.extraDirectives ?? '').trim();
+  const directivesError = directives === '' ? undefined : fieldError(ExtraDirectives, directives);
   const settings = useQuery({ ...settingsQuery, enabled: open });
   const save = useApiMutation(
     () =>
       updateRoute(route.id, {
         ...options,
         ...(route.target.kind === 'app' ? { target: { ...route.target, port: Number(port) } } : {}),
+        ...(isAdmin && directivesChanged ? { extraDirectives: directives.trim() || null } : {}),
       }),
     {
       invalidate: [keys.routes, keys.edge],
       success: 'Route updated',
-      onSuccess: () => setOpen(false),
+      onSuccess: (result) => {
+        for (const warning of result.warnings) toast.warning(warning);
+        setOpen(false);
+      },
     },
   );
   return (
@@ -432,10 +464,54 @@ function EditRouteDialog({ route }: { route: Route }) {
         <OptionSwitches
           value={options}
           onChange={setOptions}
-          forwardAuthConfigured={Boolean(settings.data?.forwardAuthUrl)}
+          forwardAuthConfigured={hasForwardAuth(settings.data)}
         />
+        {(isAdmin || route.extraDirectives) && (
+          <Field
+            label="Extra Caddy directives"
+            error={directivesError}
+            description={
+              isAdmin
+                ? `Placed verbatim inside the site block, after the options and before the upstream. Checked with Caddy on save; at most ${EXTRA_DIRECTIVES_MAX_BYTES} bytes.`
+                : 'Only admins can change these.'
+            }
+          >
+            <Textarea
+              rows={5}
+              className="font-mono text-xs"
+              spellCheck={false}
+              readOnly={!isAdmin}
+              placeholder="handle /oauth2/* { … }"
+              value={directives}
+              onChange={(event) => setDirectives(event.target.value)}
+            />
+          </Field>
+        )}
+        {isAdmin && (
+          <div className="flex flex-wrap gap-2">
+            {DIRECTIVE_EXAMPLES.map((example) => (
+              <Button
+                key={example.label}
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() =>
+                  setDirectives((current) =>
+                    current.trim() === '' ? example.text : `${current.trimEnd()}\n${example.text}`,
+                  )
+                }
+              >
+                <Plus />
+                {example.label}
+              </Button>
+            ))}
+          </div>
+        )}
         <DialogFooter>
-          <Button onClick={() => save.mutate()} disabled={save.isPending}>
+          <Button
+            onClick={() => save.mutate()}
+            disabled={save.isPending || Boolean(directivesError)}
+          >
             {save.isPending && <Loader2 className="animate-spin" />}
             Save
           </Button>

@@ -3,7 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../../test/support/deps.js';
 import { createApp } from '../../app.js';
 import { ProblemError } from '../../lib/problem.js';
-import { assertRedirectTarget, findAliasClash, routeAlias } from './validation.js';
+import { CaddyError } from '../edge/caddy.js';
+import {
+  assertRedirectTarget,
+  checkRouteDirectives,
+  findAliasClash,
+  routeAlias,
+} from './validation.js';
 
 const json = (method: string, body?: unknown) => ({
   method,
@@ -51,6 +57,48 @@ describe('route validation rules', () => {
   });
 });
 
+describe('extra directives validation (fake Caddy adapter)', () => {
+  const site = { hostname: 'login.example.com', protected: true, compress: true, hsts: true };
+
+  it("turns Caddy's rejection into a validation problem for body.extraDirectives", async () => {
+    const adapted: string[] = [];
+    const caddy = {
+      adapt: (caddyfile: string) => {
+        adapted.push(caddyfile);
+        const line = caddyfile.split('\n').indexOf('\tnope') + 1;
+        return Promise.reject(
+          new CaddyError(`Caddyfile:${line}: unrecognized directive: nope`, false),
+        );
+      },
+    };
+    const error = await checkRouteDirectives(caddy, site, 'encode gzip\nnope').catch(
+      (caught: unknown) => caught,
+    );
+    expect(error).toBeInstanceOf(ProblemError);
+    expect(error).toMatchObject({
+      type: 'validation-failed',
+      detail: 'Caddy rejected the extra directives: line 2: unrecognized directive: nope',
+      errors: [{ path: 'body.extraDirectives', message: 'line 2: unrecognized directive: nope' }],
+    });
+    expect(adapted[0]).toContain('\timport gate');
+  });
+
+  it('passes valid directives and skips Caddy when there are none', async () => {
+    let calls = 0;
+    const caddy = {
+      adapt: () => {
+        calls += 1;
+        return Promise.resolve({});
+      },
+    };
+    await expect(checkRouteDirectives(caddy, site, 'request_header -X-API-KEY')).resolves.toEqual(
+      [],
+    );
+    await expect(checkRouteDirectives(caddy, site, null)).resolves.toEqual([]);
+    expect(calls).toBe(1);
+  });
+});
+
 describe('routes routes (authorization and validation)', () => {
   it('rejects anonymous callers with 401', async () => {
     const app = createApp(createTestDeps());
@@ -81,5 +129,25 @@ describe('routes routes (authorization and validation)', () => {
     expect(empty.status).toBe(400);
     const badQuery = await app.request('/api/v1/routes?limit=1000&domainId=nope');
     expect(badQuery.status).toBe(400);
+  });
+
+  it('keeps extra directives admin only and bounded', async () => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('member')) }));
+    const member = await app.request(
+      '/api/v1/routes',
+      json('POST', { ...validCreate, extraDirectives: 'request_header -X-API-KEY' }),
+    );
+    expect(member.status).toBe(403);
+    expect(await member.json()).toMatchObject({ detail: expect.stringMatching(/admin role/) });
+
+    const admin = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
+    const tooLong = await admin.request(
+      `/api/v1/routes/${routeId}`,
+      json('PATCH', { extraDirectives: `respond "${'é'.repeat(2100)}"` }),
+    );
+    expect(tooLong.status).toBe(400);
+    expect(await tooLong.json()).toMatchObject({
+      errors: [{ path: 'body.extraDirectives', message: 'Must be at most 4096 bytes' }],
+    });
   });
 });

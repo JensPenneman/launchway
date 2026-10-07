@@ -27,8 +27,12 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
   ]);
   const settingsRow = settingsRows[0];
 
+  const forwardAuthTarget = settingsRow?.forwardAuthTarget ?? null;
   const appIds = [
-    ...new Set(routeRows.flatMap((row) => (row.route.appId ? [row.route.appId] : []))),
+    ...new Set([
+      ...routeRows.flatMap((row) => (row.route.appId ? [row.route.appId] : [])),
+      ...(forwardAuthTarget ? [forwardAuthTarget.appId] : []),
+    ]),
   ];
   let edgeApps: EdgeApp[] = [];
   if (appIds.length > 0) {
@@ -55,6 +59,7 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
       publicUrl: config.publicUrl ?? settingsRow?.publicUrl ?? null,
       acmeEmail: settingsRow?.acmeEmail ?? config.acmeEmail,
       forwardAuthUrl: settingsRow?.forwardAuthUrl ?? null,
+      forwardAuthTarget,
       edgeNodeId: settingsRow?.edgeNodeId ?? null,
     },
     routes: routeRows.map((row) => ({
@@ -66,6 +71,7 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
       protected: row.route.protected,
       compress: row.route.compress,
       hsts: row.route.hsts,
+      extraDirectives: row.route.extraDirectives,
     })),
     apps: edgeApps,
     nodes: nodeRows,

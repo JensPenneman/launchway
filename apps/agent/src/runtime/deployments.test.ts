@@ -116,6 +116,7 @@ function payload(overrides: Partial<DeployPayload> = {}): DeployPayload {
     build: { kind: 'compose', composeFiles: ['compose.yaml'] },
     env: { SECRET: 'hunter2-very-secret' },
     routes: [{ service: 'web', port: 80, alias: 'trail-web' }],
+    attach: [{ service: 'web', alias: 'trail-web' }],
     network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
     ...overrides,
   };

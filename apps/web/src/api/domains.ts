@@ -14,8 +14,8 @@ import {
   Domain,
   DomainPage,
   DomainVerification,
-  Route,
   RoutePage,
+  RouteSaveResult,
   type UpdateDomainInput,
   type UpdateRouteInput,
   type z,
@@ -61,11 +61,11 @@ export function routesQuery(appId?: string) {
 }
 
 export function createRoute(input: z.input<typeof CreateRouteInput>) {
-  return request('/routes', { method: 'POST', body: input, schema: Route });
+  return request('/routes', { method: 'POST', body: input, schema: RouteSaveResult });
 }
 
 export function updateRoute(id: string, input: z.input<typeof UpdateRouteInput>) {
-  return request(`/routes/${enc(id)}`, { method: 'PATCH', body: input, schema: Route });
+  return request(`/routes/${enc(id)}`, { method: 'PATCH', body: input, schema: RouteSaveResult });
 }
 
 export function deleteRoute(id: string) {

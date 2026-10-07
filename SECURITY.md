@@ -43,6 +43,13 @@ This is a summary of the security requirements in section 14 of
 - **Deployed apps are trusted code.** The Compose policy limits what an app
   can request from Docker, but it is not a sandbox. Deploy only repositories
   you trust.
+- **Extra Caddy directives are trusted admin configuration.** A route's
+  `extraDirectives` is placed verbatim in the Caddyfile, with the reach of
+  any Caddyfile: placeholders such as `{env.*}` resolve in the Caddy
+  container, and `import` reads files there. Only admins can set them. The
+  API refuses text that would leave the route's site block and has Caddy
+  validate the rest. Attaching services to the proxy network without a route
+  (`proxyServices`) is admin only as well.
 - **`LAUNCHWAY_SECRET_KEY` protects every secret at rest.** Anyone holding both
   the key and a database dump can decrypt the stored secrets.
 

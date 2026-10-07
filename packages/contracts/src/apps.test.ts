@@ -2,8 +2,13 @@ import { describe, expect, it } from 'vitest';
 import {
   AppSlug,
   CreateAppInput,
+  CreateEnvVarInput,
   composeProjectName,
+  EnvKey,
+  EnvKeyName,
   maskEnvVar,
+  PLATFORM_ENV_KEYS,
+  PLATFORM_ENV_PREFIX,
   resolveAppSource,
   SetEnvVarsInput,
   serviceAlias,
@@ -124,5 +129,36 @@ describe('environment variables', () => {
     expect(
       SetEnvVarsInput.parse({ variables: [{ key: 'A_1', value: 'x' }] }).variables[0]?.secret,
     ).toBe(false);
+  });
+});
+
+describe('platform environment variables', () => {
+  it('reserves the LAUNCHWAY_ prefix for user keys with a clear message', () => {
+    const result = CreateEnvVarInput.safeParse({ key: 'LAUNCHWAY_APP', value: 'x' });
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toMatch(
+      /^Keys starting with LAUNCHWAY_ are reserved .*LAUNCHWAY_COMMIT_SHA_SHORT/,
+    );
+    expect(EnvKey.safeParse('LAUNCHWAY_ANYTHING').success).toBe(false);
+    expect(EnvKey.safeParse('MY_LAUNCHWAY_URL').success).toBe(true);
+    expect(
+      SetEnvVarsInput.safeParse({ variables: [{ key: 'LAUNCHWAY_NODE', value: 'n' }] }).success,
+    ).toBe(false);
+  });
+
+  it('still reads stored variables and agent payload keys with the prefix', () => {
+    expect(EnvKeyName.safeParse('LAUNCHWAY_COMMIT_SHA').success).toBe(true);
+    expect(PLATFORM_ENV_KEYS.every((key) => key.startsWith(PLATFORM_ENV_PREFIX))).toBe(true);
+  });
+});
+
+describe('proxyServices', () => {
+  it('accepts unique routable service names and refuses platform names', () => {
+    expect(UpdateAppInput.parse({ proxyServices: ['oauth2-proxy'] })).toEqual({
+      proxyServices: ['oauth2-proxy'],
+    });
+    expect(UpdateAppInput.safeParse({ proxyServices: ['gate', 'gate'] }).success).toBe(false);
+    expect(UpdateAppInput.safeParse({ proxyServices: ['caddy'] }).success).toBe(false);
+    expect(UpdateAppInput.safeParse({ proxyServices: [] }).success).toBe(true);
   });
 });

@@ -169,6 +169,7 @@ function deployPayload(ref: string): DeployPayload {
     build: { kind: 'compose', composeFiles: ['compose.yaml'] },
     env: { GREETING: "hello 'world' $HOME" },
     routes: [{ service: 'web', port: 8080, alias: `${slug}-web` }],
+    attach: [{ service: 'web', alias: `${slug}-web` }],
     network: { proxyNetwork, publishOnIp: '127.0.0.1' },
   };
 }

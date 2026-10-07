@@ -25,6 +25,14 @@ import { Textarea } from '@/components/ui/textarea';
 import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
 
+/** Service names from a textarea: one per line, blanks ignored. */
+function parseServiceList(text: string): string[] {
+  return text
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
 export function SettingsTab({ app }: { app: App }) {
   const nodes = useQuery(nodesQuery);
   const connections = useQuery(connectionsQuery);
@@ -39,6 +47,10 @@ export function SettingsTab({ app }: { app: App }) {
   const [context, setContext] = useState(app.context ?? '.');
   const [nodeId, setNodeId] = useState<string>(app.nodeId);
   const [autoDeploy, setAutoDeploy] = useState(app.autoDeployReleases);
+  const isAdmin = useCan('admin');
+  const [proxyServices, setProxyServices] = useState(app.proxyServices.join('\n'));
+  const proxyServiceList = parseServiceList(proxyServices);
+  const proxyServicesChanged = proxyServiceList.join(',') !== app.proxyServices.join(',');
 
   const input = UpdateAppInput.safeParse({
     name,
@@ -54,7 +66,11 @@ export function SettingsTab({ app }: { app: App }) {
       : { dockerfile, context }),
     nodeId,
     autoDeployReleases: autoDeploy,
+    ...(isAdmin && proxyServicesChanged ? { proxyServices: proxyServiceList } : {}),
   });
+  const proxyServicesError = input.success
+    ? undefined
+    : input.error.issues.find((issue) => issue.path[0] === 'proxyServices')?.message;
   const save = useApiMutation(
     () => (input.success ? updateApp(app.id, input.data) : Promise.reject(input.error)),
     { invalidate: [keys.apps], success: 'Settings saved' },
@@ -187,6 +203,27 @@ export function SettingsTab({ app }: { app: App }) {
                 onCheckedChange={setAutoDeploy}
               />
             </div>
+            <Field
+              label="Proxy network services"
+              error={proxyServicesError}
+              description={
+                <>
+                  One Compose service per line, attached to the proxy network as{' '}
+                  <code className="font-mono">{app.slug}-&lt;service&gt;</code> without a public
+                  route (e.g. a forward-auth gate). Routed services are attached anyway. Takes
+                  effect with the next deployment.{isAdmin ? '' : ' Only admins can change this.'}
+                </>
+              }
+            >
+              <Textarea
+                rows={2}
+                className="font-mono"
+                placeholder="oauth2-proxy"
+                readOnly={!isAdmin}
+                value={proxyServices}
+                onChange={(event) => setProxyServices(event.target.value)}
+              />
+            </Field>
           </CardContent>
         </Card>
 

@@ -41,4 +41,10 @@ describe('parseDotenv', () => {
       'Line 4: unterminated double quote',
     ]);
   });
+
+  it('refuses the LAUNCHWAY_ names Launchway sets itself', () => {
+    const result = parseDotenv('LAUNCHWAY_APP=x\nAPP=y');
+    expect(result.entries).toEqual([{ key: 'APP', value: 'y' }]);
+    expect(result.errors).toEqual(['Line 1: LAUNCHWAY_* names are set by Launchway']);
+  });
 });

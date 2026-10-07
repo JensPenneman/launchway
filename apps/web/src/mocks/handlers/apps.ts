@@ -178,6 +178,7 @@ export const appHandlers = [
       nodeId: data.nodeId,
       autoDeployReleases: data.autoDeployReleases,
       trustedMounts: data.trustedMounts,
+      proxyServices: [],
       activeDeploymentId: null,
       createdAt: now(),
       updatedAt: now(),
@@ -205,7 +206,12 @@ export const appHandlers = [
       const trustDenied = guardTrustedMounts();
       if (trustDenied) return trustDenied;
     }
-    const { composeFiles, dockerfile, context, ...rest } = data;
+    const { composeFiles, dockerfile, context, proxyServices, ...rest } = data;
+    if (proxyServices && proxyServices.join(',') !== app.proxyServices.join(',')) {
+      const adminOnly = guard('admin');
+      if (adminOnly) return adminOnly;
+      app.proxyServices = [...new Set(proxyServices)].sort();
+    }
     Object.assign(app, rest, { updatedAt: now() });
     if (composeFiles) Object.assign(app, { composeFiles, dockerfile: null, context: null });
     if (dockerfile) Object.assign(app, { dockerfile, context: context ?? '.', composeFiles: null });

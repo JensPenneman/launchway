@@ -1,4 +1,4 @@
-import { type App, EnvKey, type EnvVar } from '@launchway/contracts';
+import { type App, EnvKey, type EnvVar, PLATFORM_ENV_KEYS } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ClipboardPaste, EyeOff, Loader2, Pencil, Plus, Trash2, Variable } from 'lucide-react';
 import { useState } from 'react';
@@ -49,10 +49,23 @@ export function EnvironmentTab({ app }: { app: App }) {
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
-        <p className="text-sm text-muted-foreground">
-          Written to the app's <code>.env</code> on the next deployment. Secret values are encrypted
-          and never shown again.
-        </p>
+        <div className="flex flex-col gap-1 text-sm text-muted-foreground">
+          <p>
+            Written to the app's <code>.env</code> on the next deployment. Secret values are
+            encrypted and never shown again.
+          </p>
+          <p className="text-xs">
+            Launchway also sets{' '}
+            {PLATFORM_ENV_KEYS.map((key, index) => (
+              <span key={key}>
+                {index > 0 && ', '}
+                <code className="font-mono">{key}</code>
+              </span>
+            ))}{' '}
+            on every deployment; names starting with <code className="font-mono">LAUNCHWAY_</code>{' '}
+            are reserved.
+          </p>
+        </div>
         {canEdit && env.data && (
           <div className="flex gap-2">
             <BulkPasteDialog app={app} existing={env.data.items} />

@@ -1,4 +1,9 @@
-import { EdgeConfig, Settings, type UpdateSettingsInput } from '@launchway/contracts';
+import {
+  EdgeConfig,
+  Settings,
+  type UpdateSettingsInput,
+  UpdateSettingsResult,
+} from '@launchway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';
@@ -9,7 +14,7 @@ export const settingsQuery = queryOptions({
 });
 
 export function updateSettings(input: UpdateSettingsInput) {
-  return request('/settings', { method: 'PATCH', body: input, schema: Settings });
+  return request('/settings', { method: 'PATCH', body: input, schema: UpdateSettingsResult });
 }
 
 export const edgeConfigQuery = queryOptions({

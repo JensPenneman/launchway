@@ -20,7 +20,9 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
       dockerfile: null,
       context: null,
       trustedMounts: false,
+      proxyServices: [],
     },
+    node: { name: 'edge-1' },
     clone: { cloneUrl: 'https://github.com/octo/trail.git', authorization: 'basic eA==' },
     env: { PLAIN: 'a', SECRET: 's3' },
     routes: [
@@ -28,6 +30,7 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
       { service: 'web', port: 8080 },
       { service: 'api', port: 3000 },
     ],
+    forwardAuthTarget: null,
     proxyNetwork: 'launchway-proxy',
     nodeLanIp: '192.168.1.20',
     nodeAllowedBindRoots: [],
@@ -74,6 +77,7 @@ describe('buildDeployPayload', () => {
           dockerfile: 'Dockerfile',
           context: '.',
           trustedMounts: false,
+          proxyServices: [],
         },
       }),
     );
@@ -82,7 +86,7 @@ describe('buildDeployPayload', () => {
       commitSha: SHA,
       authorization: 'basic eA==',
     });
-    expect(payload.env).toEqual({ PLAIN: 'a', SECRET: 's3' });
+    expect(payload.env).toMatchObject({ PLAIN: 'a', SECRET: 's3' });
     expect(payload.build).toEqual({ kind: 'dockerfile', dockerfile: 'Dockerfile', context: '.' });
   });
 
@@ -119,6 +123,57 @@ describe('buildDeployPayload', () => {
     }
     expect(error).toBeInstanceOf(InvalidDeployPayloadError);
     expect((error as Error).message).not.toContain('super-secret');
-    expect((error as InvalidDeployPayloadError).paths).toEqual(['routes.0.service']);
+    expect((error as InvalidDeployPayloadError).paths).toContain('routes.0.service');
+  });
+
+  it('adds the LAUNCHWAY_* platform variables and lets them win over stored keys', () => {
+    const deploymentId = generateId('dep');
+    const appId = generateId('app');
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    const payload = buildDeployPayload(
+      input({
+        deployment: { id: deploymentId, ref: 'v2.1.0', commitSha: sha, nodeId: edge },
+        app: { ...input().app, id: appId },
+        env: { PLAIN: 'a', LAUNCHWAY_APP: 'spoofed', LAUNCHWAY_LEGACY: 'old' },
+      }),
+    );
+    expect(payload.env).toEqual({
+      PLAIN: 'a',
+      LAUNCHWAY_APP: 'trail',
+      LAUNCHWAY_APP_ID: appId,
+      LAUNCHWAY_DEPLOYMENT_ID: deploymentId,
+      LAUNCHWAY_REF: 'v2.1.0',
+      LAUNCHWAY_COMMIT_SHA: sha,
+      LAUNCHWAY_COMMIT_SHA_SHORT: '0123456',
+      LAUNCHWAY_NODE: 'edge-1',
+    });
+  });
+
+  it('attaches routed services, proxyServices and its forward-auth target service', () => {
+    const base = input();
+    const payload = buildDeployPayload(
+      input({
+        app: { ...base.app, proxyServices: ['oauth2-proxy', 'web'] },
+        forwardAuthTarget: { appId: base.app.id, service: 'gate', port: 4180, uri: '/' },
+      }),
+    );
+    expect(payload.attach).toEqual([
+      { service: 'api', alias: 'trail-api' },
+      { service: 'gate', alias: 'trail-gate' },
+      { service: 'oauth2-proxy', alias: 'trail-oauth2-proxy' },
+      { service: 'web', alias: 'trail-web' },
+    ]);
+    // Only routed services are published off the edge node; attach entries carry no port.
+    expect(payload.routes.map((route) => route.service)).toEqual(['api', 'web']);
+  });
+
+  it('ignores a forward-auth target of another app', () => {
+    const payload = buildDeployPayload(
+      input({
+        routes: [],
+        forwardAuthTarget: { appId: generateId('app'), service: 'gate', port: 4180, uri: '/' },
+      }),
+    );
+    expect(payload.attach).toEqual([]);
   });
 });

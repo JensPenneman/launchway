@@ -3,6 +3,7 @@ import {
   type AppId,
   type DomainId,
   type DomainStatus,
+  type ForwardAuthTarget,
   type NodeId,
   type RouteId,
   type RouteTarget,
@@ -29,6 +30,8 @@ export interface EdgeSettings {
   readonly publicUrl: string | null;
   readonly acmeEmail: string | null;
   readonly forwardAuthUrl: string | null;
+  /** Forward-auth gate run as an app service (XOR forwardAuthUrl); absent means none. */
+  readonly forwardAuthTarget?: ForwardAuthTarget | null;
   readonly edgeNodeId: NodeId | null;
 }
 
@@ -41,6 +44,8 @@ export interface EdgeRoute {
   readonly protected: boolean;
   readonly compress: boolean;
   readonly hsts: boolean;
+  /** Admin-supplied directives rendered verbatim inside the site block; absent means none. */
+  readonly extraDirectives?: string | null;
 }
 
 export interface EdgeApp {
@@ -104,6 +109,29 @@ function options(route: Pick<EdgeRoute, 'protected' | 'compress' | 'hsts'>): str
   if (route.compress) lines.push('encode zstd gzip');
   if (route.hsts) lines.push('header ?Strict-Transport-Security "max-age=31536000"');
   return lines;
+}
+
+/**
+ * Lines of admin-supplied extra directives: line endings normalized, trailing whitespace and
+ * surrounding blank lines dropped. The text itself is kept verbatim.
+ */
+export function extraDirectiveLines(text: string | null | undefined): string[] {
+  if (!text) return [];
+  const lines = text
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .map((line) => line.trimEnd());
+  while (lines.length > 0 && lines[0] === '') lines.shift();
+  while (lines.length > 0 && lines.at(-1) === '') lines.pop();
+  return lines;
+}
+
+/** Site body: options, extra directives, then the handler (spec section 5). */
+function siteBody(
+  route: Pick<EdgeRoute, 'protected' | 'compress' | 'hsts' | 'extraDirectives'>,
+  handlerLines: readonly string[],
+): string[] {
+  return [...options(route), ...extraDirectiveLines(route.extraDirectives), ...handlerLines];
 }
 
 function redirectTarget(to: string): string {
@@ -180,10 +208,9 @@ function handler(
   }
 }
 
-function forwardAuth(url: string): string[] {
-  const parsed = new URL(url);
-  const upstream = token(`${parsed.protocol}//${parsed.host}`);
-  const uri = token(`${parsed.pathname}${parsed.search}`);
+function forwardAuth(upstreamUrl: string, requestUri: string): string[] {
+  const upstream = token(upstreamUrl);
+  const uri = token(requestUri);
   return [
     '(gate) {',
     `\tforward_auth ${upstream} {`,
@@ -192,6 +219,49 @@ function forwardAuth(url: string): string[] {
     '\t}',
     '}',
   ];
+}
+
+type Gate =
+  | { kind: 'none' }
+  | { kind: 'ready'; lines: string[] }
+  | { kind: 'unavailable'; reason: string };
+
+/**
+ * The `(gate)` snippet: an external URL as entered, or an app service reached by its alias on the
+ * proxy network (`http://<alias>:<port>` + uri). A target the edge cannot reach is `unavailable`,
+ * which keeps protected routes off the edge (fail closed).
+ */
+function gate(input: EdgeRenderInput, apps: Map<AppId, EdgeApp>): Gate {
+  const { forwardAuthUrl, forwardAuthTarget, edgeNodeId } = input.settings;
+  if (forwardAuthUrl) {
+    const parsed = new URL(forwardAuthUrl);
+    return {
+      kind: 'ready',
+      lines: forwardAuth(
+        `${parsed.protocol}//${parsed.host}`,
+        `${parsed.pathname}${parsed.search}`,
+      ),
+    };
+  }
+  if (!forwardAuthTarget) return { kind: 'none' };
+  const app = apps.get(forwardAuthTarget.appId);
+  if (!app) return { kind: 'unavailable', reason: 'the forward-auth app does not exist' };
+  if (edgeNodeId !== null && app.nodeId !== edgeNodeId) {
+    return {
+      kind: 'unavailable',
+      reason: `the forward-auth app ${app.slug} does not run on the edge node`,
+    };
+  }
+  let alias: string;
+  try {
+    alias = serviceAlias(app.slug, forwardAuthTarget.service);
+  } catch {
+    return { kind: 'unavailable', reason: 'the forward-auth service alias is too long' };
+  }
+  return {
+    kind: 'ready',
+    lines: forwardAuth(`http://${alias}:${forwardAuthTarget.port}`, forwardAuthTarget.uri),
+  };
 }
 
 /** Site address of the platform URL: `host[:port]`, prefixed with `http://` for plain HTTP. */
@@ -215,7 +285,7 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
   const { settings } = input;
   const apps = new Map(input.apps.map((app) => [app.id, app]));
   const nodes = new Map(input.nodes.map((node) => [node.id, node]));
-  const gate = settings.forwardAuthUrl !== null;
+  const gateState = gate(input, apps);
   const blocks: string[] = [];
 
   const global = ['{', `\tadmin ${token(input.adminListen ?? CADDY_ADMIN_LISTEN)}`];
@@ -228,7 +298,10 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
     ].join('\n'),
   );
 
-  if (settings.forwardAuthUrl) blocks.push(forwardAuth(settings.forwardAuthUrl).join('\n'));
+  if (gateState.kind === 'ready') blocks.push(gateState.lines.join('\n'));
+  if (gateState.kind === 'unavailable') {
+    blocks.push(comment(`forward auth: unavailable, ${gateState.reason}`));
+  }
 
   const platform = settings.publicUrl ? platformAddress(settings.publicUrl) : null;
   if (platform) {
@@ -260,9 +333,15 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
       blocks.push(comment(`${route.hostname}: skipped, the host name is already served`));
       continue;
     }
-    if (route.protected && !gate) {
+    if (route.protected && gateState.kind !== 'ready') {
       // Fail closed: never serve a protected route without its gate.
-      blocks.push(comment(`${route.hostname}: skipped, protected but no forward-auth URL is set`));
+      blocks.push(
+        comment(
+          gateState.kind === 'none'
+            ? `${route.hostname}: skipped, protected but no forward-auth URL is set`
+            : `${route.hostname}: skipped, protected but the forward-auth gate is unavailable`,
+        ),
+      );
       continue;
     }
     const result = handler(route, input, apps, nodes);
@@ -272,10 +351,48 @@ export function renderEdge(input: EdgeRenderInput): RenderedEdge {
     }
     seen.add(route.hostname);
     rendered.push(route);
-    blocks.push(
-      [label, siteBlock(route.hostname, [...options(route), ...result.lines])].join('\n'),
-    );
+    blocks.push([label, siteBlock(route.hostname, siteBody(route, result.lines))].join('\n'));
   }
 
   return { caddyfile: `${blocks.join('\n\n')}\n`, rendered };
+}
+
+/** Unreachable upstream of probe configurations; never loaded, only adapted. */
+const PROBE_UPSTREAM = '127.0.0.1:9';
+
+export interface DirectivesProbe {
+  readonly caddyfile: string;
+  /** 1-based line of the probe on which the extra directives start. */
+  readonly firstLine: number;
+  /** Number of lines the extra directives occupy. */
+  readonly lineCount: number;
+}
+
+/**
+ * A throwaway Caddyfile containing just one site with the given extra directives, for
+ * validation with Caddy's `/adapt`. It mirrors the real site block (options, then the
+ * directives, then the upstream) with a placeholder gate and upstream.
+ */
+export function renderDirectivesProbe(
+  site: Pick<EdgeRoute, 'hostname' | 'protected' | 'compress' | 'hsts'>,
+  directives: string,
+): DirectivesProbe {
+  const head = [
+    '{',
+    '\tadmin off',
+    '}',
+    '',
+    ...forwardAuth(`http://${PROBE_UPSTREAM}`, '/'),
+    '',
+    `${token(site.hostname)} {`,
+    ...options(site).map((line) => `\t${line}`),
+  ];
+  const lines = extraDirectiveLines(directives);
+  const body = lines.map((line) => (line ? `\t${line}` : ''));
+  const tail = [`\treverse_proxy ${PROBE_UPSTREAM}`, '}'];
+  return {
+    caddyfile: `${[...head, ...body, ...tail].join('\n')}\n`,
+    firstLine: head.length + 1,
+    lineCount: lines.length,
+  };
 }

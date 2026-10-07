@@ -1,6 +1,7 @@
 import { posix, resolve } from 'node:path';
 import {
   DEFAULT_PROXY_NETWORK,
+  type DeployAttach,
   type DeployPolicy,
   type DeployRoute,
   RESERVED_SERVICE_NAMES,
@@ -141,6 +142,8 @@ export interface PolicyContext {
   projectName: string;
   proxyNetwork: string;
   routes: readonly DeployRoute[];
+  /** Services attached to the proxy network without a route; checked like routed services. */
+  attach?: readonly DeployAttach[];
   /** True when an absolute path lies inside the checkout (symlinks resolved). */
   isInsideCheckout: (path: string) => boolean;
   /** Compose project directory; relative bind sources are resolved against it. */
@@ -440,16 +443,23 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
     }
   }
 
-  for (const route of ctx.routes) {
+  const attached = [
+    ...ctx.routes.map((route) => ({ service: route.service, at: `route to "${route.service}"` })),
+    ...(ctx.attach ?? []).map((entry) => ({
+      service: entry.service,
+      at: `attached service "${entry.service}"`,
+    })),
+  ];
+  for (const route of attached) {
     const service = config.services[route.service];
-    const at = `route to "${route.service}"`;
+    const at = route.at;
     if (RESERVED_SERVICE_NAMES.includes(route.service)) {
       reject(`${at}: the service name is reserved for platform containers`);
     }
     if (!service) {
       reject(`${at}: the service does not exist in the Compose project`);
     } else if (service.network_mode) {
-      reject(`${at}: a routed service cannot use network_mode`);
+      reject(`${at}: a service on the proxy network cannot use network_mode`);
     }
   }
 

@@ -130,6 +130,7 @@ describe('dynamic DNS service', () => {
       publicIpv4: null,
       publicIpv4CheckedAt: null,
       forwardAuthUrl: null,
+      forwardAuthTarget: null,
       edgeNodeId: null,
       updatedAt: new Date().toISOString(),
       ...initial,

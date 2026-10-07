@@ -168,17 +168,23 @@ export const dnsHandlers = [
     if (db.routes.some((route) => route.domainId === domain.id)) {
       return problem('conflict', `${domain.hostname} already has a route.`);
     }
+    const extraDirectives = data.extraDirectives?.trim() ? data.extraDirectives : null;
+    if (extraDirectives !== null) {
+      const adminOnly = guard('admin');
+      if (adminOnly) return adminOnly;
+    }
     const route: Route = {
       id: generateId('rt'),
       hostname: domain.hostname,
       ...data,
+      extraDirectives,
       createdAt: now(),
       updatedAt: now(),
     };
     db.routes.push(route);
     recordAudit('route.create', 'route', route.id, { hostname: route.hostname });
     db.emit('routes', 'created', route.id);
-    return HttpResponse.json(route, { status: 201 });
+    return HttpResponse.json({ ...route, warnings: [] }, { status: 201 });
   }),
   http.patch(`${API}/routes/:id`, async ({ request, params }) => {
     const denied = guard('member');
@@ -187,10 +193,19 @@ export const dnsHandlers = [
     if (error) return error;
     const route = db.routes.find((item) => item.id === params.id);
     if (!route) return problem('not-found');
-    Object.assign(route, data, { updatedAt: now() });
+    const { extraDirectives, ...rest } = data;
+    if (extraDirectives !== undefined) {
+      const next = extraDirectives?.trim() ? extraDirectives : null;
+      if (next !== route.extraDirectives) {
+        const adminOnly = guard('admin');
+        if (adminOnly) return adminOnly;
+        route.extraDirectives = next;
+      }
+    }
+    Object.assign(route, rest, { updatedAt: now() });
     recordAudit('route.update', 'route', route.id, { fields: Object.keys(data) });
     db.emit('routes', 'updated', route.id);
-    return HttpResponse.json(route);
+    return HttpResponse.json({ ...route, warnings: [] });
   }),
   http.delete(`${API}/routes/:id`, ({ params }) => {
     const denied = guard('member');

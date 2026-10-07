@@ -39,6 +39,7 @@ import { deployments } from '../deployments/schema.js';
 import { findRunningDeployment, markRunningStopped } from '../deployments/service.js';
 import { githubConnections } from '../github/schema.js';
 import { nodes } from '../nodes/schema.js';
+import { ALIASES_LOCK, assertAliasesFree } from '../routes/attach.js';
 import { envContext } from './env.js';
 import { apps, envVars } from './schema.js';
 
@@ -76,6 +77,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     nodeId: row.nodeId,
     autoDeployReleases: row.autoDeployReleases,
     trustedMounts: row.trustedMounts,
+    proxyServices: row.proxyServices,
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -352,11 +354,26 @@ export function createAppsService(deps: Deps): AppsService {
           context: input.context ?? '.',
         });
       }
+      const proxyServices = input.proxyServices ? [...new Set(input.proxyServices)].sort() : null;
 
       let result: { before: AppRow; after: AppRow; active: App['activeDeploymentId'] };
       try {
         result = await deps.db.transaction(async (tx) => {
+          if (proxyServices) await tx.execute(ALIASES_LOCK);
           const before = await loadRow(tx, id, true);
+          if (proxyServices && proxyServices.join(',') !== before.proxyServices.join(',')) {
+            // Attaching services to the proxy network exposes them to the edge: admin only.
+            if (!roleAtLeast(effectiveRole(getActorPrincipal(actor)), 'admin')) {
+              throw forbidden('Changing proxyServices requires the admin role');
+            }
+            await assertAliasesFree(
+              tx,
+              before,
+              proxyServices.filter((service) => !before.proxyServices.includes(service)),
+              () => 'body.proxyServices',
+            );
+            patch.proxyServices = proxyServices;
+          }
           if (patch.nodeId !== undefined && patch.nodeId !== before.nodeId) {
             const [busy] = await tx
               .select({ id: deployments.id })
@@ -374,7 +391,11 @@ export function createAppsService(deps: Deps): AppsService {
               );
             }
           }
-          const [after] = await tx.update(apps).set(patch).where(eq(apps.id, id)).returning();
+          // A request that only repeats the current proxyServices changes nothing else.
+          const [after] =
+            Object.keys(patch).length === 0
+              ? [before]
+              : await tx.update(apps).set(patch).where(eq(apps.id, id)).returning();
           if (!after) throw notFound('App not found');
           await recordAudit(tx, actor, {
             action: 'app.update',
@@ -395,6 +416,7 @@ export function createAppsService(deps: Deps): AppsService {
         'trustedMounts',
       ] as const;
       if (runtimeKeys.some((key) => key in patch) && result.active) signalRedeploy(id, 'source');
+      if ('proxyServices' in patch && result.active) signalRedeploy(id, 'proxy-services');
       return toApp(result.after, result.active);
     },
 

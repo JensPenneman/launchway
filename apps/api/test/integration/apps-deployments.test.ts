@@ -674,4 +674,65 @@ describe('apps and deployments against PostgreSQL', () => {
     const plainSent = gateway.deployed.find((d) => d.payload.deploymentId === plain.id);
     expect(plainSent?.payload.policy).toEqual({ trustedMounts: false, allowedBindRoots: [] });
   });
+
+  it('attaches proxyServices (admin only) and sends the LAUNCHWAY_* variables', async () => {
+    const app = await createTestApp(edgeNode);
+    expect(app.proxyServices).toEqual([]);
+
+    const reserved = await api.request(
+      `/api/v1/apps/${app.id}/env`,
+      json('PUT', { variables: [{ key: 'LAUNCHWAY_APP', value: 'spoof' }] }),
+    );
+    expect(reserved.status).toBe(400);
+
+    const asMember = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { proxyServices: ['oauth2-proxy'] }),
+    );
+    expect(asMember.status).toBe(403);
+    // Repeating the current value is not a change, so members may send it.
+    const unchanged = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { proxyServices: [] }),
+    );
+    expect(unchanged.status).toBe(200);
+
+    const asAdmin = await adminApi.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { proxyServices: ['oauth2-proxy', 'gate', 'oauth2-proxy'] }),
+    );
+    expect(asAdmin.status).toBe(400); // duplicates
+    const saved = await adminApi.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { proxyServices: ['oauth2-proxy', 'gate'] }),
+    );
+    expect(saved.status).toBe(200);
+    expect(((await saved.json()) as App).proxyServices).toEqual(['gate', 'oauth2-proxy']);
+    const audits = await db
+      .select()
+      .from(auditEvents)
+      .where(and(eq(auditEvents.action, 'app.update'), eq(auditEvents.targetId, app.id)));
+    expect(audits.map((audit) => audit.summary)).toContainEqual({
+      proxyServices: { from: [], to: ['gate', 'oauth2-proxy'] },
+    });
+
+    gateway.connect(edgeNode);
+    const deployment = await deploy(app.id, 'v1.1.0');
+    const sent = gateway.deployed.find((d) => d.payload.deploymentId === deployment.id);
+    expect(sent?.payload.attach).toEqual([
+      { service: 'gate', alias: `${app.slug}-gate` },
+      { service: 'oauth2-proxy', alias: `${app.slug}-oauth2-proxy` },
+    ]);
+    expect(sent?.payload.routes).toEqual([]);
+    const [node] = await db.select().from(nodes).where(eq(nodes.id, edgeNode));
+    expect(sent?.payload.env).toMatchObject({
+      LAUNCHWAY_APP: app.slug,
+      LAUNCHWAY_APP_ID: app.id,
+      LAUNCHWAY_DEPLOYMENT_ID: deployment.id,
+      LAUNCHWAY_REF: 'v1.1.0',
+      LAUNCHWAY_COMMIT_SHA: sha('v1.1.0'),
+      LAUNCHWAY_COMMIT_SHA_SHORT: sha('v1.1.0').slice(0, 7),
+      LAUNCHWAY_NODE: node?.name,
+    });
+  });
 });

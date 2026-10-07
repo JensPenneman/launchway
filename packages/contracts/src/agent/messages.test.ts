@@ -118,6 +118,41 @@ describe('agent protocol', () => {
     expect(DeployMessage.safeParse(insecure).success).toBe(false);
   });
 
+  it('defaults attach for older servers and carries platform variables in env', () => {
+    const payload = {
+      deploymentId: generateId('dep'),
+      app: { id: generateId('app'), slug: 'login' },
+      source: {
+        cloneUrl: 'https://github.com/example/login.git',
+        ref: 'v0.1.0',
+        commitSha: '3f786850e387550fdab836ed7e6dc881de23001b',
+        authorization: null,
+      },
+      build: { kind: 'compose', composeFiles: ['compose.yaml'] },
+      env: { LAUNCHWAY_APP: 'login' },
+      routes: [],
+      network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
+    };
+    const legacy = DeployMessage.parse({ id: 'req-2', type: 'deploy', payload });
+    expect(legacy.payload.attach).toEqual([]);
+    expect(legacy.payload.env).toEqual({ LAUNCHWAY_APP: 'login' });
+    const attached = DeployMessage.parse({
+      id: 'req-3',
+      type: 'deploy',
+      payload: { ...payload, attach: [{ service: 'oauth2-proxy', alias: 'login-oauth2-proxy' }] },
+    });
+    expect(attached.payload.attach).toEqual([
+      { service: 'oauth2-proxy', alias: 'login-oauth2-proxy' },
+    ]);
+    expect(
+      DeployMessage.safeParse({
+        id: 'req-4',
+        type: 'deploy',
+        payload: { ...payload, attach: [{ service: 'caddy', alias: 'login-caddy' }] },
+      }).success,
+    ).toBe(false);
+  });
+
   it('checks protocol compatibility', () => {
     expect(isSupportedProtocolVersion(AGENT_PROTOCOL_VERSION)).toBe(true);
     expect(isSupportedProtocolVersion(AGENT_PROTOCOL_VERSION + 1)).toBe(false);

@@ -274,6 +274,18 @@ describe('evaluateComposePolicy', () => {
     );
   });
 
+  it('checks attach-only services like routed ones', () => {
+    const check = (service: string) =>
+      evaluateComposePolicy(base(), {
+        ...context(),
+        attach: [{ service, alias: `mail-${service}` }],
+      }).violations.join();
+    expect(check('web')).toBe('');
+    expect(check('nope')).toMatch(/attached service "nope": the service does not exist/);
+    expect(check('worker')).toMatch(/cannot use network_mode/);
+    expect(check('db')).toMatch(/reserved/);
+  });
+
   it('allows own-service namespaces, none and no-new-privileges', () => {
     const config = withService('side', {
       image: 'x',

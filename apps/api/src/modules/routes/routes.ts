@@ -5,6 +5,7 @@ import {
   RouteId,
   RouteListQuery,
   RoutePage,
+  RouteSaveResult,
   UpdateRouteInput,
 } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
@@ -38,12 +39,12 @@ const createRouteOp = createRoute({
   tags: TAGS,
   summary: 'Create a route',
   description:
-    'One route per domain. App targets need a routable service whose network alias (`<slug>-<service>`) no other app uses; redirects need an https URL. Audited; the edge configuration is regenerated.',
+    'One route per domain. App targets need a routable service whose network alias (`<slug>-<service>`) no other app uses; redirects need an https URL. `extraDirectives` requires the admin role and is validated with Caddy (`/adapt`); when Caddy is unreachable only a structural check runs and `warnings` says so. Audited; the edge configuration is regenerated.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { body: jsonBody(CreateRouteInput) },
   responses: {
-    201: jsonResponse(Route, 'The new route'),
+    201: jsonResponse(RouteSaveResult, 'The new route'),
     ...problemResponses(400, 401, 403, 409),
   },
 });
@@ -66,12 +67,13 @@ const updateRoute = createRoute({
   operationId: 'updateRoute',
   tags: TAGS,
   summary: 'Update a route',
-  description: 'Change the target or options; the domain is fixed. Audited.',
+  description:
+    'Change the target, options or extra directives; the domain is fixed. Changing `extraDirectives` requires the admin role (403 otherwise) and is validated with Caddy. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: RouteParams, body: jsonBody(UpdateRouteInput) },
   responses: {
-    200: jsonResponse(Route, 'The updated route'),
+    200: jsonResponse(RouteSaveResult, 'The updated route'),
     ...problemResponses(400, 401, 403, 404, 409),
   },
 });

@@ -1,4 +1,4 @@
-import { ENV_KEY_PATTERN } from '@launchway/contracts';
+import { ENV_KEY_PATTERN, PLATFORM_ENV_PREFIX } from '@launchway/contracts';
 
 export interface DotenvEntry {
   key: string;
@@ -35,6 +35,10 @@ export function parseDotenv(text: string): DotenvResult {
     const key = line.slice(0, eq).trim();
     if (!ENV_KEY_PATTERN.test(key)) {
       errors.push(`Line ${lineNumber}: "${key}" is not a valid variable name`);
+      continue;
+    }
+    if (key.startsWith(PLATFORM_ENV_PREFIX)) {
+      errors.push(`Line ${lineNumber}: ${PLATFORM_ENV_PREFIX}* names are set by Launchway`);
       continue;
     }
     let rest = line.slice(eq + 1).trimStart();

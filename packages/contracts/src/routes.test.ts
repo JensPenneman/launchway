@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { generateId } from './ids.js';
-import { CreateRouteInput, RouteTarget, UpdateRouteInput } from './routes.js';
+import { CreateRouteInput, ExtraDirectives, RouteTarget, UpdateRouteInput } from './routes.js';
 
 describe('route target union', () => {
   it('parses an app target', () => {
@@ -91,5 +91,21 @@ describe('route target union', () => {
     expect(input).toMatchObject({ protected: false, compress: true, hsts: true });
     expect(UpdateRouteInput.safeParse({}).success).toBe(false);
     expect(UpdateRouteInput.safeParse({ hsts: false }).success).toBe(true);
+  });
+});
+
+describe('extra directives', () => {
+  it('are optional, nullable and limited to 4 KiB of UTF-8', () => {
+    expect(UpdateRouteInput.parse({ extraDirectives: null })).toEqual({ extraDirectives: null });
+    expect(ExtraDirectives.safeParse('a'.repeat(4096)).success).toBe(true);
+    expect(ExtraDirectives.safeParse('a'.repeat(4097)).success).toBe(false);
+    // 2-byte characters: 2049 of them fit the character limit but not the byte limit.
+    expect(ExtraDirectives.safeParse('é'.repeat(2049)).success).toBe(false);
+    expect(ExtraDirectives.safeParse('respond 404\0').success).toBe(false);
+    const create = CreateRouteInput.parse({
+      domainId: generateId('dom'),
+      target: { kind: 'external', scheme: 'http', host: 'nas.lan', port: 80 },
+    });
+    expect(create.extraDirectives).toBeUndefined();
   });
 });

@@ -18,6 +18,8 @@ test-results/
 blob-report/
 
 # Environment and secrets
+# A locally run agent keeps its node credential and the checked-out apps here.
+.workspace/
 .env
 .env.*
 !.env.example

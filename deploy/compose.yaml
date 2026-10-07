@@ -27,6 +27,8 @@ services:
     image: ghcr.io/jenspenneman/slipway:${SLIPWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
+    # The API drains requests for up to 10 s after SIGTERM.
+    stop_grace_period: 20s
     read_only: true
     tmpfs:
       - /tmp
@@ -75,6 +77,8 @@ services:
     image: ghcr.io/jenspenneman/slipway-agent:${SLIPWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
+    # Running deployments get 20 s to report after SIGTERM.
+    stop_grace_period: 30s
     # Runs as root and keeps a writable root filesystem: it owns the Docker
     # socket and drives the docker and git CLIs.
     cap_drop: [ALL]

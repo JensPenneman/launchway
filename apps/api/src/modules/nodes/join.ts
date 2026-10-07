@@ -8,9 +8,9 @@ export function agentServerUrl(origin: string): string {
   return `${scheme}//${url.host}`;
 }
 
-/** Image tag matching the control plane: release versions, otherwise `latest`. */
+/** Image tag matching the control plane: release versions and `edge`, otherwise `latest`. */
 export function agentImageTag(version: string): string {
-  return /^\d+\.\d+\.\d+$/.test(version) ? version : 'latest';
+  return /^\d+\.\d+\.\d+$/.test(version) || version === 'edge' ? version : 'latest';
 }
 
 function shellQuote(value: string): string {
@@ -35,7 +35,8 @@ export function joinInstructions(input: JoinInstructionsInput): {
 } {
   const image = `${AGENT_IMAGE}:${agentImageTag(input.version)}`;
   const dockerRunCommand = [
-    'docker run -d --name slipway-agent --restart unless-stopped --init',
+    // The agent gives running deployments 20 s to report after SIGTERM.
+    'docker run -d --name slipway-agent --restart unless-stopped --init --stop-timeout 30',
     '  --network host --cap-drop ALL --security-opt no-new-privileges:true',
     `  -e SLIPWAY_SERVER_URL=${shellQuote(input.serverUrl)}`,
     `  -e SLIPWAY_JOIN_TOKEN=${shellQuote(input.token)}`,
@@ -56,6 +57,8 @@ services:
     image: ${image}
     restart: unless-stopped
     init: true
+    # Running deployments get 20 s to report after SIGTERM.
+    stop_grace_period: 30s
     # Host networking lets the agent detect the node's LAN address.
     network_mode: host
     cap_drop: [ALL]

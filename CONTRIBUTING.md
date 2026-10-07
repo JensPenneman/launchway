@@ -168,7 +168,26 @@ open that collects the changelog from the Conventional Commits on `main`.
 Merging that pull request tags `vX.Y.Z`, publishes the GitHub Release and
 builds the multi-arch, signed images `ghcr.io/jenspenneman/slipway` and
 `ghcr.io/jenspenneman/slipway-agent`. Every merge to `main` also publishes
-`edge` images.
+`edge` images. Rebuilding an older release (Images workflow, `version` input)
+moves `latest`, `X.Y` and `X` only when no newer release has them.
+
+`release-please-config.json` pins the first release with `"release-as":
+"0.1.0"`; remove that line in the first commit after `v0.1.0` is tagged, or
+every later release pull request will propose 0.1.0 again.
+
+One-time repository settings, checked before a release is announced:
+
+- **Private vulnerability reporting** is on (Settings → Code security), so
+  the form [SECURITY.md](SECURITY.md) links to exists.
+- **Package visibility:** GHCR creates `slipway` and `slipway-agent` as
+  private packages on their first push. Make both public (Package settings →
+  Change visibility) and link them to the repository; check with
+  `docker logout ghcr.io && docker manifest inspect ghcr.io/jenspenneman/slipway:edge`.
+- **Release pull request CI:** a pull request opened with `GITHUB_TOKEN`
+  starts no workflows. Store a GitHub App or fine-grained token with
+  `contents` and `pull-requests` write access as the `RELEASE_PLEASE_TOKEN`
+  secret, so CI runs on the release pull request; otherwise a ruleset that
+  requires CI needs a bypass for it.
 
 ## License
 

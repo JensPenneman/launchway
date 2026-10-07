@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.3.0](https://github.com/JensPenneman/launchway/compare/v0.2.0...v0.3.0) (2026-10-07)
+
+
+### Features
+
+* **api:** clearer GitHub deployment statuses for cancels and image retries ([de37d96](https://github.com/JensPenneman/launchway/commit/de37d964b439273c18cbbe2ab0b63a59f34951bd))
+* **api:** serve a 503 placeholder while a route's target does not run ([4978713](https://github.com/JensPenneman/launchway/commit/49787137057ccbaf52fd59b292509e0ce201a6bf))
+* skip bot pull requests and gate previews on a label ([7c8394e](https://github.com/JensPenneman/launchway/commit/7c8394ecb9e3137431164a19d211c2423f0c8f34))
+
+
+### Bug Fixes
+
+* **deployments:** clear the image-not-found reason when a deployment fails for another cause ([ebb4b36](https://github.com/JensPenneman/launchway/commit/ebb4b36500a8c67a1b07a124d9e543196b0c42e0))
+
+
+### Documentation
+
+* describe the preview bot and label filters ([2397e77](https://github.com/JensPenneman/launchway/commit/2397e7728d4d203d51500f540df4d3870db758cd))
+
 ## [0.2.0](https://github.com/JensPenneman/launchway/compare/v0.1.1...v0.2.0) (2026-10-07)
 
 

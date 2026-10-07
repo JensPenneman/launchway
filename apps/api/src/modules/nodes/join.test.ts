@@ -10,6 +10,7 @@ describe('join instructions', () => {
   it('pins release images and falls back to latest otherwise', () => {
     expect(agentImageTag('0.1.0')).toBe('0.1.0');
     expect(agentImageTag('0.0.0-test')).toBe('latest');
+    expect(agentImageTag('edge')).toBe('edge');
   });
 
   it('builds docker run and Compose snippets with the token', () => {
@@ -26,6 +27,8 @@ describe('join instructions', () => {
     expect(dockerRunCommand).toMatch(/ghcr\.io\/jenspenneman\/slipway-agent:0\.1\.0$/);
     expect(composeSnippet).toContain(`SLIPWAY_JOIN_TOKEN: "${token}"`);
     expect(composeSnippet).toContain('network_mode: host');
+    expect(composeSnippet).toContain('stop_grace_period: 30s');
+    expect(dockerRunCommand).toContain('--stop-timeout 30');
     expect(composeSnippet).toContain('2026-01-01T00:15:00.000Z');
   });
 });

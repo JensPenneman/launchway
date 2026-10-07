@@ -36,6 +36,8 @@ services:
     image: ghcr.io/jenspenneman/slipway-agent:${SLIPWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
+    # Running deployments get 20 s to report after SIGTERM.
+    stop_grace_period: 30s
     # Host networking lets the agent detect the node's LAN address.
     network_mode: host
     # Runs as root and keeps a writable root filesystem: it owns the Docker

@@ -30,7 +30,8 @@ const RECONNECT_DELAY_MS = 5_000;
 
 /**
  * Subscribes to the platform change feed (`GET /events`) and invalidates the query families of
- * each changed topic. Bursts are coalesced; the browser reconnects on its own after errors.
+ * each changed topic. Bursts are coalesced; the browser reconnects on its own after errors, and
+ * every query is refetched after a reconnect because events of the gap are not replayed.
  */
 export function useLiveEvents(enabled = true): StreamState {
   const queryClient = useQueryClient();
@@ -42,6 +43,8 @@ export function useLiveEvents(enabled = true): StreamState {
     let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
     let flushTimer: ReturnType<typeof setTimeout> | undefined;
     const pending = new Set<EventTopic>();
+    /** Set after an error: events published while disconnected are lost, so refetch on open. */
+    let missedEvents = false;
 
     const flush = () => {
       flushTimer = undefined;
@@ -52,7 +55,13 @@ export function useLiveEvents(enabled = true): StreamState {
 
     const connect = () => {
       source = new EventSource(buildUrl('/events'), { withCredentials: true });
-      source.addEventListener('open', () => setState('live'));
+      source.addEventListener('open', () => {
+        setState('live');
+        if (missedEvents) {
+          missedEvents = false;
+          void queryClient.invalidateQueries();
+        }
+      });
       source.addEventListener(SSE_EVENTS.platform, (event) => {
         const parsed = parseEventData(PlatformEvent, (event as MessageEvent).data);
         if (!parsed) return;
@@ -61,6 +70,7 @@ export function useLiveEvents(enabled = true): StreamState {
       });
       source.addEventListener('error', () => {
         setState('error');
+        missedEvents = true;
         if (source?.readyState === EventSource.CLOSED) {
           source = null;
           reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);

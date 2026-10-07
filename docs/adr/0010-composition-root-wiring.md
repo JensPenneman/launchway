@@ -38,7 +38,8 @@ which domains it serves, and the background jobs need a start order.
    every agent was refused.
 4. **Start order.** Migrations, then `Deps`, then the HTTP app; then
    `ensureLocalNode` (bundled agent bootstrap), `agents.start()` (marks nodes
-   that a previous process left online as offline, through the sink), the edge
+   that a previous process left online as offline; the sink fails their
+   deployments only if they do not reconnect within the grace period), the edge
    reconciler with the domains module's `markDomainActive` hook, and finally
    the deployment worker and the release poller. The DNS and domains jobs keep
    starting inside their modules, guarded by `config.env !== 'test'`, as their

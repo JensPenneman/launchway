@@ -145,8 +145,9 @@ resolves it to a commit SHA at deployment creation). Optional per app:
    fine), `privileged`, `network_mode: host`, `pid: host`, capabilities beyond
    `cap_add` of a small allow-list. Published `ports:` are allowed (a mail
    server needs 25/465/993) and reported back so the UI can show them.
-   *(v0.1's policy refuses more, for example devices, other host namespaces
-   and files outside the checkout; see `apps/agent/src/runtime/compose-policy.ts`.
+   *(v0.1's policy refuses more, for example devices and device cgroup rules,
+   namespaces and networks outside the project, host-path volume drivers and
+   files outside the checkout; see `apps/agent/src/runtime/compose-policy.ts`.
    Reserved service names are only refused for routed services.)*
 3. Write `.env` (mode 0600) from the app's environment variables and the
    override file `compose.slipway.yaml`: attaches routed services to

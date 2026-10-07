@@ -84,6 +84,41 @@ describe('evaluateComposePolicy', () => {
       { image: 'x', network_mode: 'container:caddy' },
       /network_mode container:caddy/,
     ],
+    [
+      'network_mode naming the proxy network',
+      { image: 'x', network_mode: 'slipway-proxy' },
+      /network_mode slipway-proxy/,
+    ],
+    [
+      'network_mode naming another network',
+      { image: 'x', network_mode: 'slipway-other_default' },
+      /network_mode slipway-other_default/,
+    ],
+    [
+      'network_mode of a service in another project',
+      { image: 'x', network_mode: 'service:nope' },
+      /network_mode service:nope/,
+    ],
+    ['pid of another container', { image: 'x', pid: 'container:caddy' }, /pid container:caddy/],
+    ['device cgroup rules', { image: 'x', device_cgroup_rules: ['b *:* rwm'] }, /device_cgroup/],
+    ['cgroup_parent', { image: 'x', cgroup_parent: '/' }, /cgroup_parent/],
+    ['a custom runtime', { image: 'x', runtime: 'runc-custom' }, /runtime/],
+    ['gpus', { image: 'x', gpus: 'all' }, /gpus/],
+    [
+      'device reservations',
+      { image: 'x', deploy: { resources: { reservations: { devices: [{ count: 1 }] } } } },
+      /device reservations/,
+    ],
+    [
+      'a custom seccomp profile',
+      { image: 'x', security_opt: ['seccomp=./allow-all.json'] },
+      /security_opt seccomp/,
+    ],
+    [
+      'oci-layout build contexts',
+      { build: { context: CHECKOUT, additional_contexts: { x: 'oci-layout:///var/lib/x' } } },
+      /additional_contexts/,
+    ],
     ['pid host', { image: 'x', pid: 'host' }, /pid host/],
     ['ipc host', { image: 'x', ipc: 'host' }, /ipc host/],
     ['userns_mode host', { image: 'x', userns_mode: 'host' }, /userns_mode host/],
@@ -160,6 +195,38 @@ describe('evaluateComposePolicy', () => {
       /host paths/,
     ],
     [
+      'overlay volumes over host paths',
+      {
+        volumes: {
+          v: {
+            name: 'slipway-mail_v',
+            driver_opts: { type: 'overlay', device: 'overlay', o: 'lowerdir=/etc:/root' },
+          },
+        },
+      },
+      /host paths/,
+    ],
+    [
+      'lowerdir options on an allowed type',
+      { volumes: { v: { driver_opts: { type: 'nfs', device: ':/x', o: 'lowerdir=/etc' } } } },
+      /host paths/,
+    ],
+    ['volume plugins', { volumes: { v: { driver: 'local-persist' } } }, /volume driver/],
+    [
+      'reusing another project network by name',
+      { networks: { n: { name: 'slipway-other_default' } } },
+      /custom network name/,
+    ],
+    [
+      'macvlan networks',
+      {
+        networks: {
+          n: { name: 'slipway-mail_n', driver: 'macvlan', driver_opts: { parent: 'eth0' } },
+        },
+      },
+      /network driver "macvlan"[\s\S]*driver_opts/,
+    ],
+    [
       'a declared proxy network',
       { networks: { edge: { name: 'slipway-proxy', external: true } } },
       /proxy network/,
@@ -200,6 +267,18 @@ describe('evaluateComposePolicy', () => {
     expect(violations(base(), [{ service: 'db', port: 5432, alias: 'mail-db' }]).join()).toMatch(
       /reserved/,
     );
+  });
+
+  it('allows own-service namespaces, none and no-new-privileges', () => {
+    const config = withService('side', {
+      image: 'x',
+      network_mode: 'service:web',
+      pid: 'service:web',
+      ipc: 'shareable',
+      security_opt: ['no-new-privileges:true'],
+    });
+    expect(violations(config)).toEqual([]);
+    expect(violations(withService('iso', { image: 'x', network_mode: 'none' }))).toEqual([]);
   });
 
   it('honours a custom proxy network name', () => {

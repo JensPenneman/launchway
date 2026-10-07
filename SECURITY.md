@@ -85,7 +85,10 @@ This is a summary of the security requirements in section 14 of
 - GitHub webhooks: the `X-Hub-Signature-256` HMAC is verified before the body
   is parsed, and a delivery ID that was already processed is rejected.
 - The Compose policy is enforced on the agent, not only in the UI: no host
-  bind mounts, no `privileged`, no `network_mode: host` or `pid: host`, no
+  bind mounts or host-path volume drivers, no `privileged`, no devices or
+  `device_cgroup_rules`, no `network_mode` or other namespace outside the
+  project (only `none` or `service:<name>`), no networks or volumes named
+  outside the project, no security options besides `no-new-privileges`, and no
   capabilities outside a small allow-list.
 
 ### Network exposure

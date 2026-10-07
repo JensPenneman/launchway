@@ -8,7 +8,7 @@ test('creates an API token and shows it once', async ({ page }) => {
   await dialog.getByLabel('Name').fill('Backup script');
   await dialog.getByLabel('write').check();
   await dialog.getByRole('button', { name: 'Create token' }).click();
-  await expect(dialog.getByText(/^slp_[0-9A-Za-z]{43}$/)).toBeVisible();
+  await expect(dialog.getByText(/^lwy_[0-9A-Za-z]{43}$/)).toBeVisible();
   await dialog.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('row', { name: /Backup script/ })).toContainText('write');
 });
@@ -17,7 +17,7 @@ test('invites a user and changes a role', async ({ page }) => {
   await page.goto('/settings?tab=users');
   await page.getByRole('button', { name: 'Invite' }).click();
   await page.getByRole('dialog').getByRole('button', { name: 'Create link' }).click();
-  await expect(page.getByRole('dialog').getByText(/\/invite#slpi_/)).toBeVisible();
+  await expect(page.getByRole('dialog').getByText(/\/invite#lwyi_/)).toBeVisible();
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(
     page.getByRole('list', { name: 'Open invitations' }).getByRole('listitem'),

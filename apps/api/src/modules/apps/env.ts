@@ -1,4 +1,4 @@
-import type { AppId } from '@slipway/contracts';
+import type { AppId } from '@launchway/contracts';
 import { asc, eq } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import type { SecretBox } from '../../lib/crypto.js';

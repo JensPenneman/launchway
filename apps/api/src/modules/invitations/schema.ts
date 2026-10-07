@@ -1,10 +1,10 @@
-import type { UserId } from '@slipway/contracts';
+import type { UserId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { check, index, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { userRole, users } from '../users/schema.js';
 
-/** Single-use invitation links (`slpi_...`, hashed at rest). */
+/** Single-use invitation links (`lwyi_...`, hashed at rest). */
 export const invitations = pgTable(
   'invitations',
   {

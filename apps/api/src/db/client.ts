@@ -14,7 +14,7 @@ export function createPool(connectionString: string, logger: Logger): pg.Pool {
     max: 10,
     idleTimeoutMillis: 30_000,
     connectionTimeoutMillis: 5_000,
-    application_name: 'slipway-api',
+    application_name: 'launchway-api',
   });
   pool.on('error', (err) => logger.error({ err }, 'idle PostgreSQL client failed'));
   return pool;

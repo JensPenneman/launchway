@@ -1,6 +1,6 @@
+import type { GitHubRelease, GitHubRepo, Page } from '@launchway/contracts';
 import { createAppAuth } from '@octokit/auth-app';
 import { Octokit } from '@octokit/rest';
-import type { GitHubRelease, GitHubRepo, Page } from '@slipway/contracts';
 import { z } from 'zod';
 import { decodeCursor, encodeCursor } from './pagination.js';
 
@@ -82,7 +82,7 @@ const REQUEST_TIMEOUT_MS = 15_000;
 const TOKEN_RENEW_BEFORE_MS = 5 * 60 * 1000;
 /** Upper bound of repositories scanned when filtering by name. */
 const MAX_FILTERED_REPOS = 1000;
-const USER_AGENT = 'slipway';
+const USER_AGENT = 'launchway';
 
 /** `basic <base64>` header value for HTTPS Git with a GitHub token. */
 export function basicAuthorization(token: string): string {

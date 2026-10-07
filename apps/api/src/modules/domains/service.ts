@@ -10,7 +10,7 @@ import {
   type DomainStatus,
   type DomainVerification,
   type UpdateDomainInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, asc, eq, ne, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { isUniqueViolation } from '../../db/errors.js';
@@ -138,7 +138,7 @@ export function createDomainsService(
     return recordInputFor(hostname, expected, proxied && zone.provider.capabilities.proxied);
   }
 
-  /** Deletes a record Slipway created; a record that is already gone is fine. */
+  /** Deletes a record Launchway created; a record that is already gone is fine. */
   async function deleteManagedRecord(row: DomainRow): Promise<void> {
     if (!row.zoneId || !row.dnsRecordExternalId) return;
     const { zone, provider } = await dns.providerForZone(row.zoneId);

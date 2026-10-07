@@ -13,7 +13,7 @@ export interface Deps {
   readonly config: Config;
   readonly logger: Logger;
   readonly db: Database;
-  /** AES-256-GCM for secrets at rest (key derived from SLIPWAY_SECRET_KEY). */
+  /** AES-256-GCM for secrets at rest (key derived from LAUNCHWAY_SECRET_KEY). */
   readonly secrets: SecretBox;
   /** Resolves the caller from the session cookie or bearer token (auth module). */
   readonly auth: AuthResolver;

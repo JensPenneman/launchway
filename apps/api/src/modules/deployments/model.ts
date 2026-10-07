@@ -1,4 +1,4 @@
-import type { Deployment, DeploymentStatus, NodeId } from '@slipway/contracts';
+import type { Deployment, DeploymentStatus, NodeId } from '@launchway/contracts';
 import type { Deps } from '../../deps.js';
 import type { RequestActor } from '../../lib/auth-context.js';
 import { logHubFor } from './log-hub.js';

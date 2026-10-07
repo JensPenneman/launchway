@@ -66,18 +66,18 @@ jobs:
       postgres:
         image: postgres:18-alpine
         env:
-          POSTGRES_USER: slipway
-          POSTGRES_PASSWORD: slipway
-          POSTGRES_DB: slipway_test
+          POSTGRES_USER: launchway
+          POSTGRES_PASSWORD: launchway
+          POSTGRES_DB: launchway_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready --username=slipway --dbname=slipway_test"
+          --health-cmd "pg_isready --username=launchway --dbname=launchway_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      TEST_DATABASE_URL: postgres://slipway:slipway@localhost:5432/slipway_test
+      TEST_DATABASE_URL: postgres://launchway:launchway@localhost:5432/launchway_test
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -104,7 +104,7 @@ jobs:
         uses: ./.github/actions/setup
 
       - name: Install Playwright browser
-        run: pnpm --filter @slipway/web exec playwright install --with-deps chromium
+        run: pnpm --filter @launchway/web exec playwright install --with-deps chromium
 
       - name: End-to-end tests
         run: pnpm test:e2e
@@ -127,9 +127,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - image: slipway
+          - image: launchway
             dockerfile: apps/api/Dockerfile
-          - image: slipway-agent
+          - image: launchway-agent
             dockerfile: apps/agent/Dockerfile
     steps:
       - name: Check out

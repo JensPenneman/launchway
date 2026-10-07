@@ -1,5 +1,5 @@
 /** Kept in sync with public/theme-init.js, which applies the theme before first paint. */
-export const THEME_STORAGE_KEY = 'slipway-theme';
+export const THEME_STORAGE_KEY = 'launchway-theme';
 
 export const THEME_PREFERENCES = ['light', 'dark', 'system'] as const;
 export type ThemePreference = (typeof THEME_PREFERENCES)[number];

@@ -1,4 +1,4 @@
-import { maskEnvVar } from '@slipway/contracts';
+import { maskEnvVar } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { deriveSlug } from './service.js';
 

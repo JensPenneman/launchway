@@ -1,4 +1,4 @@
-import type { DnsZoneId } from '@slipway/contracts';
+import type { DnsZoneId } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { zonesQuery } from '@/api/domains';
 import {

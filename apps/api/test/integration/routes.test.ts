@@ -1,4 +1,4 @@
-import { generateId, type Route, type RoutePage } from '@slipway/contracts';
+import { generateId, type Route, type RoutePage } from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';

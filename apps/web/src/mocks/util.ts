@@ -7,7 +7,7 @@ import {
   roleAtLeast,
   type UserRole,
   type z,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { HttpResponse } from 'msw';
 import { db } from './db';
 

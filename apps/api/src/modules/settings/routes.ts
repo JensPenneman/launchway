@@ -1,5 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { Settings, UpdateSettingsInput } from '@slipway/contracts';
+import { Settings, UpdateSettingsInput } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';

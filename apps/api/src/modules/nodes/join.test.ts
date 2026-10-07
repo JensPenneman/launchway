@@ -14,18 +14,18 @@ describe('join instructions', () => {
   });
 
   it('builds docker run and Compose snippets with the token', () => {
-    const token = `slpn_${'a'.repeat(43)}`;
+    const token = `lwyn_${'a'.repeat(43)}`;
     const { dockerRunCommand, composeSnippet } = joinInstructions({
       serverUrl: 'wss://deploy.example.com',
       token,
       version: '0.1.0',
       expiresAt: new Date('2026-01-01T00:15:00Z'),
     });
-    expect(dockerRunCommand).toContain(`-e SLIPWAY_JOIN_TOKEN='${token}'`);
-    expect(dockerRunCommand).toContain("-e SLIPWAY_SERVER_URL='wss://deploy.example.com'");
+    expect(dockerRunCommand).toContain(`-e LAUNCHWAY_JOIN_TOKEN='${token}'`);
+    expect(dockerRunCommand).toContain("-e LAUNCHWAY_SERVER_URL='wss://deploy.example.com'");
     expect(dockerRunCommand).toContain('-v /var/run/docker.sock:/var/run/docker.sock');
-    expect(dockerRunCommand).toMatch(/ghcr\.io\/jenspenneman\/slipway-agent:0\.1\.0$/);
-    expect(composeSnippet).toContain(`SLIPWAY_JOIN_TOKEN: "${token}"`);
+    expect(dockerRunCommand).toMatch(/ghcr\.io\/jenspenneman\/launchway-agent:0\.1\.0$/);
+    expect(composeSnippet).toContain(`LAUNCHWAY_JOIN_TOKEN: "${token}"`);
     expect(composeSnippet).toContain('network_mode: host');
     expect(composeSnippet).toContain('stop_grace_period: 30s');
     expect(dockerRunCommand).toContain('--stop-timeout 30');

@@ -8,7 +8,7 @@ describe('childEnv', () => {
       {
         PATH: '/bin',
         HOME: '/root',
-        SLIPWAY_JOIN_TOKEN: 'slpn_secret',
+        LAUNCHWAY_JOIN_TOKEN: 'lwyn_secret',
         DATABASE_URL: 'x',
         DOCKER_HOST: 'unix:///d',
       },
@@ -56,6 +56,6 @@ describe('runProcess', () => {
   });
 
   it('rejects when the program does not exist', async () => {
-    await expect(runProcess('/nonexistent/slipway-binary', [])).rejects.toThrow();
+    await expect(runProcess('/nonexistent/launchway-binary', [])).rejects.toThrow();
   });
 });

@@ -1,8 +1,8 @@
 {
-  "name": "@slipway/contracts",
+  "name": "@launchway/contracts",
   "version": "0.1.0",
   "private": true,
-  "description": "Zod schemas and TypeScript types shared by the Slipway API, agent and web UI.",
+  "description": "Zod schemas and TypeScript types shared by the Launchway API, agent and web UI.",
   "license": "Apache-2.0",
   "type": "module",
   "sideEffects": [
@@ -11,12 +11,12 @@
   ],
   "exports": {
     ".": {
-      "@slipway/source": "./src/index.ts",
+      "@launchway/source": "./src/index.ts",
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
     "./agent": {
-      "@slipway/source": "./src/agent/index.ts",
+      "@launchway/source": "./src/agent/index.ts",
       "types": "./dist/agent/index.d.ts",
       "default": "./dist/agent/index.js"
     }
@@ -36,7 +36,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@slipway/tsconfig": "workspace:*",
+    "@launchway/tsconfig": "workspace:*",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

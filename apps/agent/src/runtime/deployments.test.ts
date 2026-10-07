@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { type AgentToServerMessage, type DeployPayload, generateId } from '@slipway/contracts';
+import { type AgentToServerMessage, type DeployPayload, generateId } from '@launchway/contracts';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { DeploymentManager, Semaphore } from './deployments.js';
@@ -36,7 +36,7 @@ const ok = (stdout = ''): RunResult => ({
 
 const defaultConfig = (
   services: Record<string, unknown> = { web: { image: 'nginx', networks: { default: null } } },
-) => JSON.stringify({ name: 'slipway-trail', services });
+) => JSON.stringify({ name: 'launchway-trail', services });
 
 function fakeDocker(): FakeDocker {
   const fake: FakeDocker = {
@@ -64,7 +64,7 @@ function fakeDocker(): FakeDocker {
       if (sub === 'config') return ok(defaultConfig());
       if (sub === 'ps') {
         return ok(
-          `${JSON.stringify({ ID: 'c1', Name: 'slipway-trail-web-1', Service: 'web', State: 'running', Health: '', Publishers: [] })}\n`,
+          `${JSON.stringify({ ID: 'c1', Name: 'launchway-trail-web-1', Service: 'web', State: 'running', Health: '', Publishers: [] })}\n`,
         );
       }
       if (sub === 'build') options.onStdoutLine?.('#1 building');
@@ -85,7 +85,7 @@ const blockUntilAborted = (call: Call): Promise<Partial<RunResult>> =>
 let root: string;
 let messages: AgentToServerMessage[];
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'slipway-deploy-'));
+  root = await mkdtemp(join(tmpdir(), 'launchway-deploy-'));
   messages = [];
 });
 afterEach(async () => {
@@ -116,7 +116,7 @@ function payload(overrides: Partial<DeployPayload> = {}): DeployPayload {
     build: { kind: 'compose', composeFiles: ['compose.yaml'] },
     env: { SECRET: 'hunter2-very-secret' },
     routes: [{ service: 'web', port: 80, alias: 'trail-web' }],
-    network: { proxyNetwork: 'slipway-proxy', publishOnIp: null },
+    network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
     ...overrides,
   };
 }
@@ -200,19 +200,19 @@ describe('DeploymentManager', () => {
     ]);
     const up = fake.calls.find((c) => c.args.includes('up'));
     expect(up?.args).toEqual(
-      expect.arrayContaining(['-p', 'slipway-trail', '--detach', '--wait', '--remove-orphans']),
+      expect.arrayContaining(['-p', 'launchway-trail', '--detach', '--wait', '--remove-orphans']),
     );
     expect(up?.args.filter((a) => a.endsWith('.yaml')).map((a) => a.split('/').at(-1))).toEqual([
       'compose.yaml',
-      'compose.slipway.yaml',
+      'compose.launchway.yaml',
     ]);
 
     const dir = join(root, 'apps', job.app.id, job.deploymentId);
     const env = await stat(join(dir, '.env'));
     expect(env.mode & 0o777).toBe(0o600);
     expect(await readFile(join(dir, '.env'), 'utf8')).toBe("SECRET='hunter2-very-secret'\n");
-    const override = JSON.parse(await readFile(join(dir, 'compose.slipway.yaml'), 'utf8'));
-    expect(override.services.web.networks['slipway-proxy']).toEqual({ aliases: ['trail-web'] });
+    const override = JSON.parse(await readFile(join(dir, 'compose.launchway.yaml'), 'utf8'));
+    expect(override.services.web.networks['launchway-proxy']).toEqual({ aliases: ['trail-web'] });
 
     // Never leak credentials or env values into logs; never put them in argv.
     const everything = JSON.stringify(messages);

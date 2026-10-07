@@ -1,4 +1,4 @@
-import { SESSION_COOKIE_NAME } from '@slipway/contracts';
+import { SESSION_COOKIE_NAME } from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import type { Context, MiddlewareHandler } from 'hono';
 import { getCookie } from 'hono/cookie';
@@ -11,7 +11,7 @@ const TRUSTED_FETCH_SITES = new Set(['same-origin', 'none']);
 const CACHE_TTL_MS = 30_000;
 
 /**
- * The origin the platform is served from: `SLIPWAY_PUBLIC_URL`, else `settings.public_url`, else
+ * The origin the platform is served from: `LAUNCHWAY_PUBLIC_URL`, else `settings.public_url`, else
  * null (callers then fall back to the request's own host). Cached briefly and refreshed when the
  * settings change.
  */

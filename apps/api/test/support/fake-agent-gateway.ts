@@ -4,7 +4,7 @@ import type {
   DeployPayload,
   NodeId,
   ServiceStatus,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import {
   type AgentGateway,
   AgentUnavailableError,

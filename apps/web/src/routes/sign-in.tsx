@@ -1,5 +1,5 @@
+import { LoginInput } from '@launchway/contracts';
 import { browserSupportsWebAuthn } from '@simplewebauthn/browser';
-import { LoginInput } from '@slipway/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, redirect, useNavigate } from '@tanstack/react-router';
 import { KeyRound, Loader2 } from 'lucide-react';

@@ -1,4 +1,8 @@
-import { GITHUB_CONNECTION_KINDS, type GitHubConnectionId, type UserId } from '@slipway/contracts';
+import {
+  GITHUB_CONNECTION_KINDS,
+  type GitHubConnectionId,
+  type UserId,
+} from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { bigint, check, index, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
@@ -7,7 +11,7 @@ import { users } from '../users/schema.js';
 export const githubConnectionKind = pgEnum('github_connection_kind', GITHUB_CONNECTION_KINDS);
 
 /**
- * How Slipway talks to GitHub: a GitHub App created through the manifest flow (`app`) or a
+ * How Launchway talks to GitHub: a GitHub App created through the manifest flow (`app`) or a
  * fine-grained personal access token (`pat`). `...Encrypted` columns hold SecretBox output.
  */
 export const githubConnections = pgTable(

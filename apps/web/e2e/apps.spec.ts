@@ -11,7 +11,7 @@ test('lists apps', async ({ page }) => {
 
 test('creates an app through the wizard', async ({ page }) => {
   await page.goto('/apps/new');
-  await page.getByRole('radio', { name: /Slipway \(example-org\)/ }).check();
+  await page.getByRole('radio', { name: /Launchway \(example-org\)/ }).check();
   await page.getByRole('button', { name: 'Continue' }).click();
 
   await page.getByLabel('Search repositories').fill('status');
@@ -90,7 +90,7 @@ test('routes a new domain to a service and verifies it', async ({ page }) => {
   await expect(page.getByRole('link', { name: 'webmail.example.dev' })).toBeVisible();
   await expect(page.getByText('→ roundcube:8000')).toBeVisible();
   await page.getByRole('button', { name: 'Verify webmail.example.dev' }).click();
-  await expect(page.getByTestId('verification-result')).toContainText('DNS points at Slipway');
+  await expect(page.getByTestId('verification-result')).toContainText('DNS points at Launchway');
 });
 
 test('deletes an app after typing its slug', async ({ page }) => {

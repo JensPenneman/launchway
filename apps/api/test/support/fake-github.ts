@@ -93,7 +93,7 @@ export class FakeGitHub {
     this.patTokens.set(token, { login, type: 'User' });
   }
 
-  addManifestCode(code: string, appId: number, slug = `slipway-test-${appId}`): void {
+  addManifestCode(code: string, appId: number, slug = `launchway-test-${appId}`): void {
     this.manifestCodes.set(code, { appId, slug, owner: 'octo' });
   }
 
@@ -173,7 +173,7 @@ export class FakeGitHub {
       return json(201, {
         id: app.id,
         slug: app.slug,
-        name: `Slipway test ${app.id}`,
+        name: `Launchway test ${app.id}`,
         html_url: `https://github.com/apps/${app.slug}`,
         owner: { login: entry.owner, type: 'User' },
         client_id: `Iv1.${app.id}`,

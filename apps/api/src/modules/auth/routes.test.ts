@@ -1,4 +1,4 @@
-import { generateId, SESSION_COOKIE_NAME } from '@slipway/contracts';
+import { generateId, SESSION_COOKIE_NAME } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../../test/support/deps.js';
 import { jsonRequest, tokenPrincipal } from '../../../test/support/requests.js';
@@ -77,10 +77,10 @@ describe('auth routes (authorization and validation)', () => {
     const deps = createTestDeps({ auth: fixedAuth(null) });
     const app = createApp({
       ...deps,
-      config: { ...deps.config, setupToken: 'slps_0123456789abcdefghijABCDEFGHIJ' },
+      config: { ...deps.config, setupToken: 'lwys_0123456789abcdefghijABCDEFGHIJ' },
     });
     const owner = { email: 'owner@example.com', name: 'Owner', password: 'correct horse battery' };
-    for (const body of [owner, { ...owner, setupToken: 'slps_wrong-token-of-some-length' }]) {
+    for (const body of [owner, { ...owner, setupToken: 'lwys_wrong-token-of-some-length' }]) {
       const res = await app.request('/api/v1/setup', jsonRequest('POST', body));
       expect(res.status).toBe(400);
       expect(await res.json()).toMatchObject({

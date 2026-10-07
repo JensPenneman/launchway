@@ -3,13 +3,13 @@ import { NodeId } from './ids.js';
 import { list } from './pagination.js';
 import { z } from './zod.js';
 
-/** One-time join tokens: `slpn_` + 43 base62 characters, valid for 15 minutes. */
-export const NODE_JOIN_TOKEN_PREFIX = 'slpn_';
-export const NODE_JOIN_TOKEN_PATTERN = /^slpn_[0-9A-Za-z]{43}$/;
+/** One-time join tokens: `lwyn_` + 43 base62 characters, valid for 15 minutes. */
+export const NODE_JOIN_TOKEN_PREFIX = 'lwyn_';
+export const NODE_JOIN_TOKEN_PATTERN = /^lwyn_[0-9A-Za-z]{43}$/;
 export const NODE_JOIN_TOKEN_TTL_SECONDS = 15 * 60;
-/** Long-lived node credentials issued on join: `slpa_` + 43 base62 characters. */
-export const NODE_CREDENTIAL_PREFIX = 'slpa_';
-export const NODE_CREDENTIAL_PATTERN = /^slpa_[0-9A-Za-z]{43}$/;
+/** Long-lived node credentials issued on join: `lwya_` + 43 base62 characters. */
+export const NODE_CREDENTIAL_PREFIX = 'lwya_';
+export const NODE_CREDENTIAL_PATTERN = /^lwya_[0-9A-Za-z]{43}$/;
 
 export const NODE_STATUSES = ['pending', 'online', 'offline'] as const;
 export const NodeStatus = z.enum(NODE_STATUSES).openapi('NodeStatus', {
@@ -69,7 +69,7 @@ export const NodeJoinToken = z
     token: z.string().regex(NODE_JOIN_TOKEN_PATTERN).openapi({ description: 'Shown once' }),
     expiresAt: Timestamp,
     serverUrl: z.string().openapi({
-      description: 'Value for SLIPWAY_SERVER_URL',
+      description: 'Value for LAUNCHWAY_SERVER_URL',
       example: 'wss://deploy.example.com',
     }),
     dockerRunCommand: z.string(),

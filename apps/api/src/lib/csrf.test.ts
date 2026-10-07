@@ -1,4 +1,4 @@
-import { SESSION_COOKIE_NAME } from '@slipway/contracts';
+import { SESSION_COOKIE_NAME } from '@launchway/contracts';
 import { Hono } from 'hono';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../test/support/deps.js';
@@ -137,7 +137,7 @@ describe('createPlatformOriginResolver', () => {
     return (await app.request(url, { headers })).text();
   }
 
-  it('prefers SLIPWAY_PUBLIC_URL, then settings, then the request host', async () => {
+  it('prefers LAUNCHWAY_PUBLIC_URL, then settings, then the request host', async () => {
     const deps = createTestDeps();
     const override = createPlatformOriginResolver({
       ...deps,

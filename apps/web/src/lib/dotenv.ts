@@ -1,4 +1,4 @@
-import { ENV_KEY_PATTERN } from '@slipway/contracts';
+import { ENV_KEY_PATTERN } from '@launchway/contracts';
 
 export interface DotenvEntry {
   key: string;

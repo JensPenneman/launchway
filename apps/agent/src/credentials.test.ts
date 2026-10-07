@@ -1,7 +1,7 @@
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { afterEach, describe, expect, it } from 'vitest';
 import {
   createTokenSource,
@@ -16,7 +16,7 @@ afterEach(async () => {
 });
 
 async function workspace() {
-  const dir = await mkdtemp(join(tmpdir(), 'slipway-agent-'));
+  const dir = await mkdtemp(join(tmpdir(), 'launchway-agent-'));
   workspaces.push(dir);
   return dir;
 }
@@ -28,7 +28,7 @@ describe('node credentials', () => {
 
   it('round-trips credentials and stores them with mode 0600', async () => {
     const dir = await workspace();
-    const credentials = { nodeId: generateId('node'), credential: `slpa_${'a'.repeat(43)}` };
+    const credentials = { nodeId: generateId('node'), credential: `lwya_${'a'.repeat(43)}` };
     await saveCredentials(dir, credentials);
     expect(await loadCredentials(dir)).toEqual(credentials);
     expect((await stat(credentialsPath(dir))).mode & 0o777).toBe(0o600);
@@ -42,8 +42,8 @@ describe('node credentials', () => {
 });
 
 describe('token source', () => {
-  const joinToken = `slpn_${'j'.repeat(43)}`;
-  const stored = { nodeId: generateId('node'), credential: `slpa_${'c'.repeat(43)}` };
+  const joinToken = `lwyn_${'j'.repeat(43)}`;
+  const stored = { nodeId: generateId('node'), credential: `lwya_${'c'.repeat(43)}` };
 
   it('uses the join token until a credential is stored', () => {
     const tokens = createTokenSource(null, joinToken);
@@ -59,7 +59,7 @@ describe('token source', () => {
     expect(tokens.token()).toBe(joinToken);
     // A refused join token has nothing left to fall back to.
     expect(tokens.refused()).toBe(false);
-    const rejoined = { nodeId: generateId('node'), credential: `slpa_${'d'.repeat(43)}` };
+    const rejoined = { nodeId: generateId('node'), credential: `lwya_${'d'.repeat(43)}` };
     tokens.store(rejoined);
     expect(tokens.token()).toBe(rejoined.credential);
   });

@@ -1,7 +1,7 @@
 import { defineConfig } from 'vitest/config';
 
-// Resolve workspace packages to their TypeScript sources (see the `@slipway/source` export condition).
-const conditions = ['@slipway/source', 'module', 'node', 'development|production'];
+// Resolve workspace packages to their TypeScript sources (see the `@launchway/source` export condition).
+const conditions = ['@launchway/source', 'module', 'node', 'development|production'];
 
 export default defineConfig({
   resolve: { conditions },

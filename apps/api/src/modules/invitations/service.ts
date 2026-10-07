@@ -9,7 +9,7 @@ import {
   type InvitationPreview,
   type InvitationStatus,
   type PaginationQuery,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { desc, eq, getTableColumns } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { effectiveRole, getActorPrincipal, type RequestActor } from '../../lib/auth-context.js';

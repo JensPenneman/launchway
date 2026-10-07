@@ -1,4 +1,4 @@
-import type { UserRole } from '@slipway/contracts';
+import type { UserRole } from '@launchway/contracts';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import type { ComponentType } from 'react';
 import { Page, PageHeader } from '@/components/page-header';

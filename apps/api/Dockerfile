@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 # Control-plane image: the API plus the built web UI.
-# Build from the repository root:  docker build -f apps/api/Dockerfile -t slipway .
+# Build from the repository root:  docker build -f apps/api/Dockerfile -t launchway .
 
 ARG NODE_VERSION=24
 
@@ -21,21 +21,21 @@ COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
     pnpm install --frozen-lockfile --offline --ignore-scripts
 # Builds contracts, the API and the web UI (which generates its client from the API's OpenAPI document).
-RUN pnpm turbo run build --filter=@slipway/api --filter=@slipway/web
+RUN pnpm turbo run build --filter=@launchway/api --filter=@launchway/web
 # Self-contained directory with production dependencies only. Workspace packages are injected
 # (copied with their own dependencies) for this step only; development keeps them symlinked.
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm --filter=@slipway/api deploy --prod --ignore-scripts --config.inject-workspace-packages=true /out
+    pnpm --filter=@launchway/api deploy --prod --ignore-scripts --config.inject-workspace-packages=true /out
 
 FROM node:${NODE_VERSION}-alpine AS runtime
-ARG SLIPWAY_VERSION=edge
-LABEL org.opencontainers.image.title="Slipway" \
-      org.opencontainers.image.description="Slipway control plane: REST API and web UI" \
-      org.opencontainers.image.source="https://github.com/JensPenneman/slipway" \
+ARG LAUNCHWAY_VERSION=edge
+LABEL org.opencontainers.image.title="Launchway" \
+      org.opencontainers.image.description="Launchway control plane: REST API and web UI" \
+      org.opencontainers.image.source="https://github.com/JensPenneman/launchway" \
       org.opencontainers.image.licenses="Apache-2.0"
 ENV NODE_ENV=production \
-    SLIPWAY_BUILD_VERSION=${SLIPWAY_VERSION} \
-    SLIPWAY_WEB_ROOT=/app/web
+    LAUNCHWAY_BUILD_VERSION=${LAUNCHWAY_VERSION} \
+    LAUNCHWAY_WEB_ROOT=/app/web
 WORKDIR /app
 # Files stay owned by root and read-only for the runtime user; compose runs with read_only: true.
 COPY --from=build /out ./

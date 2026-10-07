@@ -1,5 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { AuditEventPage, AuditListQuery } from '@slipway/contracts';
+import { AuditEventPage, AuditListQuery } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonResponse, problemResponses } from '../../lib/openapi.js';

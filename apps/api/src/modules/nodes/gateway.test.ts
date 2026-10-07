@@ -7,7 +7,7 @@ import {
   type HelloPayload,
   type NodeId,
   type PlatformEvent,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { helloPayload, startTestServer, TestAgent } from '../../../test/support/agent-client.js';
 import { createTestDeps } from '../../../test/support/deps.js';
@@ -37,10 +37,10 @@ function memoryStore() {
     authenticate(token) {
       const hash = hashToken(token);
       for (const node of nodes.values()) {
-        if (token.startsWith('slpn_') && node.joinTokenHash === hash) {
+        if (token.startsWith('lwyn_') && node.joinTokenHash === hash) {
           return Promise.resolve<AgentAuth>({ nodeId: node.id, via: 'join', tokenHash: hash });
         }
-        if (token.startsWith('slpa_') && node.credentialHash === hash) {
+        if (token.startsWith('lwya_') && node.credentialHash === hash) {
           return Promise.resolve<AgentAuth>({
             nodeId: node.id,
             via: 'credential',
@@ -59,7 +59,7 @@ function memoryStore() {
       if (!node || !valid) return Promise.resolve({ ok: false });
       let credential: string | null = null;
       if (auth.via === 'join') {
-        credential = generateToken('slpa_');
+        credential = generateToken('lwya_');
         node.credentialHash = hashToken(credential);
         node.joinTokenHash = null;
       }
@@ -86,7 +86,7 @@ function memoryStore() {
   /** Adds a node with a fresh join token; returns the plaintext token. */
   function addNode(): { id: NodeId; joinToken: string } {
     const id = generateId('node');
-    const joinToken = generateToken('slpn_');
+    const joinToken = generateToken('lwyn_');
     nodes.set(id, {
       id,
       joinTokenHash: hashToken(joinToken),
@@ -135,7 +135,7 @@ function deployPayload(deploymentId: DeploymentId): DeployPayload {
     build: { kind: 'compose', composeFiles: ['compose.yaml'] },
     env: {},
     routes: [{ service: 'web', port: 8080, alias: 'trail-web' }],
-    network: { proxyNetwork: 'slipway-proxy', publishOnIp: null },
+    network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
   };
 }
 
@@ -204,10 +204,10 @@ describe('agent gateway over a real WebSocket', () => {
   it('refuses upgrades without a valid token before upgrading', async () => {
     await setup();
     await expect(TestAgent.connect(server.url, null)).rejects.toThrow('status 401');
-    await expect(TestAgent.connect(server.url, generateToken('slpn_'))).rejects.toThrow(
+    await expect(TestAgent.connect(server.url, generateToken('lwyn_'))).rejects.toThrow(
       'status 401',
     );
-    await expect(TestAgent.connect(server.url, 'slp_not-an-agent-token')).rejects.toThrow(
+    await expect(TestAgent.connect(server.url, 'lwy_not-an-agent-token')).rejects.toThrow(
       'status 401',
     );
   });
@@ -215,7 +215,7 @@ describe('agent gateway over a real WebSocket', () => {
   it('joins with a join token, issues a credential and marks the node online', async () => {
     await setup();
     const { node, agent, credential } = await joined();
-    expect(credential).toMatch(/^slpa_[0-9A-Za-z]{43}$/);
+    expect(credential).toMatch(/^lwya_[0-9A-Za-z]{43}$/);
     expect(gateway.isOnline(node.id)).toBe(true);
     expect(memory.nodes.get(node.id)).toMatchObject({ status: 'online', joinTokenHash: null });
     expect(events).toContainEqual(
@@ -479,7 +479,7 @@ describe('agent gateway over a real WebSocket', () => {
   it('pushes rotated credentials and disconnects revoked nodes', async () => {
     await setup();
     const { node, agent } = await joined();
-    const rotated = generateToken('slpa_');
+    const rotated = generateToken('lwya_');
     expect(gateway.pushCredential(node.id, rotated)).toBe(true);
     expect((await agent.next('hello.ok')).payload.credential).toBe(rotated);
 

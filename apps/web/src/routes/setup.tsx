@@ -1,4 +1,4 @@
-import { Email, Password, PublicUrl, SetupInput, z } from '@slipway/contracts';
+import { Email, Password, PublicUrl, SetupInput, z } from '@launchway/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { CheckCircle2, FolderGit2, Loader2, Server } from 'lucide-react';
@@ -63,8 +63,8 @@ function Setup() {
   const [ownerEmail, setOwnerEmail] = useState('');
   return (
     <AuthLayout
-      title="Set up Slipway"
-      description="Create the owner account and tell Slipway where it lives."
+      title="Set up Launchway"
+      description="Create the owner account and tell Launchway where it lives."
       wide
     >
       <Steps current={step} />
@@ -144,7 +144,7 @@ function OwnerStep({ onDone }: { onDone: (email: string) => void }) {
         <Field
           label="Setup token"
           error={errors.setupToken?.message}
-          description="Printed by the installer; also SLIPWAY_SETUP_TOKEN in the installation's .env."
+          description="Printed by the installer; also LAUNCHWAY_SETUP_TOKEN in the installation's .env."
         >
           <Input autoComplete="off" spellCheck={false} {...form.register('setupToken')} />
         </Field>
@@ -166,7 +166,7 @@ function OwnerStep({ onDone }: { onDone: (email: string) => void }) {
         <Input type="password" autoComplete="new-password" {...form.register('confirmPassword')} />
       </Field>
       <p className="text-xs text-muted-foreground">
-        You can add a passkey from your account page once Slipway is set up.
+        You can add a passkey from your account page once Launchway is set up.
       </p>
       <Button type="submit" disabled={form.formState.isSubmitting}>
         {form.formState.isSubmitting && <Loader2 className="animate-spin" />}
@@ -204,7 +204,7 @@ function PlatformStep({ ownerEmail, onDone }: { ownerEmail: string; onDone: () =
       <Field
         label="Platform URL"
         error={errors.publicUrl?.message}
-        description="Origin of this Slipway installation, e.g. https://deploy.example.com. Slipway requests its certificate once DNS points here."
+        description="Origin of this Launchway installation, e.g. https://deploy.example.com. Launchway requests its certificate once DNS points here."
       >
         <Input type="url" inputMode="url" {...form.register('publicUrl')} />
       </Field>
@@ -234,7 +234,7 @@ function DoneStep() {
       <div className="flex items-center gap-3">
         <CheckCircle2 className="size-8 text-emerald-500" aria-hidden="true" />
         <div>
-          <p className="font-medium">Slipway is ready.</p>
+          <p className="font-medium">Launchway is ready.</p>
           <p className="text-sm text-muted-foreground">
             Next: connect GitHub and check that the local node is online.
           </p>

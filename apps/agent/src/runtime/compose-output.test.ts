@@ -9,7 +9,7 @@ import {
 
 const web = {
   ID: 'db2655ad371b',
-  Name: 'slipway-trail-web-1',
+  Name: 'launchway-trail-web-1',
   Service: 'web',
   State: 'running',
   Health: 'healthy',
@@ -20,7 +20,7 @@ const web = {
 };
 const worker = {
   ID: 'f358da6c5e51',
-  Name: 'slipway-trail-worker-1',
+  Name: 'launchway-trail-worker-1',
   Service: 'worker',
   State: 'exited',
   Health: '',
@@ -84,7 +84,7 @@ describe('log lines', () => {
     [web, worker, { ...web, Name: 'custom-name', Service: 'api' }]
       .map((e) => JSON.stringify(e))
       .join('\n'),
-    'slipway-trail',
+    'launchway-trail',
   );
 
   it('normalizes nanosecond timestamps', () => {

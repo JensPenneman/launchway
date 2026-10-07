@@ -1,4 +1,4 @@
-import { type RouteTarget, serviceAlias } from '@slipway/contracts';
+import { type RouteTarget, serviceAlias } from '@launchway/contracts';
 import { invalidField } from '../../lib/problem.js';
 
 /** A routed service of another app, as stored. */

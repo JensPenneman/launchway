@@ -1,5 +1,5 @@
 import { getServers, Resolver } from 'node:dns/promises';
-import type { DnsRecordInput, DomainVerification } from '@slipway/contracts';
+import type { DnsRecordInput, DomainVerification } from '@launchway/contracts';
 
 /** The lookups verification needs; `node:dns/promises` Resolver satisfies it. */
 export interface DnsLookup {
@@ -113,7 +113,7 @@ function describe(observed: ObservedRecords): string {
   return parts.length > 0 ? parts.join('; ') : 'no records';
 }
 
-/** Compares what DNS answered with what Slipway expects (the DNS preflight). */
+/** Compares what DNS answered with what Launchway expects (the DNS preflight). */
 export function evaluateDns(
   hostname: string,
   expected: ExpectedRecord | null,

@@ -1,4 +1,10 @@
-import type { DomainId, DomainStatus, EdgeConfig, EdgeError, EventTopic } from '@slipway/contracts';
+import type {
+  DomainId,
+  DomainStatus,
+  EdgeConfig,
+  EdgeError,
+  EventTopic,
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import type { Deps } from '../../deps.js';
 import { ProblemError } from '../../lib/problem.js';

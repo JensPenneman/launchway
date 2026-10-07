@@ -10,7 +10,7 @@ import {
   isInProgressStatus,
   type LogLine,
   type NodeId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import type { DeploymentSink } from '../../lib/agent-gateway.js';

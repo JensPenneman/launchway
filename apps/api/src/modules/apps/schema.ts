@@ -1,4 +1,4 @@
-import type { AppId, GitHubConnectionId, NodeId } from '@slipway/contracts';
+import type { AppId, GitHubConnectionId, NodeId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { boolean, check, index, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps } from '../../db/columns.js';

@@ -1,5 +1,5 @@
 import { hostname } from 'node:os';
-import { AGENT_PROTOCOL_VERSION } from '@slipway/contracts';
+import { AGENT_PROTOCOL_VERSION } from '@launchway/contracts';
 import { AgentConfigError, loadAgentConfig } from './config.js';
 import { AgentConnection } from './connection.js';
 import { createTokenSource, loadCredentials, saveCredentials } from './credentials.js';
@@ -29,7 +29,7 @@ const credentials = await loadCredentials(config.workspace);
 
 if (!credentials && !config.joinToken) {
   logger.fatal(
-    'Not joined yet and SLIPWAY_JOIN_TOKEN is not set. Create a node in the UI to get a join token.',
+    'Not joined yet and LAUNCHWAY_JOIN_TOKEN is not set. Create a node in the UI to get a join token.',
   );
   process.exit(1);
 }
@@ -93,7 +93,7 @@ const reportLiveness = () => {
 reportLiveness();
 const liveness = setInterval(reportLiveness, LIVENESS_INTERVAL_MS);
 
-logger.info({ version: AGENT_VERSION, url: config.socketUrl }, 'Slipway agent starting');
+logger.info({ version: AGENT_VERSION, url: config.socketUrl }, 'Launchway agent starting');
 connection.start();
 
 process.on('unhandledRejection', (reason) => {

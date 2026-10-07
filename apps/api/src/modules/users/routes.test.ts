@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../../test/support/deps.js';
 import { jsonRequest, tokenPrincipal } from '../../../test/support/requests.js';

@@ -1,4 +1,4 @@
-import type { Settings } from '@slipway/contracts';
+import type { Settings } from '@launchway/contracts';
 import { pino } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 import {

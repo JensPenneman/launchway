@@ -1,4 +1,4 @@
-import type { Node, NodeJoinToken } from '@slipway/contracts';
+import type { Node, NodeJoinToken } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Ban, KeyRound, Loader2, Pencil, RefreshCw, Shield, Trash2 } from 'lucide-react';

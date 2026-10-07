@@ -1,11 +1,11 @@
-import { TOKEN_SCOPES, type UserId } from '@slipway/contracts';
+import { TOKEN_SCOPES, type UserId } from '@launchway/contracts';
 import { index, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { users } from '../users/schema.js';
 
 export const tokenScope = pgEnum('token_scope', TOKEN_SCOPES);
 
-/** API tokens (`slp_...`): SHA-256 hash at rest, plaintext shown once. */
+/** API tokens (`lwy_...`): SHA-256 hash at rest, plaintext shown once. */
 export const apiTokens = pgTable(
   'api_tokens',
   {

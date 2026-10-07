@@ -8,7 +8,7 @@ import {
   AGENT_WS_PATH,
   type HelloPayload,
   type ServerToAgentMessage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { WebSocket, WebSocketServer } from 'ws';
 import { createApp } from '../../src/app.js';
 import type { Deps } from '../../src/deps.js';
@@ -49,7 +49,7 @@ export function helloPayload(overrides: Partial<HelloPayload> = {}): HelloPayloa
   };
 }
 
-/** A scripted agent speaking the protocol from @slipway/contracts. */
+/** A scripted agent speaking the protocol from @launchway/contracts. */
 export class TestAgent {
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly #socket: WebSocket;

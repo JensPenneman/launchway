@@ -63,14 +63,22 @@ describe('app source', () => {
 
 describe('naming', () => {
   it('derives compose project names and aliases', () => {
-    expect(composeProjectName('trail')).toBe('slipway-trail');
+    expect(composeProjectName('trail')).toBe('launchway-trail');
     expect(serviceAlias('trail', 'web')).toBe('trail-web');
     expect(() => serviceAlias('a'.repeat(40), 'b'.repeat(30))).toThrow(RangeError);
   });
 
   it('validates slugs and reserves platform names', () => {
     expect(AppSlug.safeParse('trail-2').success).toBe(true);
-    for (const bad of ['Trail', '-trail', 'trail-', 'slipway', 'caddy', 'a'.repeat(41), 'tr_ail']) {
+    for (const bad of [
+      'Trail',
+      '-trail',
+      'trail-',
+      'launchway',
+      'caddy',
+      'a'.repeat(41),
+      'tr_ail',
+    ]) {
       expect(AppSlug.safeParse(bad).success).toBe(false);
     }
   });

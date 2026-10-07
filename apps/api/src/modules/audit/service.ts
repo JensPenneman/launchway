@@ -1,4 +1,4 @@
-import type { AuditEvent, AuditEventPage, AuditListQuery } from '@slipway/contracts';
+import type { AuditEvent, AuditEventPage, AuditListQuery } from '@launchway/contracts';
 import { and, desc, eq, getTableColumns, gte, like, lt, type SQL } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { auditActorOf, type RequestActor } from '../../lib/auth-context.js';

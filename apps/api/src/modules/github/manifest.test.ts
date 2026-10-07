@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { GitHubAppManifest, generateId } from '@slipway/contracts';
+import { GitHubAppManifest, generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   buildManifest,
@@ -18,7 +18,7 @@ describe('GitHub App manifest', () => {
     const manifest = buildManifest(
       'https://deploy.example.com',
       id,
-      'Slipway (deploy.example.com)',
+      'Launchway (deploy.example.com)',
     );
     expect(GitHubAppManifest.parse(manifest)).toEqual(manifest);
     expect(manifest).toMatchObject({
@@ -32,10 +32,10 @@ describe('GitHub App manifest', () => {
   });
 
   it('names the app after the public host within GitHub limits', () => {
-    expect(defaultAppName('https://deploy.example.com')).toBe('Slipway (deploy.example.com)');
+    expect(defaultAppName('https://deploy.example.com')).toBe('Launchway (deploy.example.com)');
     const long = defaultAppName('https://a-very-long-subdomain.of-a-long-domain.example.com');
     expect(long.length).toBeLessThanOrEqual(34);
-    expect(long.startsWith('Slipway (')).toBe(true);
+    expect(long.startsWith('Launchway (')).toBe(true);
   });
 
   it('posts to the personal or organization app form with the state', () => {

@@ -1,4 +1,4 @@
-import { type App, DisplayName, UpdateAppInput } from '@slipway/contracts';
+import { type App, DisplayName, UpdateAppInput } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';

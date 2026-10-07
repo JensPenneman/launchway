@@ -7,7 +7,7 @@ export const Settings = z
   .object({
     publicUrl: PublicUrl.nullable().openapi({ description: 'Origin of the platform UI/API' }),
     effectivePublicUrl: PublicUrl.nullable().openapi({
-      description: 'publicUrl after applying the SLIPWAY_PUBLIC_URL override (read-only)',
+      description: 'publicUrl after applying the LAUNCHWAY_PUBLIC_URL override (read-only)',
     }),
     acmeEmail: Email.nullable().openapi({ description: "Let's Encrypt account e-mail" }),
     anchorHostname: Hostname.nullable().openapi({

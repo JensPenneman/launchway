@@ -7,7 +7,7 @@ import {
   type AgentToServerMessage,
   generateId,
   parseAgentToServerMessage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { pino } from 'pino';
 import { afterEach, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -17,7 +17,7 @@ import { createAgentRuntime } from './runtime/agent-runtime.js';
 import type { Runner } from './runtime/exec.js';
 
 const logger = pino({ level: 'silent' });
-const credential = `slpa_${'b'.repeat(43)}`;
+const credential = `lwya_${'b'.repeat(43)}`;
 const nodeId = generateId('node');
 
 interface Harness {
@@ -88,8 +88,8 @@ afterEach(async () => {
 
 describe('AgentConnection', () => {
   it('joins again with the join token when the server refuses the stored credential', async () => {
-    const stale = `slpa_${'s'.repeat(43)}`;
-    const joinToken = `slpn_${'j'.repeat(43)}`;
+    const stale = `lwya_${'s'.repeat(43)}`;
+    const joinToken = `lwyn_${'j'.repeat(43)}`;
     const harness = await startServer((authorization) => authorization === `Bearer ${stale}`);
     const tokens = createTokenSource({ nodeId: generateId('node'), credential: stale }, joinToken);
     const connection = new AgentConnection({
@@ -157,9 +157,9 @@ describe('AgentConnection', () => {
 
   it('joins with the join token, stores the credential, heartbeats and answers requests', async () => {
     const harness = await startServer();
-    let token = `slpn_${'a'.repeat(43)}`;
+    let token = `lwyn_${'a'.repeat(43)}`;
     const joined: string[] = [];
-    const workspace = await mkdtemp(join(tmpdir(), 'slipway-agent-conn-'));
+    const workspace = await mkdtemp(join(tmpdir(), 'launchway-agent-conn-'));
     const commands: string[][] = [];
     const run: Runner = async (_command, args) => {
       commands.push([...args]);
@@ -202,7 +202,7 @@ describe('AgentConnection', () => {
 
     connection.start();
     await waitFor(() => connection.connected);
-    expect(harness.authorizations[0]).toBe(`Bearer slpn_${'a'.repeat(43)}`);
+    expect(harness.authorizations[0]).toBe(`Bearer lwyn_${'a'.repeat(43)}`);
     expect(harness.received[0]?.type).toBe('hello');
     expect(joined).toEqual([nodeId]);
 
@@ -225,7 +225,7 @@ describe('AgentConnection', () => {
       type: 'app.status',
       payload: { appId, services: [] },
     });
-    expect(commands[0]).toEqual(expect.arrayContaining(['-p', 'slipway-trail', 'ps', '--all']));
+    expect(commands[0]).toEqual(expect.arrayContaining(['-p', 'launchway-trail', 'ps', '--all']));
     await waitFor(() => harness.received.some((m) => m.type === 'error'));
     expect(harness.received.find((m) => m.type === 'error')).toMatchObject({
       id: 'req-8',

@@ -7,7 +7,7 @@ import {
   DomainPage,
   DomainVerification,
   UpdateDomainInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
@@ -43,7 +43,7 @@ const createDomain = createRoute({
   tags,
   summary: 'Add a domain',
   description:
-    'With a zone (given or matched automatically), Slipway creates the record at the provider: a CNAME to the anchor hostname, or an A record with the public IPv4 when no anchor is set (or the domain is the anchor). Audited.',
+    'With a zone (given or matched automatically), Launchway creates the record at the provider: a CNAME to the anchor hostname, or an A record with the public IPv4 when no anchor is set (or the domain is the anchor). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { body: jsonBody(CreateDomainInput) },
@@ -72,7 +72,7 @@ const updateDomain = createRoute({
   tags,
   summary: 'Change the zone, proxying or force flag of a domain',
   description:
-    'Moving to another zone deletes the record Slipway created and creates one in the new zone; `zoneId: null` makes the domain unmanaged. Audited.',
+    'Moving to another zone deletes the record Launchway created and creates one in the new zone; `zoneId: null` makes the domain unmanaged. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: DomainParams, body: jsonBody(UpdateDomainInput) },
@@ -88,7 +88,7 @@ const deleteDomain = createRoute({
   operationId: 'deleteDomain',
   tags,
   summary: 'Delete a domain',
-  description: 'Also deletes the DNS record Slipway created for it and its route. Audited.',
+  description: 'Also deletes the DNS record Launchway created for it and its route. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: DomainParams },

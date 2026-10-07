@@ -1,8 +1,8 @@
 {
-  "name": "@slipway/agent",
+  "name": "@launchway/agent",
   "version": "0.1.0",
   "private": true,
-  "description": "Slipway node agent: owns Docker on its node and runs Compose projects for the control plane.",
+  "description": "Launchway node agent: owns Docker on its node and runs Compose projects for the control plane.",
   "license": "Apache-2.0",
   "type": "module",
   "files": [
@@ -10,21 +10,21 @@
   ],
   "scripts": {
     "build": "tsc -b tsconfig.build.json",
-    "dev": "tsx watch --conditions=@slipway/source --env-file-if-exists=.env src/index.ts | pino-pretty",
+    "dev": "tsx watch --conditions=@launchway/source --env-file-if-exists=.env src/index.ts | pino-pretty",
     "start": "node --enable-source-maps dist/index.js",
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@slipway/contracts": "workspace:*",
+    "@launchway/contracts": "workspace:*",
     "dockerode": "5.0.1",
     "pino": "catalog:",
     "ws": "catalog:",
     "zod": "catalog:"
   },
   "devDependencies": {
-    "@slipway/tsconfig": "workspace:*",
+    "@launchway/tsconfig": "workspace:*",
     "@types/dockerode": "4.0.1",
     "@types/node": "catalog:",
     "@types/ws": "catalog:",

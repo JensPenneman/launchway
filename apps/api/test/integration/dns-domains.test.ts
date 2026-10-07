@@ -6,7 +6,7 @@ import type {
   Domain,
   DomainId,
   DomainPage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';

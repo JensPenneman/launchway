@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "display": "Slipway base",
+  "display": "Launchway base",
   "compilerOptions": {
     "target": "ES2024",
     "lib": ["ES2024"],

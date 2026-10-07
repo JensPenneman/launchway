@@ -1,4 +1,4 @@
-import { generateId, type IdPrefix, type TypeId } from '@slipway/contracts';
+import { generateId, type IdPrefix, type TypeId } from '@launchway/contracts';
 import { customType, text, timestamp } from 'drizzle-orm/pg-core';
 
 /** Primary key holding a prefixed TypeID (`app_01h...`), generated on insert. */

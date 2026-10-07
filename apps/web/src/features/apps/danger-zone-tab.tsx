@@ -1,4 +1,4 @@
-import type { App } from '@slipway/contracts';
+import type { App } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate } from '@tanstack/react-router';
 import { Square, Trash2 } from 'lucide-react';
@@ -84,7 +84,7 @@ export function DangerZoneTab({ app }: { app: App }) {
                 </div>
                 {nodeOffline && (
                   <p className="text-xs text-amber-700 dark:text-amber-300">
-                    {node.data?.name} is offline: Slipway forgets the app, but its containers stay
+                    {node.data?.name} is offline: Launchway forgets the app, but its containers stay
                     on the node until you remove them there.
                   </p>
                 )}

@@ -1,6 +1,6 @@
 import { defineConfig } from 'vitest/config';
 
-const conditions = ['@slipway/source', 'module', 'node', 'development|production'];
+const conditions = ['@launchway/source', 'module', 'node', 'development|production'];
 
 export default defineConfig({
   resolve: { conditions },

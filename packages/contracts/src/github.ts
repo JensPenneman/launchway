@@ -12,7 +12,7 @@ export const GitHubConnectionKind = z
   });
 export type GitHubConnectionKind = z.infer<typeof GitHubConnectionKind>;
 
-/** Webhook events Slipway handles (spec section 8). */
+/** Webhook events Launchway handles (spec section 8). */
 export const GITHUB_WEBHOOK_EVENTS = [
   'ping',
   'release',

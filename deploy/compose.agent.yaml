@@ -1,10 +1,10 @@
-# Slipway node agent for an additional machine.
+# Launchway node agent for an additional machine.
 #
 # In the web UI, open "Add node" and put the values it shows in a .env file
 # next to this file:
 #
-#   SLIPWAY_SERVER_URL=wss://deploy.example.com
-#   SLIPWAY_JOIN_TOKEN=slpn_...
+#   LAUNCHWAY_SERVER_URL=wss://deploy.example.com
+#   LAUNCHWAY_JOIN_TOKEN=lwyn_...
 #
 # then start the agent from that directory:
 #
@@ -14,16 +14,16 @@
 # needs no inbound port for it. The join token is single-use, valid for 15
 # minutes and only needed for the first start: the agent then keeps a node
 # credential in the agent-data volume, and the token can be removed from .env.
-# SLIPWAY_SERVER_URL is needed on every start.
+# LAUNCHWAY_SERVER_URL is needed on every start.
 #
-# Optional: SLIPWAY_VERSION (image tag; keep it equal to the control plane's),
-# SLIPWAY_NODE_LAN_IP (address the edge uses to reach this node; detected
+# Optional: LAUNCHWAY_VERSION (image tag; keep it equal to the control plane's),
+# LAUNCHWAY_NODE_LAN_IP (address the edge uses to reach this node; detected
 # automatically, set it when detection picks the wrong interface, for example
 # under Docker Desktop) and LOG_LEVEL.
 #
 # Upgrade: docker compose -f compose.agent.yaml pull && docker compose -f compose.agent.yaml up -d
 
-name: slipway-agent
+name: launchway-agent
 
 x-logging: &logging
   driver: json-file
@@ -32,8 +32,8 @@ x-logging: &logging
     max-file: "5"
 
 services:
-  slipway-agent:
-    image: ghcr.io/jenspenneman/slipway-agent:${SLIPWAY_VERSION:-latest}
+  launchway-agent:
+    image: ghcr.io/jenspenneman/launchway-agent:${LAUNCHWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
     # Running deployments get 20 s to report after SIGTERM.
@@ -46,14 +46,14 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      SLIPWAY_SERVER_URL: ${SLIPWAY_SERVER_URL:-}
-      SLIPWAY_JOIN_TOKEN: ${SLIPWAY_JOIN_TOKEN:-}
-      SLIPWAY_NODE_LAN_IP: ${SLIPWAY_NODE_LAN_IP:-}
-      SLIPWAY_WORKSPACE: /var/lib/slipway
+      LAUNCHWAY_SERVER_URL: ${LAUNCHWAY_SERVER_URL:-}
+      LAUNCHWAY_JOIN_TOKEN: ${LAUNCHWAY_JOIN_TOKEN:-}
+      LAUNCHWAY_NODE_LAN_IP: ${LAUNCHWAY_NODE_LAN_IP:-}
+      LAUNCHWAY_WORKSPACE: /var/lib/launchway
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - agent-data:/var/lib/slipway
+      - agent-data:/var/lib/launchway
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
       interval: 10s

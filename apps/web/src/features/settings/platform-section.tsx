@@ -1,4 +1,4 @@
-import { Email, Hostname, HttpUrl, PublicUrl, type Settings } from '@slipway/contracts';
+import { Email, Hostname, HttpUrl, PublicUrl, type Settings } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
 import { Controller, useForm } from 'react-hook-form';
@@ -97,8 +97,8 @@ function PlatformFormCard({ settings }: { settings: Settings }) {
           <CardTitle>Platform</CardTitle>
           <CardDescription>
             {settings.effectivePublicUrl && settings.effectivePublicUrl !== settings.publicUrl
-              ? `SLIPWAY_PUBLIC_URL overrides this: ${settings.effectivePublicUrl}`
-              : 'Where Slipway itself is reachable.'}
+              ? `LAUNCHWAY_PUBLIC_URL overrides this: ${settings.effectivePublicUrl}`
+              : 'Where Launchway itself is reachable.'}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -180,7 +180,7 @@ function PlatformFormCard({ settings }: { settings: Settings }) {
           <CardTitle>Forward auth</CardTitle>
           <CardDescription>
             Protected routes ask this endpoint whether a request may pass (Caddy{' '}
-            <code>forward_auth</code>), e.g. an oauth2-proxy deployed as a Slipway app.
+            <code>forward_auth</code>), e.g. an oauth2-proxy deployed as a Launchway app.
           </CardDescription>
         </CardHeader>
         <CardContent>

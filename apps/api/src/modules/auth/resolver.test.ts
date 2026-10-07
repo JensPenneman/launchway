@@ -1,4 +1,4 @@
-import { generateId, SESSION_COOKIE_NAME } from '@slipway/contracts';
+import { generateId, SESSION_COOKIE_NAME } from '@launchway/contracts';
 import { Hono } from 'hono';
 import { pino } from 'pino';
 import { describe, expect, it } from 'vitest';
@@ -70,8 +70,8 @@ describe('createAuthResolver', () => {
     for (const header of [
       'Basic abc',
       'Bearer',
-      'Bearer slp_short',
-      `Token ${generateToken('slp_')}`,
+      'Bearer lwy_short',
+      `Token ${generateToken('lwy_')}`,
     ]) {
       const { db } = scriptedDb([]);
       expect((await resolveWith(db, { authorization: header })).body.problem?.type).toBe(
@@ -81,7 +81,7 @@ describe('createAuthResolver', () => {
   });
 
   it('leaves join tokens and node credentials to the agent socket (anonymous, no lookup)', async () => {
-    for (const prefix of ['slpn_', 'slpa_'] as const) {
+    for (const prefix of ['lwyn_', 'lwya_'] as const) {
       const { db, statements } = scriptedDb([]);
       const { body } = await resolveWith(db, { authorization: `Bearer ${generateToken(prefix)}` });
       expect(body).toEqual({ principal: null });
@@ -95,7 +95,7 @@ describe('createAuthResolver', () => {
       [{ id: tokenId, scopes: ['read'], expiresAt: null, lastUsedAt: null, user }],
       [],
     ]);
-    const { body } = await resolveWith(db, { authorization: `Bearer ${generateToken('slp_')}` });
+    const { body } = await resolveWith(db, { authorization: `Bearer ${generateToken('lwy_')}` });
     expect(body.principal).toEqual({ kind: 'token', user, tokenId, scopes: ['read'] });
     expect(statements).toEqual(['select', 'update']);
   });
@@ -105,21 +105,21 @@ describe('createAuthResolver', () => {
     const { db, statements } = scriptedDb([
       [{ id: generateId('tok'), scopes: ['write'], expiresAt: null, lastUsedAt: recent, user }],
     ]);
-    await resolveWith(db, { authorization: `bearer ${generateToken('slp_')}` });
+    await resolveWith(db, { authorization: `bearer ${generateToken('lwy_')}` });
     expect(statements).toEqual(['select']);
   });
 
   it('rejects unknown and expired tokens with 401', async () => {
     const unknown = scriptedDb([[]]);
     expect(
-      (await resolveWith(unknown.db, { authorization: `Bearer ${generateToken('slp_')}` })).body
+      (await resolveWith(unknown.db, { authorization: `Bearer ${generateToken('lwy_')}` })).body
         .problem?.type,
     ).toBe('unauthorized');
     const expired = scriptedDb([
       [{ id: generateId('tok'), scopes: ['admin'], expiresAt: NOW, lastUsedAt: null, user }],
     ]);
     expect(
-      (await resolveWith(expired.db, { authorization: `Bearer ${generateToken('slp_')}` })).body
+      (await resolveWith(expired.db, { authorization: `Bearer ${generateToken('lwy_')}` })).body
         .problem?.type,
     ).toBe('unauthorized');
   });
@@ -173,7 +173,7 @@ describe('createAuthResolver', () => {
       [{ id: tokenId, scopes: ['read'], expiresAt: null, lastUsedAt: NOW, user }],
     ]);
     const { body } = await resolveWith(db, {
-      authorization: `Bearer ${generateToken('slp_')}`,
+      authorization: `Bearer ${generateToken('lwy_')}`,
       cookie: `${SESSION_COOKIE_NAME}=${generateSessionToken()}`,
     });
     expect(body.principal).toMatchObject({ kind: 'token', tokenId });

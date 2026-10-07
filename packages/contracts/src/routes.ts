@@ -8,7 +8,7 @@ export type RouteTargetKind = (typeof ROUTE_TARGET_KINDS)[number];
 
 export const AppRouteTarget = z
   .object({ kind: z.literal('app'), appId: AppId, service: RoutableServiceName, port: Port })
-  .openapi('AppRouteTarget', { description: 'A service port of a Slipway app' });
+  .openapi('AppRouteTarget', { description: 'A service port of a Launchway app' });
 
 export const ExternalRouteTarget = z
   .object({

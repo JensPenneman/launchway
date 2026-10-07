@@ -11,7 +11,7 @@ import {
   type UpdateMeInput,
   type User,
   type UserId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, desc, eq, gt, ne, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/errors.js';
@@ -129,7 +129,7 @@ export function createAuthService(
       const passwordHash = await hashPassword(input.password);
       const result = await deps.db.transaction(async (tx) => {
         // Serializes concurrent setup attempts; the single-owner index is the final guard.
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('slipway:setup'))`);
+        await tx.execute(sql`select pg_advisory_xact_lock(hashtext('launchway:setup'))`);
         const [existing] = await tx.select({ id: users.id }).from(users).limit(1);
         if (existing) throw conflict('Setup is already complete');
         const owner = await insertUser(tx, {

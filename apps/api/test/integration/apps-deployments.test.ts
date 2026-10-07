@@ -7,7 +7,7 @@ import {
   type NodeId,
   QUEUED_DEPLOYMENT_TIMEOUT_MS,
   type ServiceStatus,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
@@ -234,7 +234,7 @@ describe('apps and deployments against PostgreSQL', () => {
       build: { kind: 'compose', composeFiles: ['compose.yaml'] },
       env: { PLAIN: 'visible', TOKEN: 'hidden-value' },
       routes: [{ service: 'web', port: 8080, alias: `${app.slug}-web` }],
-      network: { proxyNetwork: 'slipway-proxy', publishOnIp: '192.168.1.30' },
+      network: { proxyNetwork: 'launchway-proxy', publishOnIp: '192.168.1.30' },
     });
 
     await runToCompletion(first, otherNode);

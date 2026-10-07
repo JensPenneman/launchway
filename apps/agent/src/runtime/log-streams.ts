@@ -1,4 +1,4 @@
-import { type AppLogLine, composeProjectName, type LogsStartPayload } from '@slipway/contracts';
+import { type AppLogLine, composeProjectName, type LogsStartPayload } from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { composeArgs } from './compose.js';
 import { containerServiceMap, parseComposeLogLine } from './compose-output.js';

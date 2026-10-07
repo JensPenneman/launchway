@@ -4,9 +4,9 @@ import { list } from './pagination.js';
 import type { UserRole } from './users.js';
 import { z } from './zod.js';
 
-/** API tokens are `slp_` + 32 random bytes in base62 (43 characters). */
-export const API_TOKEN_PREFIX = 'slp_';
-export const API_TOKEN_PATTERN = /^slp_[0-9A-Za-z]{43}$/;
+/** API tokens are `lwy_` + 32 random bytes in base62 (43 characters). */
+export const API_TOKEN_PREFIX = 'lwy_';
+export const API_TOKEN_PATTERN = /^lwy_[0-9A-Za-z]{43}$/;
 
 export const TOKEN_SCOPES = ['read', 'write', 'admin'] as const;
 export const TokenScope = z.enum(TOKEN_SCOPES).openapi('TokenScope', {
@@ -39,7 +39,7 @@ export const ApiToken = z
     scopes: z.array(TokenScope).min(1),
     tokenHint: z
       .string()
-      .openapi({ description: 'First characters, for recognition', example: 'slp_4fQx' }),
+      .openapi({ description: 'First characters, for recognition', example: 'lwy_4fQx' }),
     expiresAt: Timestamp.nullable(),
     lastUsedAt: Timestamp.nullable(),
     createdAt: Timestamp,

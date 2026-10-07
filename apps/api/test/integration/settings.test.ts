@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';

@@ -1,4 +1,4 @@
-import type { AgentToServerMessage } from '@slipway/contracts';
+import type { AgentToServerMessage } from '@launchway/contracts';
 
 export type Send = (message: AgentToServerMessage) => void;
 

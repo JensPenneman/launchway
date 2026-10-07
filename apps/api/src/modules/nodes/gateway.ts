@@ -16,7 +16,7 @@ import {
   type ServerToAgentMessage,
   type ServiceStatus,
   SUPPORTED_AGENT_PROTOCOL_VERSIONS,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import type { Deps } from '../../deps.js';
 import {
@@ -410,7 +410,7 @@ export class NodeAgentGateway implements AgentGateway {
       );
       this.#sendError(connection, helloId, {
         code: 'incompatible-protocol',
-        message: `Protocol version ${hello.protocolVersion} is not supported by this server (supported: ${SUPPORTED_AGENT_PROTOCOL_VERSIONS.join(', ')}). Use an agent of the same Slipway version as the control plane (${this.#deps.version}).`,
+        message: `Protocol version ${hello.protocolVersion} is not supported by this server (supported: ${SUPPORTED_AGENT_PROTOCOL_VERSIONS.join(', ')}). Use an agent of the same Launchway version as the control plane (${this.#deps.version}).`,
         retryable: false,
       });
       this.#closeSocket(

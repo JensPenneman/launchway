@@ -41,8 +41,8 @@ describe('route target union', () => {
       'fe80::1',
       '::ffff:127.0.0.1',
       'caddy',
-      'slipway',
-      'slipway-agent',
+      'launchway',
+      'launchway-agent',
       'db',
     ]) {
       expect(
@@ -61,7 +61,7 @@ describe('route target union', () => {
   });
 
   it('rejects routing to service names reserved for platform containers', () => {
-    for (const service of ['slipway', 'slipway-agent', 'caddy', 'db']) {
+    for (const service of ['launchway', 'launchway-agent', 'caddy', 'db']) {
       expect(
         RouteTarget.safeParse({ kind: 'app', appId: generateId('app'), service, port: 80 }).success,
       ).toBe(false);

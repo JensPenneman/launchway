@@ -1,4 +1,4 @@
-import type { EventAction, EventTopic, PlatformEvent } from '@slipway/contracts';
+import type { EventAction, EventTopic, PlatformEvent } from '@launchway/contracts';
 
 export interface PublishInput {
   topic: EventTopic;

@@ -12,7 +12,7 @@ import {
   SetEnvVarsInput,
   UpdateAppInput,
   UpdateEnvVarInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { HttpResponse, http, sse } from 'msw';
 import { db } from '../db';
 import {
@@ -39,7 +39,7 @@ const STAGES: [DeploymentStatus, number, [LogLine['stream'], string][]][] = [
     400,
     [
       ['system', 'Cloning the repository'],
-      ['stdout', "Cloning into '/var/lib/slipway/apps/…'"],
+      ['stdout', "Cloning into '/var/lib/launchway/apps/…'"],
     ],
   ],
   [

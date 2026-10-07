@@ -7,7 +7,7 @@ import {
   type HelloPayload,
   parseServerToAgentMessage,
   type ServerToAgentMessage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import WebSocket from 'ws';
 import { type BackoffOptions, backoffDelay, DEFAULT_BACKOFF } from './backoff.js';

@@ -1,4 +1,4 @@
-import { DisplayName, Email, type Passkey, Password, z } from '@slipway/contracts';
+import { DisplayName, Email, type Passkey, Password, z } from '@launchway/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { KeyRound, Loader2, LogOut, Monitor, Pencil, Trash2 } from 'lucide-react';
 import { useState } from 'react';

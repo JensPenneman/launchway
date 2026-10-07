@@ -1,4 +1,4 @@
-import { DnsRecord, DnsZoneInfo } from '@slipway/contracts';
+import { DnsRecord, DnsZoneInfo } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createFakeCloudflare } from '../../../../test/support/fake-cloudflare.js';
 import {

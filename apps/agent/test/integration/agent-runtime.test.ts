@@ -12,7 +12,7 @@ import {
   generateId,
   parseAgentToServerMessage,
   type ServerToAgentMessage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { pino } from 'pino';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -24,8 +24,8 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? 'silent' });
 
 const suffix = randomBytes(4).toString('hex');
 const slug = `it-${suffix}`;
-const project = `slipway-${slug}`;
-const proxyNetwork = `slipway-it-proxy-${suffix}`;
+const project = `launchway-${slug}`;
+const proxyNetwork = `launchway-it-proxy-${suffix}`;
 const appId = generateId('app');
 const cloneUrl = 'https://git.example.test/acme/fixture.git';
 
@@ -39,9 +39,9 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     cwd,
     env: {
       ...process.env,
-      GIT_AUTHOR_NAME: 'Slipway Test',
+      GIT_AUTHOR_NAME: 'Launchway Test',
       GIT_AUTHOR_EMAIL: 'test@example.com',
-      GIT_COMMITTER_NAME: 'Slipway Test',
+      GIT_COMMITTER_NAME: 'Launchway Test',
       GIT_COMMITTER_EMAIL: 'test@example.com',
     },
   });
@@ -187,7 +187,7 @@ async function cleanupDocker(): Promise<void> {
 
 beforeAll(async () => {
   await docker('version', '--format', '{{.Server.Version}}');
-  tmp = await mkdtemp(join(tmpdir(), 'slipway-agent-it-'));
+  tmp = await mkdtemp(join(tmpdir(), 'launchway-agent-it-'));
   workspace = join(tmp, 'workspace');
   await createFixtureRepository();
   plane = await startControlPlane();
@@ -204,7 +204,7 @@ beforeAll(async () => {
   connection = new AgentConnection({
     url: plane.url,
     logger,
-    token: () => `slpa_${'c'.repeat(43)}`,
+    token: () => `lwya_${'c'.repeat(43)}`,
     hello: async () => ({
       protocolVersion: AGENT_PROTOCOL_VERSION,
       agentVersion: 'test',
@@ -284,9 +284,9 @@ describe('agent runtime against Docker', () => {
     const container = inspect[0];
     expect(container?.Config.Env).toContain("GREETING=hello 'world' $HOME");
     expect(container?.Config.Labels).toMatchObject({
-      'slipway.app': appId,
-      'slipway.deployment': payload.deploymentId,
-      'slipway.service': 'web',
+      'launchway.app': appId,
+      'launchway.deployment': payload.deploymentId,
+      'launchway.service': 'web',
     });
     const proxy = container?.NetworkSettings.Networks[proxyNetwork];
     expect([...(proxy?.Aliases ?? []), ...(proxy?.DNSNames ?? [])]).toContain(`${slug}-web`);

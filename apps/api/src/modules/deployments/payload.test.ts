@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   buildDeployPayload,
@@ -27,7 +27,7 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
       { service: 'web', port: 8080 },
       { service: 'api', port: 3000 },
     ],
-    proxyNetwork: 'slipway-proxy',
+    proxyNetwork: 'launchway-proxy',
     nodeLanIp: '192.168.1.20',
     edgeNodeId: edge,
     ...overrides,
@@ -37,7 +37,7 @@ function input(overrides: Partial<DeployPayloadInput> = {}): DeployPayloadInput 
 describe('buildDeployPayload', () => {
   it('does not publish on the LAN IP when the app runs on the edge node', () => {
     expect(buildDeployPayload(input()).network).toEqual({
-      proxyNetwork: 'slipway-proxy',
+      proxyNetwork: 'launchway-proxy',
       publishOnIp: null,
     });
   });

@@ -15,7 +15,7 @@ import {
   SetupStatus,
   UpdateMeInput,
   WebAuthnOptions,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Context } from 'hono';
 import type { Api, AppEnv, Deps } from '../../deps.js';
 import {
@@ -41,7 +41,7 @@ import { clearSessionCookie, readSessionCookie, writeSessionCookie } from './ses
 const LOGIN_ACCOUNT_LIMIT = { capacity: 10, refillPerSecond: 1 / 30 };
 const SessionParams = z.object({ id: SessionId });
 const PasskeyParams = z.object({ id: PasskeyId });
-const signedIn = 'Signed in; the response sets the `slipway_session` cookie';
+const signedIn = 'Signed in; the response sets the `launchway_session` cookie';
 
 // --- First run ---------------------------------------------------------------------------------
 

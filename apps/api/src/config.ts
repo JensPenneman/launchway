@@ -1,6 +1,6 @@
 import { isIP } from 'node:net';
 import { fileURLToPath } from 'node:url';
-import { Email, NODE_JOIN_TOKEN_PATTERN, PublicUrl } from '@slipway/contracts';
+import { Email, NODE_JOIN_TOKEN_PATTERN, PublicUrl } from '@launchway/contracts';
 import { z } from 'zod';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -12,7 +12,7 @@ export interface Config {
   /** Raw 32-byte master key; use lib/crypto to derive purpose-specific keys. */
   readonly secretKey: Buffer;
   readonly listen: { readonly host: string; readonly port: number };
-  /** SLIPWAY_PUBLIC_URL override of Setting.publicUrl (origin, no trailing slash). */
+  /** LAUNCHWAY_PUBLIC_URL override of Setting.publicUrl (origin, no trailing slash). */
   readonly publicUrl: string | null;
   /** `unix:///path/to/admin.sock` (default) or `http://host:port` (development and tests). */
   readonly caddyAdminUrl: string;
@@ -23,7 +23,7 @@ export interface Config {
   readonly trustedProxies: readonly string[];
   /** Default for Setting.acmeEmail (also used by the Caddy bootstrap file). */
   readonly acmeEmail: string | null;
-  /** One-time secret the first-run setup requires (SLIPWAY_SETUP_TOKEN); null: not required. */
+  /** One-time secret the first-run setup requires (LAUNCHWAY_SETUP_TOKEN); null: not required. */
   readonly setupToken: string | null;
   /** Bootstrap join token for the bundled agent on the local (edge) node. */
   readonly localJoinToken: string | null;
@@ -42,12 +42,12 @@ export class ConfigError extends Error {
 }
 
 const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../../web/dist', import.meta.url));
-/** Caddy's admin socket on the volume shared by the `caddy` and `slipway` containers only. */
+/** Caddy's admin socket on the volume shared by the `caddy` and `launchway` containers only. */
 export const DEFAULT_CADDY_ADMIN_SOCKET = '/run/caddy-admin/admin.sock';
 
 /**
  * The Caddy `admin` listener for an admin URL. A unix socket keeps the admin API off every
- * network (app containers share `slipway-proxy` with Caddy); `|0222` lets the non-root API
+ * network (app containers share `launchway-proxy` with Caddy); `|0222` lets the non-root API
  * connect. A TCP URL is for development and tests: Caddy then listens on all interfaces.
  */
 export function caddyAdminListen(adminUrl: string): string {
@@ -103,26 +103,26 @@ const cidrList = z
 const EnvSchema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('production'),
   DATABASE_URL: z.url({ protocol: /^postgres(?:ql)?$/ }),
-  SLIPWAY_SECRET_KEY: secretKey,
-  SLIPWAY_LISTEN: listenAddress,
-  SLIPWAY_PUBLIC_URL: PublicUrl.optional(),
-  SLIPWAY_CADDY_ADMIN_URL: z
+  LAUNCHWAY_SECRET_KEY: secretKey,
+  LAUNCHWAY_LISTEN: listenAddress,
+  LAUNCHWAY_PUBLIC_URL: PublicUrl.optional(),
+  LAUNCHWAY_CADDY_ADMIN_URL: z
     .url({ protocol: /^(https?|unix)$/ })
     .default(`unix://${DEFAULT_CADDY_ADMIN_SOCKET}`),
-  SLIPWAY_PROXY_NETWORK: z.string().min(1).max(64).default('slipway-proxy'),
-  SLIPWAY_TRUSTED_PROXIES: cidrList,
-  SLIPWAY_ACME_EMAIL: Email.optional(),
-  SLIPWAY_SETUP_TOKEN: z
+  LAUNCHWAY_PROXY_NETWORK: z.string().min(1).max(64).default('launchway-proxy'),
+  LAUNCHWAY_TRUSTED_PROXIES: cidrList,
+  LAUNCHWAY_ACME_EMAIL: Email.optional(),
+  LAUNCHWAY_SETUP_TOKEN: z
     .string()
     .trim()
     .min(20, 'must be at least 20 characters')
     .max(200)
     .optional(),
-  SLIPWAY_LOCAL_JOIN_TOKEN: z
+  LAUNCHWAY_LOCAL_JOIN_TOKEN: z
     .string()
-    .regex(NODE_JOIN_TOKEN_PATTERN, 'must be slpn_ followed by 43 base62 characters')
+    .regex(NODE_JOIN_TOKEN_PATTERN, 'must be lwyn_ followed by 43 base62 characters')
     .optional(),
-  SLIPWAY_WEB_ROOT: z.string().min(1).optional(),
+  LAUNCHWAY_WEB_ROOT: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
 });
 
@@ -146,17 +146,17 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   return {
     env: e.NODE_ENV,
     databaseUrl: e.DATABASE_URL,
-    secretKey: e.SLIPWAY_SECRET_KEY,
-    listen: e.SLIPWAY_LISTEN,
-    publicUrl: e.SLIPWAY_PUBLIC_URL ? new URL(e.SLIPWAY_PUBLIC_URL).origin : null,
-    caddyAdminUrl: e.SLIPWAY_CADDY_ADMIN_URL.replace(/\/+$/, ''),
-    caddyAdminListen: caddyAdminListen(e.SLIPWAY_CADDY_ADMIN_URL),
-    proxyNetwork: e.SLIPWAY_PROXY_NETWORK,
-    trustedProxies: e.SLIPWAY_TRUSTED_PROXIES,
-    acmeEmail: e.SLIPWAY_ACME_EMAIL ?? null,
-    setupToken: e.SLIPWAY_SETUP_TOKEN ?? null,
-    localJoinToken: e.SLIPWAY_LOCAL_JOIN_TOKEN ?? null,
-    webRoot: e.SLIPWAY_WEB_ROOT ?? DEFAULT_WEB_ROOT,
+    secretKey: e.LAUNCHWAY_SECRET_KEY,
+    listen: e.LAUNCHWAY_LISTEN,
+    publicUrl: e.LAUNCHWAY_PUBLIC_URL ? new URL(e.LAUNCHWAY_PUBLIC_URL).origin : null,
+    caddyAdminUrl: e.LAUNCHWAY_CADDY_ADMIN_URL.replace(/\/+$/, ''),
+    caddyAdminListen: caddyAdminListen(e.LAUNCHWAY_CADDY_ADMIN_URL),
+    proxyNetwork: e.LAUNCHWAY_PROXY_NETWORK,
+    trustedProxies: e.LAUNCHWAY_TRUSTED_PROXIES,
+    acmeEmail: e.LAUNCHWAY_ACME_EMAIL ?? null,
+    setupToken: e.LAUNCHWAY_SETUP_TOKEN ?? null,
+    localJoinToken: e.LAUNCHWAY_LOCAL_JOIN_TOKEN ?? null,
+    webRoot: e.LAUNCHWAY_WEB_ROOT ?? DEFAULT_WEB_ROOT,
     logLevel: e.LOG_LEVEL,
   };
 }

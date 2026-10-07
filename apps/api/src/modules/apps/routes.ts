@@ -14,7 +14,7 @@ import {
   SetEnvVarsInput,
   UpdateAppInput,
   UpdateEnvVarInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';

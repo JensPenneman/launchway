@@ -125,9 +125,9 @@ export type DeployRoute = z.infer<typeof DeployRoute>;
 /**
  * Everything the agent needs for one deployment (spec sections 4 and 9). The agent clones
  * `source` into `<workspace>/apps/<appId>/<deploymentId>`, runs the Compose policy check, writes
- * `.env` (0600) from `env` and the override `compose.slipway.yaml` (proxy network + aliases for
+ * `.env` (0600) from `env` and the override `compose.launchway.yaml` (proxy network + aliases for
  * `routes`, labels, LAN publishing when `network.publishOnIp` is set), then runs
- * `docker compose -p slipway-<slug> ... build --pull`, `pull`, `up -d --wait --remove-orphans`.
+ * `docker compose -p launchway-<slug> ... build --pull`, `pull`, `up -d --wait --remove-orphans`.
  */
 export const DeployPayload = z.object({
   deploymentId: DeploymentId,

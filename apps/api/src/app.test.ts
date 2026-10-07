@@ -1,4 +1,4 @@
-import { PROBLEM_CONTENT_TYPE } from '@slipway/contracts';
+import { PROBLEM_CONTENT_TYPE } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps } from '../test/support/deps.js';
 import { createApp } from './app.js';

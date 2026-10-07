@@ -1,4 +1,4 @@
-import { type App, GitRef, isInProgressStatus } from '@slipway/contracts';
+import { type App, GitRef, isInProgressStatus } from '@launchway/contracts';
 import { useInfiniteQuery, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Loader2, Rocket } from 'lucide-react';
 import { useEffect, useState } from 'react';

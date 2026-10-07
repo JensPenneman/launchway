@@ -3,7 +3,7 @@ import {
   DEFAULT_PROXY_NETWORK,
   type DeployRoute,
   RESERVED_SERVICE_NAMES,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 
 /** Capabilities an app may add (`cap_add`); everything else is refused. */
@@ -108,7 +108,7 @@ export const ComposeConfig = z.looseObject({
 export type ComposeConfig = z.infer<typeof ComposeConfig>;
 
 export interface PolicyContext {
-  /** `slipway-<slug>`; project-owned volumes are named `<project>_<key>`. */
+  /** `launchway-<slug>`; project-owned volumes are named `<project>_<key>`. */
   projectName: string;
   proxyNetwork: string;
   routes: readonly DeployRoute[];
@@ -305,7 +305,7 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
     const at = `network "${key}"`;
     const name = network?.name ?? `${ctx.projectName}_${key}`;
     if (proxyNames.has(key) || proxyNames.has(name)) {
-      reject(`${at}: the proxy network is attached by Slipway; do not declare it`);
+      reject(`${at}: the proxy network is attached by Launchway; do not declare it`);
     } else if (network && isExternal(network.external)) {
       reject(`${at}: external networks are not allowed`);
     } else if (!name.startsWith(`${ctx.projectName}_`)) {

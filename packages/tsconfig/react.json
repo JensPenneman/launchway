@@ -1,6 +1,6 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
-  "display": "Slipway React (Vite, bundler resolution)",
+  "display": "Launchway React (Vite, bundler resolution)",
   "extends": "./base.json",
   "compilerOptions": {
     "module": "ESNext",

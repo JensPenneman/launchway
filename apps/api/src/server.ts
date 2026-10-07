@@ -116,7 +116,7 @@ export async function start(): Promise<void> {
     (info) => {
       logger.info(
         { address: info.address, port: info.port, version: APP_VERSION },
-        'Slipway API listening',
+        'Launchway API listening',
       );
       logStartupState(deps, info.port).catch((error: unknown) => {
         logger.warn({ err: error }, 'could not read the platform state');

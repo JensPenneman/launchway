@@ -11,7 +11,7 @@ import {
   type UpdateUserInput,
   UserPage,
   type z,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';

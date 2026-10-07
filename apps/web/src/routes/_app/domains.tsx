@@ -1,4 +1,4 @@
-import { Hostname } from '@slipway/contracts';
+import { Hostname } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { Globe, Loader2, Network, Plus, RefreshCw, Trash2, Wifi } from 'lucide-react';
@@ -80,7 +80,7 @@ function DomainsPage() {
     <Page>
       <PageHeader
         title="Domains"
-        description="Host names Slipway serves, the DNS zones it manages and the dynamic DNS anchor."
+        description="Host names Launchway serves, the DNS zones it manages and the dynamic DNS anchor."
       />
       <Tabs
         value={tab}
@@ -250,7 +250,7 @@ function DomainsTable() {
                             title={`Delete ${domain.hostname}?`}
                             description={
                               domain.managed
-                                ? 'Its route and the DNS record Slipway created are removed.'
+                                ? 'Its route and the DNS record Launchway created are removed.'
                                 : 'Its route is removed; DNS records you created stay untouched.'
                             }
                             confirmLabel="Delete domain"
@@ -356,7 +356,7 @@ function ZonesPanel() {
       <EmptyState
         icon={Network}
         title="No DNS provider accounts"
-        description="Connect a DNS provider so Slipway can create records for your domains."
+        description="Connect a DNS provider so Launchway can create records for your domains."
         action={
           <Button asChild size="sm">
             <Link to="/settings" search={{ tab: 'dns' }}>
@@ -461,8 +461,8 @@ function DdnsCard() {
           <Wifi className="size-4" aria-hidden="true" /> Dynamic DNS
         </CardTitle>
         <CardDescription>
-          Slipway checks the public IPv4 every 5 minutes and keeps the anchor record pointed at it.
-          Managed app domains are CNAMEs to the anchor.
+          Launchway checks the public IPv4 every 5 minutes and keeps the anchor record pointed at
+          it. Managed app domains are CNAMEs to the anchor.
         </CardDescription>
         {canRun && (
           <CardAction>

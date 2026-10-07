@@ -1,4 +1,4 @@
-import { TOKEN_SCOPES, type TokenScope, type UserRole } from '@slipway/contracts';
+import { TOKEN_SCOPES, type TokenScope, type UserRole } from '@launchway/contracts';
 
 const ALLOWED_SCOPES: Record<UserRole, readonly TokenScope[]> = {
   viewer: ['read'],

@@ -1,7 +1,7 @@
 import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, readdir, realpath, rm, stat, unlink, writeFile } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
-import { type AppSource, RELATIVE_PATH_PATTERN } from '@slipway/contracts';
+import { type AppSource, RELATIVE_PATH_PATTERN } from '@launchway/contracts';
 
 /** A rule violation that should fail the deployment with `policy-violation`. */
 export class PolicyError extends Error {
@@ -56,7 +56,7 @@ export interface ResolvedSource {
 }
 
 /**
- * On-disk layout under SLIPWAY_WORKSPACE: `apps/<appId>/<deploymentId>` checkouts and an empty
+ * On-disk layout under LAUNCHWAY_WORKSPACE: `apps/<appId>/<deploymentId>` checkouts and an empty
  * directory used as the working directory for project-only Compose commands.
  */
 export class Workspace {

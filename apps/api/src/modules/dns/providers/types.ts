@@ -4,7 +4,7 @@ import type {
   DnsRecord,
   DnsRecordInput,
   DnsZoneInfo,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { ZodType } from 'zod';
 
 /**

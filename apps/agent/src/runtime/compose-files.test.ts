@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { buildOverride, formatEnvFile, synthesizeCompose } from './compose-files.js';
 import type { ComposeConfig } from './compose-policy.js';
@@ -21,7 +21,7 @@ const payload = (publishOnIp: string | null) => ({
     { service: 'web', port: 9090, alias: 'trail-web' },
     { service: 'api', port: 3000, alias: 'trail-api' },
   ],
-  network: { proxyNetwork: 'slipway-proxy', publishOnIp },
+  network: { proxyNetwork: 'launchway-proxy', publishOnIp },
 });
 
 describe('buildOverride', () => {
@@ -31,29 +31,29 @@ describe('buildOverride', () => {
       services: {
         api: {
           labels: {
-            'slipway.app': appId,
-            'slipway.deployment': deploymentId,
-            'slipway.service': 'api',
+            'launchway.app': appId,
+            'launchway.deployment': deploymentId,
+            'launchway.service': 'api',
           },
-          networks: { default: {}, 'slipway-proxy': { aliases: ['trail-api'] } },
+          networks: { default: {}, 'launchway-proxy': { aliases: ['trail-api'] } },
         },
         db: {
           labels: {
-            'slipway.app': appId,
-            'slipway.deployment': deploymentId,
-            'slipway.service': 'db',
+            'launchway.app': appId,
+            'launchway.deployment': deploymentId,
+            'launchway.service': 'db',
           },
         },
         web: {
           labels: {
-            'slipway.app': appId,
-            'slipway.deployment': deploymentId,
-            'slipway.service': 'web',
+            'launchway.app': appId,
+            'launchway.deployment': deploymentId,
+            'launchway.service': 'web',
           },
-          networks: { default: {}, back: {}, 'slipway-proxy': { aliases: ['trail-web'] } },
+          networks: { default: {}, back: {}, 'launchway-proxy': { aliases: ['trail-web'] } },
         },
       },
-      networks: { 'slipway-proxy': { external: true, name: 'slipway-proxy' } },
+      networks: { 'launchway-proxy': { external: true, name: 'launchway-proxy' } },
     });
   });
 

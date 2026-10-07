@@ -1,4 +1,4 @@
-import { generateId, type TokenScope, type UserRole } from '@slipway/contracts';
+import { generateId, type TokenScope, type UserRole } from '@launchway/contracts';
 import type { Principal } from '../../src/lib/auth-context.js';
 import { testPrincipal } from './deps.js';
 

@@ -1,6 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import { NODE_CREDENTIAL_PATTERN, NodeId } from '@slipway/contracts';
+import { NODE_CREDENTIAL_PATTERN, NodeId } from '@launchway/contracts';
 import { z } from 'zod';
 
 const StoredCredentials = z.object({

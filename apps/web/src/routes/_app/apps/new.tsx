@@ -3,7 +3,7 @@ import {
   type GitHubConnection,
   type GitHubRepo,
   type Node,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useNavigate } from '@tanstack/react-router';
 import { FolderGit2, Loader2, Lock, Search, Server } from 'lucide-react';
@@ -126,7 +126,7 @@ function NewApp() {
             Apps
           </Link>
         }
-        description="Link a GitHub repository, tell Slipway how to build it and where to run it."
+        description="Link a GitHub repository, tell Launchway how to build it and where to run it."
       />
       <ol className="grid grid-cols-4 gap-2 text-xs sm:text-sm" aria-label="Steps">
         {STEPS.map((label, index) => (
@@ -205,7 +205,7 @@ function ConnectionStep({
       <EmptyState
         icon={FolderGit2}
         title="No GitHub connection"
-        description="Slipway needs a GitHub App or a personal access token to read your repositories."
+        description="Launchway needs a GitHub App or a personal access token to read your repositories."
         action={
           <Button asChild size="sm">
             <Link to="/settings" search={{ tab: 'github' }}>
@@ -319,7 +319,7 @@ function SourceStep({ draft, update }: { draft: Draft; update: (patch: Partial<D
         >
           <div className="font-medium">Dockerfile</div>
           <div className="text-xs text-muted-foreground">
-            Slipway generates a one-service Compose file
+            Launchway generates a one-service Compose file
           </div>
         </RadioCard>
       </RadioCardGroup>

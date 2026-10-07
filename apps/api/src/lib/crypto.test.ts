@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { API_TOKEN_PATTERN, NODE_JOIN_TOKEN_PATTERN } from '@slipway/contracts';
+import { API_TOKEN_PATTERN, NODE_JOIN_TOKEN_PATTERN } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   createSecretBox,
@@ -52,9 +52,9 @@ describe('SecretBox (AES-256-GCM)', () => {
 
 describe('tokens', () => {
   it('generates prefixed base62 tokens of 43 characters', () => {
-    expect(generateToken('slp_')).toMatch(API_TOKEN_PATTERN);
-    expect(generateToken('slpn_')).toMatch(NODE_JOIN_TOKEN_PATTERN);
-    expect(new Set(Array.from({ length: 100 }, () => generateToken('slp_'))).size).toBe(100);
+    expect(generateToken('lwy_')).toMatch(API_TOKEN_PATTERN);
+    expect(generateToken('lwyn_')).toMatch(NODE_JOIN_TOKEN_PATTERN);
+    expect(new Set(Array.from({ length: 100 }, () => generateToken('lwy_'))).size).toBe(100);
   });
 
   it('hashes deterministically with SHA-256', () => {
@@ -66,6 +66,6 @@ describe('tokens', () => {
   it('compares in constant time and shows only a short hint', () => {
     expect(safeEqual('a', 'a')).toBe(true);
     expect(safeEqual('a', 'ab')).toBe(false);
-    expect(tokenHint('slp_4fQxABCDEFG')).toBe('slp_4fQx');
+    expect(tokenHint('lwy_4fQxABCDEFG')).toBe('lwy_4fQx');
   });
 });

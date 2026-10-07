@@ -1,11 +1,11 @@
-import { type DnsZoneId, DOMAIN_STATUSES } from '@slipway/contracts';
+import { type DnsZoneId, DOMAIN_STATUSES } from '@launchway/contracts';
 import { boolean, index, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { dnsZones } from '../dns/schema.js';
 
 export const domainStatus = pgEnum('domain_status', DOMAIN_STATUSES);
 
-/** Fully-qualified names Slipway serves; bound to a zone when Slipway manages the record. */
+/** Fully-qualified names Launchway serves; bound to a zone when Launchway manages the record. */
 export const domains = pgTable(
   'domains',
   {

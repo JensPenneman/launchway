@@ -14,7 +14,7 @@ import {
 let root: string;
 let workspace: Workspace;
 beforeEach(async () => {
-  root = await mkdtemp(join(tmpdir(), 'slipway-ws-'));
+  root = await mkdtemp(join(tmpdir(), 'launchway-ws-'));
   workspace = new Workspace(root);
 });
 afterEach(async () => {

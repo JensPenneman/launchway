@@ -50,7 +50,7 @@ export const REDACT_PATHS = [
 
 export function createLogger(options: { level: LogLevel; name?: string }): Logger {
   return pino({
-    name: options.name ?? 'slipway-api',
+    name: options.name ?? 'launchway-api',
     level: options.level,
     redact: { paths: REDACT_PATHS, censor: '[redacted]' },
     timestamp: pino.stdTimeFunctions.isoTime,

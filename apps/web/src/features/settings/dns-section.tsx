@@ -1,4 +1,4 @@
-import { DisplayName, type DnsProviderInfo } from '@slipway/contracts';
+import { DisplayName, type DnsProviderInfo } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Loader2, Network, Plus, RefreshCw, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -72,7 +72,7 @@ export function DnsSection() {
         <EmptyState
           icon={Network}
           title="No DNS provider accounts"
-          description="Add one so Slipway can manage the records of your domains and the dynamic DNS anchor."
+          description="Add one so Launchway can manage the records of your domains and the dynamic DNS anchor."
         />
       ) : (
         <ul className="flex flex-col gap-3" aria-label="DNS provider accounts">
@@ -245,7 +245,7 @@ function AddAccountDialog({ providers }: { providers: readonly DnsProviderInfo[]
         <DialogHeader>
           <DialogTitle>Add a DNS provider account</DialogTitle>
           <DialogDescription>
-            Slipway verifies the credentials and discovers the zones.
+            Launchway verifies the credentials and discovers the zones.
           </DialogDescription>
         </DialogHeader>
         <form

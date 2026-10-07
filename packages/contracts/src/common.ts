@@ -84,7 +84,7 @@ export const UpstreamHost = z
   .refine((host) => !isLocalOnlyHost(host), 'Must not be a loopback or link-local address')
   .refine(
     (host) => !RESERVED_SERVICE_NAMES.includes(host),
-    'Must not name a Slipway platform container',
+    'Must not name a Launchway platform container',
   )
   .openapi({ example: 'host.docker.internal' });
 
@@ -140,8 +140,8 @@ export const ServiceName = z
  * could capture traffic meant for the platform (including the database connection).
  */
 export const RESERVED_SERVICE_NAMES: readonly string[] = [
-  'slipway',
-  'slipway-agent',
+  'launchway',
+  'launchway-agent',
   'caddy',
   'db',
 ];

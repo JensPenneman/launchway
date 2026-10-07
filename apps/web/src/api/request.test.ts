@@ -1,4 +1,4 @@
-import { Settings } from '@slipway/contracts';
+import { Settings } from '@launchway/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   ApiError,

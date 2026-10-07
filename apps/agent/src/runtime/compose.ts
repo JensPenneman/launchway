@@ -1,4 +1,4 @@
-import { DEFAULT_PROXY_NETWORK } from '@slipway/contracts';
+import { DEFAULT_PROXY_NETWORK } from '@launchway/contracts';
 import type { Runner } from './exec.js';
 
 /** Subnet the installer gives the default proxy network (spec section 3). */
@@ -35,7 +35,7 @@ export async function ensureProxyNetwork(
       timeoutMs: 30_000,
     });
   if ((await inspect()).code === 0) return;
-  const base = ['network', 'create', '--driver', 'bridge', '--label', 'slipway.managed=true'];
+  const base = ['network', 'create', '--driver', 'bridge', '--label', 'launchway.managed=true'];
   const attempts =
     name === DEFAULT_PROXY_NETWORK
       ? [

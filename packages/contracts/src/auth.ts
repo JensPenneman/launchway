@@ -6,7 +6,7 @@ import { User } from './users.js';
 import { z } from './zod.js';
 
 /** Session cookie (HttpOnly, SameSite=Lax, Secure over HTTPS), 30-day sliding expiry. */
-export const SESSION_COOKIE_NAME = 'slipway_session';
+export const SESSION_COOKIE_NAME = 'launchway_session';
 export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 
 // --- First run -------------------------------------------------------------------------------
@@ -27,7 +27,7 @@ export const SetupInput = z
     name: DisplayName,
     password: Password,
     setupToken: z.string().trim().max(200).optional().openapi({
-      description: 'Required when SLIPWAY_SETUP_TOKEN is set (the installer prints it)',
+      description: 'Required when LAUNCHWAY_SETUP_TOKEN is set (the installer prints it)',
     }),
   })
   .openapi('SetupInput');

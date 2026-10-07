@@ -1,4 +1,4 @@
-import { DisplayName, Email, Password, z } from '@slipway/contracts';
+import { DisplayName, Email, Password, z } from '@launchway/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import { KeyRound, Loader2 } from 'lucide-react';
@@ -33,7 +33,7 @@ export function AcceptInvitation({ token }: { token: string }) {
 
   if (preview.isPending) {
     return (
-      <AuthLayout title="Join Slipway">
+      <AuthLayout title="Join Launchway">
         <ListSkeleton rows={3} />
       </AuthLayout>
     );
@@ -56,7 +56,7 @@ export function AcceptInvitation({ token }: { token: string }) {
 
   return (
     <AuthLayout
-      title="Join Slipway"
+      title="Join Launchway"
       description={
         <>
           You were invited as <strong className="text-foreground">{preview.data.role}</strong>. This

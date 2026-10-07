@@ -26,7 +26,7 @@ export const EVENT_ACTIONS = ['created', 'updated', 'deleted'] as const;
 export const EventAction = z.enum(EVENT_ACTIONS).openapi('EventAction');
 export type EventAction = z.infer<typeof EventAction>;
 
-/** SSE `event:` names used by Slipway streams. */
+/** SSE `event:` names used by Launchway streams. */
 export const SSE_EVENTS = {
   /** Change feed entry (`data`: PlatformEvent). */
   platform: 'platform',

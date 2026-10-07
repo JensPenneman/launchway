@@ -36,7 +36,7 @@ export function requestContext(logger: Logger): MiddlewareHandler<AppEnv> {
   };
 }
 
-/** Secret-shaped path segments (invitation tokens: `/invitations/slpi_...`) never reach the log. */
+/** Secret-shaped path segments (invitation tokens: `/invitations/lwyi_...`) never reach the log. */
 export function redactPath(path: string): string {
-  return path.replace(/\b(slp[a-z]?_)[A-Za-z0-9]{20,}/g, '$1[redacted]');
+  return path.replace(/\b(lwy[a-z]?_)[A-Za-z0-9]{20,}/g, '$1[redacted]');
 }

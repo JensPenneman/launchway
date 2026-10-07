@@ -1,4 +1,4 @@
-import type { DnsProviderKind } from '@slipway/contracts';
+import type { DnsProviderKind } from '@launchway/contracts';
 import { cloudflareProvider } from './cloudflare.js';
 import { manualProvider } from './manual.js';
 import type { DnsProviderDefinition } from './types.js';
@@ -29,7 +29,7 @@ export function createDnsProviderRegistry(
   return registry;
 }
 
-/** The providers Slipway ships with. Add new providers here (see README.md). */
+/** The providers Launchway ships with. Add new providers here (see README.md). */
 export const dnsProviders: DnsProviderRegistry = createDnsProviderRegistry([
   cloudflareProvider,
   manualProvider,

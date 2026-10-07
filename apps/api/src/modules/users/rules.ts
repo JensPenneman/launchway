@@ -1,4 +1,4 @@
-import { type AssignableRole, roleAtLeast, type UserId, type UserRole } from '@slipway/contracts';
+import { type AssignableRole, roleAtLeast, type UserId, type UserRole } from '@launchway/contracts';
 import { forbidden } from '../../lib/problem.js';
 
 export interface ManagingActor {

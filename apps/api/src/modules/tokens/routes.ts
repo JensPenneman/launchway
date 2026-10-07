@@ -1,5 +1,10 @@
 import { createRoute, z } from '@hono/zod-openapi';
-import { ApiTokenId, ApiTokenList, CreateApiTokenInput, CreatedApiToken } from '@slipway/contracts';
+import {
+  ApiTokenId,
+  ApiTokenList,
+  CreateApiTokenInput,
+  CreatedApiToken,
+} from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { getPrincipal, requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';

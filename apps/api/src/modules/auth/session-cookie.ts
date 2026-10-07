@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { SESSION_COOKIE_NAME, SESSION_TTL_SECONDS } from '@slipway/contracts';
+import { SESSION_COOKIE_NAME, SESSION_TTL_SECONDS } from '@launchway/contracts';
 import type { Context } from 'hono';
 import { deleteCookie, getCookie, setCookie } from 'hono/cookie';
 

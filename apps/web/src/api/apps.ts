@@ -12,7 +12,7 @@ import {
   type UpdateAppInput,
   type UpdateEnvVarInput,
   type z,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { infiniteQueryOptions, queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { buildUrl, request } from './request';

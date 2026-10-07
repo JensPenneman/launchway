@@ -1,4 +1,4 @@
-# Slipway control plane: the API with the web UI, the bundled node agent, the
+# Launchway control plane: the API with the web UI, the bundled node agent, the
 # Caddy edge proxy and PostgreSQL.
 #
 # deploy/install.sh (Linux, macOS) and deploy/install.ps1 (Windows with Docker
@@ -8,13 +8,13 @@
 # compose.override.yaml next to it.
 #
 # The external network is created by the installer:
-#   docker network create --subnet 10.210.0.0/24 --ip-range 10.210.0.128/25 slipway-proxy
+#   docker network create --subnet 10.210.0.0/24 --ip-range 10.210.0.128/25 launchway-proxy
 # (--ip-range keeps dynamic addresses away from Caddy's fixed 10.210.0.2.)
 #
 # Upgrade, from the installation directory:
 #   docker compose pull && docker compose up -d --wait
 
-name: slipway
+name: launchway
 
 x-logging: &logging
   driver: json-file
@@ -23,8 +23,8 @@ x-logging: &logging
     max-file: "5"
 
 services:
-  slipway:
-    image: ghcr.io/jenspenneman/slipway:${SLIPWAY_VERSION:-latest}
+  launchway:
+    image: ghcr.io/jenspenneman/launchway:${LAUNCHWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
     # The API drains requests for up to 10 s after SIGTERM.
@@ -36,26 +36,26 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      DATABASE_URL: postgres://slipway:${POSTGRES_PASSWORD:-}@db:5432/slipway
-      SLIPWAY_SECRET_KEY: ${SLIPWAY_SECRET_KEY:-}
-      SLIPWAY_LISTEN: 0.0.0.0:3000
-      SLIPWAY_PUBLIC_URL: ${SLIPWAY_PUBLIC_URL:-}
-      SLIPWAY_CADDY_ADMIN_URL: unix:///run/caddy-admin/admin.sock
-      SLIPWAY_PROXY_NETWORK: slipway-proxy
+      DATABASE_URL: postgres://launchway:${POSTGRES_PASSWORD:-}@db:5432/launchway
+      LAUNCHWAY_SECRET_KEY: ${LAUNCHWAY_SECRET_KEY:-}
+      LAUNCHWAY_LISTEN: 0.0.0.0:3000
+      LAUNCHWAY_PUBLIC_URL: ${LAUNCHWAY_PUBLIC_URL:-}
+      LAUNCHWAY_CADDY_ADMIN_URL: unix:///run/caddy-admin/admin.sock
+      LAUNCHWAY_PROXY_NETWORK: launchway-proxy
       # Only Caddy (fixed address) may set X-Forwarded-*: app containers share this network.
-      SLIPWAY_TRUSTED_PROXIES: 10.210.0.2/32
-      SLIPWAY_ACME_EMAIL: ${SLIPWAY_ACME_EMAIL:-}
-      SLIPWAY_LOCAL_JOIN_TOKEN: ${SLIPWAY_LOCAL_JOIN_TOKEN:-}
+      LAUNCHWAY_TRUSTED_PROXIES: 10.210.0.2/32
+      LAUNCHWAY_ACME_EMAIL: ${LAUNCHWAY_ACME_EMAIL:-}
+      LAUNCHWAY_LOCAL_JOIN_TOKEN: ${LAUNCHWAY_LOCAL_JOIN_TOKEN:-}
       # Required by the first-run setup (generated and printed by the installer).
-      SLIPWAY_SETUP_TOKEN: ${SLIPWAY_SETUP_TOKEN:-}
+      LAUNCHWAY_SETUP_TOKEN: ${LAUNCHWAY_SETUP_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       # Direct access, so the first-run setup works before any domain exists.
-      - "${SLIPWAY_PORT:-3000}:3000"
+      - "${LAUNCHWAY_PORT:-3000}:3000"
     volumes:
       - caddy-admin:/run/caddy-admin
     networks:
-      - slipway-proxy
+      - launchway-proxy
       - database
     depends_on:
       db:
@@ -73,8 +73,8 @@ services:
           memory: 512M
     logging: *logging
 
-  slipway-agent:
-    image: ghcr.io/jenspenneman/slipway-agent:${SLIPWAY_VERSION:-latest}
+  launchway-agent:
+    image: ghcr.io/jenspenneman/launchway-agent:${LAUNCHWAY_VERSION:-latest}
     restart: unless-stopped
     init: true
     # Running deployments get 20 s to report after SIGTERM.
@@ -85,17 +85,17 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      SLIPWAY_SERVER_URL: ws://slipway:3000
-      SLIPWAY_JOIN_TOKEN: ${SLIPWAY_LOCAL_JOIN_TOKEN:-}
-      SLIPWAY_WORKSPACE: /var/lib/slipway
+      LAUNCHWAY_SERVER_URL: ws://launchway:3000
+      LAUNCHWAY_JOIN_TOKEN: ${LAUNCHWAY_LOCAL_JOIN_TOKEN:-}
+      LAUNCHWAY_WORKSPACE: /var/lib/launchway
       LOG_LEVEL: ${LOG_LEVEL:-info}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - agent-data:/var/lib/slipway
+      - agent-data:/var/lib/launchway
     networks:
-      - slipway-proxy
+      - launchway-proxy
     depends_on:
-      slipway:
+      launchway:
         condition: service_started
     healthcheck:
       test: ["CMD", "node", "dist/healthcheck.js"]
@@ -121,7 +121,7 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      SLIPWAY_ACME_EMAIL: ${SLIPWAY_ACME_EMAIL:-}
+      LAUNCHWAY_ACME_EMAIL: ${LAUNCHWAY_ACME_EMAIL:-}
     # The admin API is a unix socket in the caddy-admin volume (see the Caddyfile).
     ports:
       - "80:80"
@@ -137,7 +137,7 @@ services:
       - caddy-config:/config
       - caddy-admin:/run/caddy-admin
     networks:
-      slipway-proxy:
+      launchway-proxy:
         ipv4_address: 10.210.0.2
     healthcheck:
       test: ["CMD-SHELL", "test -S /run/caddy-admin/admin.sock"]
@@ -162,8 +162,8 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      POSTGRES_USER: slipway
-      POSTGRES_DB: slipway
+      POSTGRES_USER: launchway
+      POSTGRES_DB: launchway
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
     volumes:
       # The postgres 18 image keeps PGDATA in /var/lib/postgresql/18/docker:
@@ -174,7 +174,7 @@ services:
     healthcheck:
       # Checked over TCP: during the first initialisation the image runs a
       # temporary socket-only server that must not count as ready.
-      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "slipway", "-d", "slipway"]
+      test: ["CMD", "pg_isready", "-h", "127.0.0.1", "-U", "launchway", "-d", "launchway"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -188,8 +188,8 @@ services:
     logging: *logging
 
 networks:
-  slipway-proxy:
-    name: slipway-proxy
+  launchway-proxy:
+    name: launchway-proxy
     external: true
   database:
     internal: true
@@ -198,6 +198,6 @@ volumes:
   db-data:
   caddy-data:
   caddy-config:
-  # Caddy's admin socket; mounted only into caddy and slipway.
+  # Caddy's admin socket; mounted only into caddy and launchway.
   caddy-admin:
   agent-data:

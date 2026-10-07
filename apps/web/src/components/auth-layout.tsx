@@ -21,7 +21,7 @@ export function AuthLayout({
       </div>
       <div className="flex items-center gap-2 text-lg font-semibold tracking-tight">
         <img src="/favicon.svg" alt="" className="size-7" />
-        Slipway
+        Launchway
       </div>
       <Card className={wide ? 'w-full max-w-xl' : 'w-full max-w-md'}>
         <CardHeader>

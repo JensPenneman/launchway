@@ -6,7 +6,7 @@ import {
   type CreateApiTokenInput,
   type CreatedApiToken,
   type UserId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, desc, eq } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { effectiveRole, getActorPrincipal, type RequestActor } from '../../lib/auth-context.js';

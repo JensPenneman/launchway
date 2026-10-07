@@ -1,4 +1,4 @@
-import type { NodeId } from '@slipway/contracts';
+import type { NodeId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { boolean, check, inet, pgTable, smallint, text } from 'drizzle-orm/pg-core';
 import { timestamps, tz } from '../../db/columns.js';
@@ -9,7 +9,7 @@ export const settings = pgTable(
   'settings',
   {
     id: smallint('id').primaryKey().default(1),
-    /** Origin without trailing slash; SLIPWAY_PUBLIC_URL overrides it at runtime. */
+    /** Origin without trailing slash; LAUNCHWAY_PUBLIC_URL overrides it at runtime. */
     publicUrl: text('public_url'),
     acmeEmail: text('acme_email'),
     anchorHostname: text('anchor_hostname'),

@@ -1,4 +1,4 @@
-import type { AgentError, ServerToAgentMessage } from '@slipway/contracts';
+import type { AgentError, ServerToAgentMessage } from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { type AppOps, ComposeCommandError } from './runtime/app-ops.js';
 import type { DeploymentManager } from './runtime/deployments.js';

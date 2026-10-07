@@ -12,12 +12,12 @@ const IV_BYTES = 12;
 const TAG_BYTES = 16;
 const BASE62 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
 
-/** Purpose-bound subkeys derived from SLIPWAY_SECRET_KEY (HKDF-SHA256). */
+/** Purpose-bound subkeys derived from LAUNCHWAY_SECRET_KEY (HKDF-SHA256). */
 export type KeyPurpose = 'secrets' | 'cookies';
 
 export function deriveKey(masterKey: Buffer, purpose: KeyPurpose): Buffer {
   if (masterKey.length !== 32) throw new RangeError('The master key must be 32 bytes');
-  return Buffer.from(hkdfSync('sha256', masterKey, Buffer.alloc(0), `slipway:${purpose}:v1`, 32));
+  return Buffer.from(hkdfSync('sha256', masterKey, Buffer.alloc(0), `launchway:${purpose}:v1`, 32));
 }
 
 export class DecryptionError extends Error {
@@ -97,13 +97,13 @@ function base62(bytes: Buffer, length: number): string {
 
 /**
  * Random token `<prefix><base62>` from `bytes` random bytes; 32 bytes give 43 characters, e.g.
- * `slp_…` (API token), `slpn_…` (join token), `slpa_…` (node credential), `slpi_…` (invitation).
+ * `lwy_…` (API token), `lwyn_…` (join token), `lwya_…` (node credential), `lwyi_…` (invitation).
  */
 export function generateToken(prefix: string, bytes = 32): string {
   return prefix + base62(randomBytes(bytes), Math.ceil((bytes * 8) / Math.log2(62)));
 }
 
-/** Non-secret hint to recognise a token in lists (`slp_4fQx`). */
+/** Non-secret hint to recognise a token in lists (`lwy_4fQx`). */
 export function tokenHint(token: string): string {
   const separator = token.indexOf('_');
   return token.slice(0, separator + 5);

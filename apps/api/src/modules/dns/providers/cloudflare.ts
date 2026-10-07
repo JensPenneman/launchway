@@ -4,7 +4,7 @@ import {
   type DnsRecordInput,
   type DnsRecordType,
   type DnsZoneInfo,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 import { type DnsProvider, type DnsProviderDefinition, DnsProviderError } from './types.js';
 

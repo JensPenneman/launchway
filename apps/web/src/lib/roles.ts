@@ -1,4 +1,4 @@
-import { lowerRole, type Me, roleAtLeast, scopeCeiling, type UserRole } from '@slipway/contracts';
+import { lowerRole, type Me, roleAtLeast, scopeCeiling, type UserRole } from '@launchway/contracts';
 
 /** Role the API enforces for this principal (tokens are capped by their scopes). */
 export function effectiveRole(me: Pick<Me, 'user' | 'scopes'>): UserRole {

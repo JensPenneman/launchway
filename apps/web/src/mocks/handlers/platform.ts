@@ -9,41 +9,41 @@ import {
   StartAppManifestInput,
   UpdateNodeInput,
   UpdateSettingsInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { HttpResponse, http, sse } from 'msw';
 import { db } from '../db';
 import { createReleases, createRepos } from '../fixtures';
 import { API, guard, now, paginate, parseBody, problem, randomToken, recordAudit } from '../util';
 
 function joinToken(): NodeJoinToken {
-  const token = randomToken('slpn_');
+  const token = randomToken('lwyn_');
   const serverUrl = (db.settings.effectivePublicUrl ?? location.origin).replace(/^http/, 'ws');
   return {
     token,
     expiresAt: new Date(Date.now() + 15 * 60_000).toISOString(),
     serverUrl,
     dockerRunCommand: [
-      'docker run -d --name slipway-agent --restart unless-stopped \\',
+      'docker run -d --name launchway-agent --restart unless-stopped \\',
       '  -v /var/run/docker.sock:/var/run/docker.sock \\',
-      '  -v slipway-agent:/var/lib/slipway \\',
-      `  -e SLIPWAY_SERVER_URL=${serverUrl} \\`,
-      `  -e SLIPWAY_JOIN_TOKEN=${token} \\`,
-      '  ghcr.io/jenspenneman/slipway-agent:latest',
+      '  -v launchway-agent:/var/lib/launchway \\',
+      `  -e LAUNCHWAY_SERVER_URL=${serverUrl} \\`,
+      `  -e LAUNCHWAY_JOIN_TOKEN=${token} \\`,
+      '  ghcr.io/jenspenneman/launchway-agent:latest',
     ].join('\n'),
     composeSnippet: [
       'services:',
-      '  slipway-agent:',
-      '    image: ghcr.io/jenspenneman/slipway-agent:latest',
+      '  launchway-agent:',
+      '    image: ghcr.io/jenspenneman/launchway-agent:latest',
       '    restart: unless-stopped',
       '    init: true',
       '    environment:',
-      `      SLIPWAY_SERVER_URL: ${serverUrl}`,
-      `      SLIPWAY_JOIN_TOKEN: ${token}`,
+      `      LAUNCHWAY_SERVER_URL: ${serverUrl}`,
+      `      LAUNCHWAY_JOIN_TOKEN: ${token}`,
       '    volumes:',
       '      - /var/run/docker.sock:/var/run/docker.sock',
-      '      - slipway-agent:/var/lib/slipway',
+      '      - launchway-agent:/var/lib/launchway',
       'volumes:',
-      '  slipway-agent: {}',
+      '  launchway-agent: {}',
     ].join('\n'),
   };
 }
@@ -60,7 +60,7 @@ export function renderCaddyfile(): string {
   }
   if (db.settings.publicUrl) {
     blocks.push(
-      `${new URL(db.settings.publicUrl).host} {\n\tencode zstd gzip\n\treverse_proxy slipway:3000\n}`,
+      `${new URL(db.settings.publicUrl).host} {\n\tencode zstd gzip\n\treverse_proxy launchway:3000\n}`,
     );
   }
   for (const route of db.routes) {
@@ -259,13 +259,13 @@ export const platformHandlers = [
       postUrl: `https://github.com/${data.organization ? `organizations/${data.organization}/` : ''}settings/apps/new?state=${state}`,
       state,
       manifest: {
-        name: data.name ?? 'Slipway',
+        name: data.name ?? 'Launchway',
         url: base,
         hook_attributes: { url: `${base}/api/v1/webhooks/github`, active: true },
         redirect_url: `${base}/api/v1/github/connections/app-manifest/callback`,
         callback_urls: [`${base}/api/v1/github/connections/app-manifest/callback`],
         setup_url: `${base}/api/v1/github/connections/installation-callback`,
-        description: 'Deploys GitHub releases with Slipway',
+        description: 'Deploys GitHub releases with Launchway',
         public: false,
         default_permissions: { contents: 'read', metadata: 'read' },
         default_events: ['release'],

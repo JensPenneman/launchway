@@ -5,7 +5,7 @@ import { runMigrations } from '../src/db/migrate.js';
 import { createLogger } from '../src/logger.js';
 
 const config = loadConfig(process.env);
-const logger = createLogger({ level: config.logLevel, name: 'slipway-migrate' });
+const logger = createLogger({ level: config.logLevel, name: 'launchway-migrate' });
 const pool = createPool(config.databaseUrl, logger);
 try {
   await runMigrations(pool, logger);

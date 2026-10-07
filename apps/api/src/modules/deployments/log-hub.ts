@@ -1,4 +1,4 @@
-import type { DeploymentId, DeploymentStatus, LogLine } from '@slipway/contracts';
+import type { DeploymentId, DeploymentStatus, LogLine } from '@launchway/contracts';
 import type { EventBus } from '../../lib/event-bus.js';
 
 export type DeploymentStreamItem =

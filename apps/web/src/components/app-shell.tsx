@@ -1,4 +1,4 @@
-import type { UserRole } from '@slipway/contracts';
+import type { UserRole } from '@launchway/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, useNavigate } from '@tanstack/react-router';
 import {
@@ -47,7 +47,7 @@ function Brand() {
   return (
     <Link to="/" className="flex items-center gap-2 font-semibold tracking-tight">
       <img src="/favicon.svg" alt="" className="size-6" />
-      Slipway
+      Launchway
     </Link>
   );
 }

@@ -1,10 +1,10 @@
-import { type AppSource, type DeployPayload, SLIPWAY_LABELS } from '@slipway/contracts';
+import { type AppSource, type DeployPayload, LAUNCHWAY_LABELS } from '@launchway/contracts';
 import type { ComposeConfig } from './compose-policy.js';
 
 /** Generated override, merged last (spec section 4 step 3). */
-export const OVERRIDE_FILE = 'compose.slipway.yaml';
+export const OVERRIDE_FILE = 'compose.launchway.yaml';
 /** Synthesized Compose file for apps that only have a Dockerfile. */
-export const SYNTHESIZED_FILE = 'compose.slipway.build.yaml';
+export const SYNTHESIZED_FILE = 'compose.launchway.build.yaml';
 /** Service name of a synthesized Dockerfile app. */
 const SYNTHESIZED_SERVICE = 'app';
 
@@ -32,7 +32,7 @@ export function synthesizeCompose(
 }
 
 /**
- * The override `compose.slipway.yaml`: labels on every service; for each routed service the
+ * The override `compose.launchway.yaml`: labels on every service; for each routed service the
  * external proxy network with its alias (keeping the networks the service already joins, since an
  * override `networks:` would otherwise replace the implicit `default`), and, off the edge node,
  * the routed port published on the node's LAN IP with an ephemeral host port.
@@ -46,9 +46,9 @@ export function buildOverride(
   for (const name of Object.keys(config.services).sort()) {
     services[name] = {
       labels: {
-        [SLIPWAY_LABELS.app]: payload.app.id,
-        [SLIPWAY_LABELS.deployment]: payload.deploymentId,
-        [SLIPWAY_LABELS.service]: name,
+        [LAUNCHWAY_LABELS.app]: payload.app.id,
+        [LAUNCHWAY_LABELS.deployment]: payload.deploymentId,
+        [LAUNCHWAY_LABELS.service]: name,
       },
     };
   }

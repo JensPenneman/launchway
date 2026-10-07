@@ -1,4 +1,4 @@
-import { PASSKEY_DEVICE_TYPES, type UserId } from '@slipway/contracts';
+import { PASSKEY_DEVICE_TYPES, type UserId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import {
   bigint,

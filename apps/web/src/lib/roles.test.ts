@@ -1,4 +1,4 @@
-import type { Me } from '@slipway/contracts';
+import type { Me } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { can, effectiveRole } from './roles';
 

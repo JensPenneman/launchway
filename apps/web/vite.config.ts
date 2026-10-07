@@ -16,7 +16,7 @@ const WORKER_FILE = 'mockServiceWorker.js';
 function mockServiceWorker(enabled: boolean): Plugin {
   const source = () => readFileSync(require.resolve(`msw/${WORKER_FILE}`), 'utf8');
   return {
-    name: 'slipway:mock-service-worker',
+    name: 'launchway:mock-service-worker',
     apply: () => enabled,
     configureServer(server) {
       server.middlewares.use(`/${WORKER_FILE}`, (_request, response) => {
@@ -41,8 +41,8 @@ export default defineConfig(({ mode }) => {
     ],
     resolve: {
       alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
-      // Workspace packages resolve to their TypeScript sources (`@slipway/source` export condition).
-      conditions: ['@slipway/source', ...defaultClientConditions],
+      // Workspace packages resolve to their TypeScript sources (`@launchway/source` export condition).
+      conditions: ['@launchway/source', ...defaultClientConditions],
     },
     server: {
       port: 5173,

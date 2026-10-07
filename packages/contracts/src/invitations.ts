@@ -4,9 +4,9 @@ import { page } from './pagination.js';
 import { AssignableRole, UserSummary } from './users.js';
 import { z } from './zod.js';
 
-/** Invitation link tokens are `slpi_` + 43 base62 characters; stored as SHA-256 hashes. */
-export const INVITATION_TOKEN_PREFIX = 'slpi_';
-export const INVITATION_TOKEN_PATTERN = /^slpi_[0-9A-Za-z]{43}$/;
+/** Invitation link tokens are `lwyi_` + 43 base62 characters; stored as SHA-256 hashes. */
+export const INVITATION_TOKEN_PREFIX = 'lwyi_';
+export const INVITATION_TOKEN_PATTERN = /^lwyi_[0-9A-Za-z]{43}$/;
 export const DEFAULT_INVITATION_TTL_HOURS = 72;
 export const MAX_INVITATION_TTL_HOURS = 30 * 24;
 

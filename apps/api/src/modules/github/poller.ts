@@ -1,4 +1,4 @@
-import { GITHUB_RELEASE_POLL_INTERVAL_MS, type GitHubConnectionId } from '@slipway/contracts';
+import { GITHUB_RELEASE_POLL_INTERVAL_MS, type GitHubConnectionId } from '@launchway/contracts';
 import { and, eq, lt } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { systemActor } from '../../lib/auth-context.js';

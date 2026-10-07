@@ -1,10 +1,10 @@
+import type { WebAuthnCredential } from '@launchway/contracts';
 import {
   type PublicKeyCredentialCreationOptionsJSON,
   type PublicKeyCredentialRequestOptionsJSON,
   startAuthentication,
   startRegistration,
 } from '@simplewebauthn/browser';
-import type { WebAuthnCredential } from '@slipway/contracts';
 import {
   passkeyLoginOptions,
   passkeyRegistrationOptions,

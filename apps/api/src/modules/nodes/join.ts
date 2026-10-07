@@ -1,5 +1,5 @@
 /** Image of the node agent (spec section 9). */
-export const AGENT_IMAGE = 'ghcr.io/jenspenneman/slipway-agent';
+export const AGENT_IMAGE = 'ghcr.io/jenspenneman/launchway-agent';
 
 /** `https://host` -> `wss://host`, `http://host` -> `ws://host` (origin only). */
 export function agentServerUrl(origin: string): string {
@@ -36,24 +36,24 @@ export function joinInstructions(input: JoinInstructionsInput): {
   const image = `${AGENT_IMAGE}:${agentImageTag(input.version)}`;
   const dockerRunCommand = [
     // The agent gives running deployments 20 s to report after SIGTERM.
-    'docker run -d --name slipway-agent --restart unless-stopped --init --stop-timeout 30',
+    'docker run -d --name launchway-agent --restart unless-stopped --init --stop-timeout 30',
     '  --network host --cap-drop ALL --security-opt no-new-privileges:true',
-    `  -e SLIPWAY_SERVER_URL=${shellQuote(input.serverUrl)}`,
-    `  -e SLIPWAY_JOIN_TOKEN=${shellQuote(input.token)}`,
-    '  -e SLIPWAY_WORKSPACE=/var/lib/slipway',
+    `  -e LAUNCHWAY_SERVER_URL=${shellQuote(input.serverUrl)}`,
+    `  -e LAUNCHWAY_JOIN_TOKEN=${shellQuote(input.token)}`,
+    '  -e LAUNCHWAY_WORKSPACE=/var/lib/launchway',
     '  -v /var/run/docker.sock:/var/run/docker.sock',
-    '  -v slipway-agent-data:/var/lib/slipway',
+    '  -v launchway-agent-data:/var/lib/launchway',
     `  ${image}`,
   ].join(' \\\n');
 
   const composeSnippet = `# compose.agent.yaml - start it with: docker compose -f compose.agent.yaml up -d
 # The join token is single-use and valid until ${input.expiresAt.toISOString()}.
 # After the first start the agent keeps a node credential in the agent-data volume;
-# SLIPWAY_JOIN_TOKEN can then be removed.
-name: slipway-agent
+# LAUNCHWAY_JOIN_TOKEN can then be removed.
+name: launchway-agent
 
 services:
-  slipway-agent:
+  launchway-agent:
     image: ${image}
     restart: unless-stopped
     init: true
@@ -65,12 +65,12 @@ services:
     security_opt:
       - no-new-privileges:true
     environment:
-      SLIPWAY_SERVER_URL: ${JSON.stringify(input.serverUrl)}
-      SLIPWAY_JOIN_TOKEN: ${JSON.stringify(input.token)}
-      SLIPWAY_WORKSPACE: /var/lib/slipway
+      LAUNCHWAY_SERVER_URL: ${JSON.stringify(input.serverUrl)}
+      LAUNCHWAY_JOIN_TOKEN: ${JSON.stringify(input.token)}
+      LAUNCHWAY_WORKSPACE: /var/lib/launchway
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
-      - agent-data:/var/lib/slipway
+      - agent-data:/var/lib/launchway
 
 volumes:
   agent-data:

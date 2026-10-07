@@ -10,7 +10,7 @@ import {
   SetupStatus,
   type UpdateMeInput,
   WebAuthnOptions,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';

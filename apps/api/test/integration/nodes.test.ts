@@ -1,4 +1,4 @@
-import { AGENT_CLOSE_CODES, type CreatedNode, type Node } from '@slipway/contracts';
+import { AGENT_CLOSE_CODES, type CreatedNode, type Node } from '@launchway/contracts';
 import { and, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
@@ -69,7 +69,7 @@ describe('nodes and the agent socket against PostgreSQL', () => {
     const app = createApp(deps);
     const created = await createNode();
     expect(created.node).toMatchObject({ status: 'pending', isEdge: false, joinedAt: null });
-    expect(created.joinToken.token).toMatch(/^slpn_/);
+    expect(created.joinToken.token).toMatch(/^lwyn_/);
     // ws://<request origin>, or the public URL another test file may have set.
     expect(created.joinToken.serverUrl).toMatch(/^wss?:\/\/[^/]+$/);
     expect(created.joinToken.dockerRunCommand).toContain(created.joinToken.token);
@@ -82,7 +82,7 @@ describe('nodes and the agent socket against PostgreSQL', () => {
     const ok = await agent.handshake({ lanIp: '192.168.1.40', hostname: 'nuc' });
     expect(ok.payload.nodeId).toBe(created.node.id);
     const credential = ok.payload.credential ?? '';
-    expect(credential).toMatch(/^slpa_/);
+    expect(credential).toMatch(/^lwya_/);
 
     const node = (await (await app.request(`/api/v1/nodes/${created.node.id}`)).json()) as Node;
     expect(node).toMatchObject({
@@ -136,7 +136,7 @@ describe('nodes and the agent socket against PostgreSQL', () => {
     );
     expect(rotated.status).toBe(200);
     const pushed = (await agent.next('hello.ok')).payload.credential ?? '';
-    expect(pushed).toMatch(/^slpa_/);
+    expect(pushed).toMatch(/^lwya_/);
     expect(pushed).not.toBe(first);
     await expect(TestAgent.connect(server.url, first)).rejects.toThrow('401');
 
@@ -204,9 +204,9 @@ describe('nodes and the agent socket against PostgreSQL', () => {
     expect(appId).toMatch(/^app_/);
   });
 
-  it('bootstraps the local node from SLIPWAY_LOCAL_JOIN_TOKEN and makes it the edge', async () => {
+  it('bootstraps the local node from LAUNCHWAY_LOCAL_JOIN_TOKEN and makes it the edge', async () => {
     const [previous] = await db.select().from(settings).where(eq(settings.id, 1));
-    const token = `slpn_${'L'.repeat(43)}`;
+    const token = `lwyn_${'L'.repeat(43)}`;
     const local = { ...deps, config: { ...deps.config, localJoinToken: token } };
     try {
       await db.update(settings).set({ edgeNodeId: null }).where(eq(settings.id, 1));
@@ -222,7 +222,7 @@ describe('nodes and the agent socket against PostgreSQL', () => {
       // The bootstrap token is reusable (the bundled agent may lose its volume).
       for (let i = 0; i < 2; i++) {
         const agent = await TestAgent.connect(server.url, token);
-        expect((await agent.handshake()).payload.credential).toMatch(/^slpa_/);
+        expect((await agent.handshake()).payload.credential).toMatch(/^lwya_/);
         agent.close();
         await agent.closed;
       }

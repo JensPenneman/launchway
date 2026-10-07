@@ -17,7 +17,7 @@ import {
   SSE_EVENTS,
   type UpdateAppInput,
   type UpdateEnvVarInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, asc, desc, eq, inArray, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';

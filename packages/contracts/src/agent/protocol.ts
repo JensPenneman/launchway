@@ -12,7 +12,7 @@ export function isSupportedProtocolVersion(version: number): boolean {
 }
 
 /**
- * WebSocket endpoint, relative to SLIPWAY_SERVER_URL. The upgrade request carries
+ * WebSocket endpoint, relative to LAUNCHWAY_SERVER_URL. The upgrade request carries
  * `Authorization: Bearer <join token | node credential>`.
  */
 export const AGENT_WS_PATH = '/api/agent/ws';

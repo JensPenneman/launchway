@@ -1,4 +1,4 @@
-import type { NodeJoinToken } from '@slipway/contracts';
+import type { NodeJoinToken } from '@launchway/contracts';
 import { CopyBlock } from '@/components/copy-button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { formatRelative } from '@/lib/format';
@@ -24,8 +24,8 @@ export function JoinInstructions({ join }: { join: NodeJoinToken }) {
           <CopyBlock label="compose.yaml" value={join.composeSnippet} />
         </TabsContent>
         <TabsContent value="token" className="mt-3 flex flex-col gap-3">
-          <CopyBlock label="SLIPWAY_JOIN_TOKEN" value={join.token} />
-          <CopyBlock label="SLIPWAY_SERVER_URL" value={join.serverUrl} />
+          <CopyBlock label="LAUNCHWAY_JOIN_TOKEN" value={join.token} />
+          <CopyBlock label="LAUNCHWAY_SERVER_URL" value={join.serverUrl} />
         </TabsContent>
       </Tabs>
     </div>

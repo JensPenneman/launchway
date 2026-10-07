@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import type { AppId, DomainId, NodeId } from '@slipway/contracts';
+import type { AppId, DomainId, NodeId } from '@launchway/contracts';
 import type { Database } from '../../src/db/client.js';
 import { apps, domains, githubConnections, nodes } from '../../src/db/schema.js';
 

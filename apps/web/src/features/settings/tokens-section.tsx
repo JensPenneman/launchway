@@ -3,7 +3,7 @@ import {
   DisplayName,
   TOKEN_SCOPES,
   type TokenScope,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { KeySquare, Loader2, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -72,7 +72,7 @@ export function TokensSection() {
       <div className="flex flex-col justify-between gap-2 sm:flex-row sm:items-center">
         <p className="text-sm text-muted-foreground">
           Use tokens for scripts and CI:{' '}
-          <code className="font-mono">Authorization: Bearer slp_…</code>
+          <code className="font-mono">Authorization: Bearer lwy_…</code>
         </p>
         <CreateTokenDialog />
       </div>

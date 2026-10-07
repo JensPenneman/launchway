@@ -1,5 +1,5 @@
 {
-  "extends": "@slipway/tsconfig/base.json",
+  "extends": "@launchway/tsconfig/base.json",
   "compilerOptions": {
     "noEmit": true,
     "rootDir": "src"

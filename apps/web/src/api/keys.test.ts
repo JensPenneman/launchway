@@ -1,4 +1,4 @@
-import { EVENT_TOPICS } from '@slipway/contracts';
+import { EVENT_TOPICS } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { keys, keysForTopic } from './keys';
 

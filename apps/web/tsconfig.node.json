@@ -1,5 +1,5 @@
 {
-  "extends": "@slipway/tsconfig/node.json",
+  "extends": "@launchway/tsconfig/node.json",
   "compilerOptions": {
     "noEmit": true,
     "declaration": false,

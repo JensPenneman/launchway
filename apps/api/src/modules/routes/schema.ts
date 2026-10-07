@@ -1,4 +1,4 @@
-import { type AppId, type DomainId, ROUTE_TARGET_KINDS } from '@slipway/contracts';
+import { type AppId, type DomainId, ROUTE_TARGET_KINDS } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import {
   boolean,

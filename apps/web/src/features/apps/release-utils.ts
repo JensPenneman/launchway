@@ -1,4 +1,4 @@
-import type { GitHubRelease } from '@slipway/contracts';
+import type { GitHubRelease } from '@launchway/contracts';
 
 /** Newest published, non-draft release; prereleases only when nothing else exists. */
 export function latestRelease(releases: readonly GitHubRelease[]): GitHubRelease | undefined {

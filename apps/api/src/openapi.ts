@@ -21,8 +21,8 @@ export function buildOpenApiDocument() {
   const config = loadConfig({
     NODE_ENV: 'production',
     DATABASE_URL: 'postgres://openapi@localhost/openapi',
-    SLIPWAY_SECRET_KEY: randomBytes(32).toString('base64'),
-    SLIPWAY_WEB_ROOT: '/nonexistent',
+    LAUNCHWAY_SECRET_KEY: randomBytes(32).toString('base64'),
+    LAUNCHWAY_WEB_ROOT: '/nonexistent',
   });
   const deps: Deps = {
     config,

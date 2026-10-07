@@ -1,4 +1,4 @@
-import { Email, Password, z } from '@slipway/contracts';
+import { Email, Password, z } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { zodResolver } from './form';
 

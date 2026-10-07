@@ -13,7 +13,7 @@ import {
   type InstallationCallbackQuery,
   type ResolvedGitRef,
   type StartAppManifestInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { asc, count, eq } from 'drizzle-orm';
 import { isUniqueViolation } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';

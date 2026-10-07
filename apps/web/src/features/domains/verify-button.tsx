@@ -1,4 +1,4 @@
-import type { DomainVerification } from '@slipway/contracts';
+import type { DomainVerification } from '@launchway/contracts';
 import { Loader2, ShieldCheck } from 'lucide-react';
 import { useState } from 'react';
 import { verifyDomain } from '@/api/domains';

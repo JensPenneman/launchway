@@ -1,4 +1,4 @@
-import { CreatedNode, Node, NodeJoinToken, NodeList } from '@slipway/contracts';
+import { CreatedNode, Node, NodeJoinToken, NodeList } from '@launchway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';

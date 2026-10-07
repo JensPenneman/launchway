@@ -7,7 +7,7 @@ export default defineConfig({
   schema: './src/db/schema.ts',
   out: './drizzle',
   dbCredentials: {
-    url: process.env.DATABASE_URL ?? 'postgres://slipway:slipway@localhost:5432/slipway',
+    url: process.env.DATABASE_URL ?? 'postgres://launchway:launchway@localhost:5432/launchway',
   },
   strict: true,
   verbose: true,

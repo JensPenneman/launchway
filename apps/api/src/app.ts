@@ -96,7 +96,11 @@ const SCALAR_BUNDLE =
 const SCALAR_INTEGRITY = 'sha384-OKyMdsDX84ypSZEhVun8YElXk5c2GQaH3EXPOc6ItmVcLDUAvKHYwvDLvAgsqVtB';
 
 function scalarReference(): MiddlewareHandler {
-  const render = Scalar({ url: '/api/openapi.json', pageTitle: 'Slipway API', cdn: SCALAR_BUNDLE });
+  const render = Scalar({
+    url: '/api/openapi.json',
+    pageTitle: 'Launchway API',
+    cdn: SCALAR_BUNDLE,
+  });
   return async (c, next) => {
     const res = await render(c, next);
     if (!res) return res;

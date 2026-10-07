@@ -116,7 +116,7 @@ export const AUTH_RATE_LIMITS: readonly RateLimitRule[] = [
   {
     group: 'invitation',
     methods: ['GET', 'POST'],
-    path: /^\/api\/v1\/invitations\/slpi_[^/]+(?:\/accept)?$/,
+    path: /^\/api\/v1\/invitations\/lwyi_[^/]+(?:\/accept)?$/,
     capacity: 10,
     refillPerSecond: 1 / 6,
   },

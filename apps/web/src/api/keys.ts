@@ -1,4 +1,4 @@
-import type { EventTopic } from '@slipway/contracts';
+import type { EventTopic } from '@launchway/contracts';
 import type { QueryKey } from '@tanstack/react-query';
 
 /**

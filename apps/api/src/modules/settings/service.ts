@@ -1,4 +1,4 @@
-import type { Settings, UpdateSettingsInput } from '@slipway/contracts';
+import type { Settings, UpdateSettingsInput } from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isForeignKeyViolation } from '../../db/errors.js';

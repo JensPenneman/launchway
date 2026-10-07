@@ -1,4 +1,4 @@
-import type { DnsProviderAccountId } from '@slipway/contracts';
+import type { DnsProviderAccountId } from '@launchway/contracts';
 import { index, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 

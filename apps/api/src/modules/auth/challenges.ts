@@ -1,4 +1,4 @@
-import type { UserId } from '@slipway/contracts';
+import type { UserId } from '@launchway/contracts';
 
 /** How long a WebAuthn challenge stays valid. */
 export const CHALLENGE_TTL_MS = 5 * 60_000;

@@ -1,4 +1,4 @@
-import { EdgeConfig, Settings, type UpdateSettingsInput } from '@slipway/contracts';
+import { EdgeConfig, Settings, type UpdateSettingsInput } from '@launchway/contracts';
 import { queryOptions } from '@tanstack/react-query';
 import { keys } from './keys';
 import { request } from './request';

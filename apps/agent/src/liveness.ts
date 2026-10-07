@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 /** File the agent touches periodically; the container HEALTHCHECK reads it. */
-export const LIVENESS_FILE = join(tmpdir(), 'slipway-agent.alive.json');
+export const LIVENESS_FILE = join(tmpdir(), 'launchway-agent.alive.json');
 export const LIVENESS_INTERVAL_MS = 10_000;
 export const LIVENESS_MAX_AGE_MS = 60_000;
 

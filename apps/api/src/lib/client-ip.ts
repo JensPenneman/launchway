@@ -3,7 +3,7 @@ import { getConnInfo } from '@hono/node-server/conninfo';
 import type { MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../deps.js';
 
-/** Builds a matcher for SLIPWAY_TRUSTED_PROXIES (validated CIDRs). */
+/** Builds a matcher for LAUNCHWAY_TRUSTED_PROXIES (validated CIDRs). */
 export function createTrustedProxyList(cidrs: readonly string[]): BlockList {
   const list = new BlockList();
   for (const cidr of cidrs) {

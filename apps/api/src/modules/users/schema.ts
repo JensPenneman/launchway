@@ -1,4 +1,4 @@
-import { USER_ROLES } from '@slipway/contracts';
+import { USER_ROLES } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';

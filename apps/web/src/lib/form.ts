@@ -1,4 +1,4 @@
-import type { z } from '@slipway/contracts';
+import type { z } from '@launchway/contracts';
 import { type FieldErrors, type FieldValues, type Resolver, set } from 'react-hook-form';
 
 type Issue = z.core.$ZodRawIssue;

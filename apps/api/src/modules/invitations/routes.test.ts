@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../../test/support/deps.js';
 import { jsonRequest } from '../../../test/support/requests.js';
@@ -7,7 +7,7 @@ import type { Principal } from '../../lib/auth-context.js';
 
 const appFor = (principal: Principal | null) =>
   createApp(createTestDeps({ auth: fixedAuth(principal) }));
-const token = `slpi_${'A'.repeat(43)}`;
+const token = `lwyi_${'A'.repeat(43)}`;
 
 describe('invitations routes (authorization and validation)', () => {
   it('requires authentication (401) and the admin role (403) for management', async () => {
@@ -37,8 +37,8 @@ describe('invitations routes (authorization and validation)', () => {
       ['/api/v1/invitations', jsonRequest('POST', { role: 'member', expiresInHours: 0 })],
       ['/api/v1/invitations?limit=1000', jsonRequest('GET')],
       ['/api/v1/invitations/nope', jsonRequest('DELETE')],
-      ['/api/v1/invitations/slpi_short', jsonRequest('GET')],
-      ['/api/v1/invitations/slpi_short/accept', jsonRequest('POST', { name: 'N' })],
+      ['/api/v1/invitations/lwyi_short', jsonRequest('GET')],
+      ['/api/v1/invitations/lwyi_short/accept', jsonRequest('POST', { name: 'N' })],
       [`/api/v1/invitations/${token}/accept`, jsonRequest('POST', { name: '' })],
       [
         `/api/v1/invitations/${token}/accept`,

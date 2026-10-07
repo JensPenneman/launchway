@@ -1,4 +1,4 @@
-import { lowerRole, scopeCeiling } from '@slipway/contracts';
+import { lowerRole, scopeCeiling } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { effectiveRole } from '../../lib/auth-context.js';
 import { scopesBeyondRole } from './rules.js';

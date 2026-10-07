@@ -6,7 +6,7 @@ const ADAPT_TIMEOUT_MS = 10_000;
 const LOAD_TIMEOUT_MS = 30_000;
 const MAX_MESSAGE_LENGTH = 2000;
 
-/** Client for the Caddy admin API (`SLIPWAY_CADDY_ADMIN_URL`). */
+/** Client for the Caddy admin API (`LAUNCHWAY_CADDY_ADMIN_URL`). */
 export interface CaddyAdmin {
   /** Validates a Caddyfile (`POST /adapt`) and returns the JSON configuration. */
   adapt(caddyfile: string): Promise<unknown>;

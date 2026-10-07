@@ -10,7 +10,7 @@ import {
   type DnsZoneListQuery,
   generateId,
   type UpdateDnsProviderAccountInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, asc, eq, inArray, notInArray } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';

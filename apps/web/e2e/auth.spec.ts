@@ -7,7 +7,7 @@ test('first run: the setup wizard creates the owner and saves the platform URL',
   await useScenario(page, 'fresh');
   await page.goto('/');
   await expect(page).toHaveURL(/\/setup$/);
-  await expect(page.getByRole('heading', { name: 'Set up Slipway' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Set up Launchway' })).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'Main' })).toHaveCount(0);
 
   await page.getByLabel('Name').fill('Dana Owner');
@@ -26,7 +26,7 @@ test('first run: the setup wizard creates the owner and saves the platform URL',
   await expect(page.getByLabel("Let's Encrypt e-mail")).toHaveValue('dana@example.com');
   await page.getByRole('button', { name: 'Save and continue' }).click();
 
-  await expect(page.getByText('Slipway is ready.')).toBeVisible();
+  await expect(page.getByText('Launchway is ready.')).toBeVisible();
   await page.getByRole('link', { name: 'Go to the overview' }).click();
   await expect(page.getByRole('heading', { level: 1, name: 'Overview' })).toBeVisible();
 });
@@ -68,6 +68,6 @@ test('an invitation link creates the account', async ({ page }) => {
 
 test('an expired invitation explains what to do', async ({ page }) => {
   await useScenario(page, 'signed-out');
-  await page.goto(`/invite/slpi_${'b'.repeat(43)}`);
+  await page.goto(`/invite/lwyi_${'b'.repeat(43)}`);
   await expect(page.getByRole('heading', { name: 'Invitation unavailable' })).toBeVisible();
 });

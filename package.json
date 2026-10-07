@@ -1,5 +1,5 @@
 {
-  "name": "slipway",
+  "name": "launchway",
   "version": "0.1.0",
   "private": true,
   "description": "Self-hosted deployment platform: GitHub releases to running Compose apps with domains, TLS and DNS.",
@@ -7,7 +7,7 @@
   "author": "Jens Penneman",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/JensPenneman/slipway.git"
+    "url": "git+https://github.com/JensPenneman/launchway.git"
   },
   "type": "module",
   "packageManager": "pnpm@11.21.0",
@@ -17,7 +17,7 @@
   },
   "scripts": {
     "prepare": "lefthook install",
-    "dev": "turbo run dev --filter=!@slipway/agent",
+    "dev": "turbo run dev --filter=!@launchway/agent",
     "build": "turbo run build",
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
@@ -26,7 +26,7 @@
     "test": "turbo run test",
     "test:integration": "turbo run test:integration",
     "test:e2e": "turbo run test:e2e",
-    "knip": "turbo run openapi:generate --filter=@slipway/web && knip",
+    "knip": "turbo run openapi:generate --filter=@launchway/web && knip",
     "check": "pnpm lint && pnpm typecheck && pnpm knip && pnpm test",
     "db:generate": "turbo run db:generate",
     "db:migrate": "turbo run db:migrate",

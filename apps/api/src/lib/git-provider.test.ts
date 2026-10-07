@@ -117,7 +117,7 @@ describe('GitProvider (GitHub)', () => {
     beforeEach(async () => {
       github.addManifestCode('code-1', appId);
       const conversion = await convertAppManifest('code-1');
-      expect(conversion).toMatchObject({ appId, slug: `slipway-test-${appId}` });
+      expect(conversion).toMatchObject({ appId, slug: `launchway-test-${appId}` });
       github.apps.get(appId)?.installations.set(installationId, { login: 'octo', type: 'User' });
       forgetInstallationTokens(appId);
     });

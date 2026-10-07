@@ -7,7 +7,7 @@ const IGNORED_INTERFACE =
 /**
  * Best-effort LAN IPv4 of this node: the first non-internal, non-link-local IPv4 of a physical
  * interface. Inside a container this is only meaningful with host networking; set
- * SLIPWAY_NODE_LAN_IP otherwise.
+ * LAUNCHWAY_NODE_LAN_IP otherwise.
  */
 export function detectLanIp(
   interfaces: NodeJS.Dict<NetworkInterfaceInfo[]> = networkInterfaces(),

@@ -8,7 +8,7 @@ import type {
   PlatformEvent,
   User,
   UserRole,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import {
   createApps,
   createAuditEvents,
@@ -32,13 +32,13 @@ import {
 } from './fixtures';
 
 /**
- * Scenario of the mock API, chosen with `localStorage['slipway-mock-scenario']` before the page
+ * Scenario of the mock API, chosen with `localStorage['launchway-mock-scenario']` before the page
  * loads (e2e tests use `page.addInitScript`): `default` (signed in as owner), `fresh` (no owner
  * yet), `signed-out`, `viewer` (signed in as a viewer).
  */
 export type MockScenario = 'default' | 'fresh' | 'signed-out' | 'viewer';
 
-export const SCENARIO_STORAGE_KEY = 'slipway-mock-scenario';
+export const SCENARIO_STORAGE_KEY = 'launchway-mock-scenario';
 
 function readScenario(): MockScenario {
   try {

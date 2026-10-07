@@ -5,7 +5,7 @@ import {
   roleAtLeast,
   USER_ROLES,
   type User,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Trash2, UserPlus } from 'lucide-react';
 import { useState } from 'react';
@@ -94,7 +94,7 @@ export function UsersSection() {
       <Card>
         <CardHeader>
           <CardTitle>Users</CardTitle>
-          <CardDescription>People who can sign in to this Slipway.</CardDescription>
+          <CardDescription>People who can sign in to this Launchway.</CardDescription>
         </CardHeader>
         <CardContent>
           {users.isPending ? (

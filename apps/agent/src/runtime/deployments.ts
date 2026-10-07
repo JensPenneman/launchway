@@ -8,7 +8,7 @@ import {
   type DeployPayload,
   type LogLine,
   type LogStream,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { type ComposeTarget, composeArgs, ensureProxyNetwork } from './compose.js';
 import {

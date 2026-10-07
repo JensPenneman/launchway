@@ -5,7 +5,7 @@ import {
   type NodeId,
   resolveAppSource,
   serviceAlias,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { CloneCredentials } from '../../lib/git-provider.js';
 
 export interface DeployPayloadInput {

@@ -10,7 +10,7 @@ import {
   type Route,
   UpdateDomainInput,
   UpdateRouteInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { HttpResponse, http } from 'msw';
 import { db } from '../db';
 import { PROVIDERS } from '../fixtures';
@@ -51,7 +51,7 @@ function verify(domain: Domain): DomainVerification {
     },
     message: ok
       ? `${domain.hostname} is a CNAME to ${anchor}.`
-      : `${domain.hostname} does not point at ${anchor ?? 'Slipway'} yet.`,
+      : `${domain.hostname} does not point at ${anchor ?? 'Launchway'} yet.`,
     requiredRecords:
       domain.zoneId === null && anchor
         ? [{ type: 'CNAME', name: domain.hostname, content: anchor }]

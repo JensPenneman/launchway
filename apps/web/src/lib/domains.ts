@@ -1,4 +1,4 @@
-import type { DomainStatus } from '@slipway/contracts';
+import type { DomainStatus } from '@launchway/contracts';
 
 /**
  * Statuses in which the edge renders the domain: `verified` (DNS preflight passed) and `active`

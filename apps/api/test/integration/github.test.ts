@@ -5,7 +5,7 @@ import type {
   Deployment,
   GitHubConnection,
   NodeId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
@@ -109,7 +109,7 @@ describe('GitHub integration against PostgreSQL', () => {
       `https://github.com/organizations/acme/settings/apps/new?state=${encodeURIComponent(flow.state)}`,
     );
     expect(flow.manifest).toMatchObject({
-      name: 'Slipway (deploy.example.com)',
+      name: 'Launchway (deploy.example.com)',
       redirect_url: `${PUBLIC_URL}/api/v1/github/connections/app-manifest/callback`,
       hook_attributes: { url: `${PUBLIC_URL}/api/v1/webhooks/github` },
     });
@@ -169,7 +169,7 @@ describe('GitHub integration against PostgreSQL', () => {
       app: {
         appId: ghAppId,
         installationId,
-        installUrl: `https://github.com/apps/slipway-test-${ghAppId}/installations/new`,
+        installUrl: `https://github.com/apps/launchway-test-${ghAppId}/installations/new`,
       },
     });
     const list = (await (await api.request('/api/v1/github/connections')).json()) as {

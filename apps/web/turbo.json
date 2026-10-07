@@ -3,7 +3,7 @@
   "extends": ["//"],
   "tasks": {
     "openapi:generate": {
-      "dependsOn": ["@slipway/api#openapi:export"],
+      "dependsOn": ["@launchway/api#openapi:export"],
       "inputs": ["../api/openapi.json"],
       "outputs": ["src/lib/api/schema.gen.ts"]
     },

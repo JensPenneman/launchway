@@ -8,7 +8,7 @@ import {
   SESSION_COOKIE_NAME,
   type SessionList,
   type UserPage,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import pg from 'pg';
 import { pino } from 'pino';
@@ -344,7 +344,7 @@ describe('accounts and authentication against PostgreSQL', () => {
       await invitee.request('POST', '/auth/passkeys/register/options'),
     );
     expect(regOptions).toMatchObject({
-      rp: { id: 'localhost', name: 'Slipway' },
+      rp: { id: 'localhost', name: 'Launchway' },
       user: { name: email },
       authenticatorSelection: { residentKey: 'required', userVerification: 'required' },
     });

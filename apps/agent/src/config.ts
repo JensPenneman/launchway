@@ -1,4 +1,4 @@
-import { AGENT_WS_PATH, IpAddress, NODE_JOIN_TOKEN_PATTERN } from '@slipway/contracts';
+import { AGENT_WS_PATH, IpAddress, NODE_JOIN_TOKEN_PATTERN } from '@launchway/contracts';
 import { z } from 'zod';
 
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;
@@ -33,13 +33,13 @@ export function toSocketUrl(serverUrl: string): string {
 }
 
 const EnvSchema = z.object({
-  SLIPWAY_SERVER_URL: z.url({ protocol: /^(?:wss?|https?)$/ }),
-  SLIPWAY_JOIN_TOKEN: z
+  LAUNCHWAY_SERVER_URL: z.url({ protocol: /^(?:wss?|https?)$/ }),
+  LAUNCHWAY_JOIN_TOKEN: z
     .string()
-    .regex(NODE_JOIN_TOKEN_PATTERN, 'must be slpn_ followed by 43 base62 characters')
+    .regex(NODE_JOIN_TOKEN_PATTERN, 'must be lwyn_ followed by 43 base62 characters')
     .optional(),
-  SLIPWAY_NODE_LAN_IP: IpAddress.optional(),
-  SLIPWAY_WORKSPACE: z.string().min(1).default('/var/lib/slipway'),
+  LAUNCHWAY_NODE_LAN_IP: IpAddress.optional(),
+  LAUNCHWAY_WORKSPACE: z.string().min(1).default('/var/lib/launchway'),
   DOCKER_HOST: z.string().min(1).default('unix:///var/run/docker.sock'),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
 });
@@ -53,10 +53,10 @@ export function loadAgentConfig(env: Record<string, string | undefined>): AgentC
   }
   const e = parsed.data;
   return {
-    socketUrl: toSocketUrl(e.SLIPWAY_SERVER_URL),
-    joinToken: e.SLIPWAY_JOIN_TOKEN ?? null,
-    lanIp: e.SLIPWAY_NODE_LAN_IP ?? null,
-    workspace: e.SLIPWAY_WORKSPACE,
+    socketUrl: toSocketUrl(e.LAUNCHWAY_SERVER_URL),
+    joinToken: e.LAUNCHWAY_JOIN_TOKEN ?? null,
+    lanIp: e.LAUNCHWAY_NODE_LAN_IP ?? null,
+    workspace: e.LAUNCHWAY_WORKSPACE,
     dockerHost: e.DOCKER_HOST,
     logLevel: e.LOG_LEVEL,
   };

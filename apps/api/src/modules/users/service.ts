@@ -5,7 +5,7 @@ import type {
   UserId,
   UserPage,
   UserRole,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { asc, eq, getTableColumns, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/errors.js';

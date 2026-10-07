@@ -1,4 +1,4 @@
-import type { GitHubRelease } from '@slipway/contracts';
+import type { GitHubRelease } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { latestRelease } from './release-utils';
 

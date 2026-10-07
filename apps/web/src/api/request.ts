@@ -1,7 +1,7 @@
-import type { z } from '@slipway/contracts';
-import { PROBLEM_TYPES, Problem, type ProblemType } from '@slipway/contracts';
+import type { z } from '@launchway/contracts';
+import { PROBLEM_TYPES, Problem, type ProblemType } from '@launchway/contracts';
 
-/** Base path of every Slipway API resource (same origin as the UI). */
+/** Base path of every Launchway API resource (same origin as the UI). */
 export const API_BASE = '/api/v1';
 
 /** Error thrown for every non-2xx response; carries the RFC 9457 problem document. */
@@ -105,7 +105,7 @@ async function readProblem(response: Response): Promise<Problem> {
 }
 
 /**
- * Calls the Slipway API: JSON in and out, the session cookie included, problem documents turned
+ * Calls the Launchway API: JSON in and out, the session cookie included, problem documents turned
  * into `ApiError`, and successful bodies validated against the contract schema.
  */
 export async function request<T = undefined>(path: string, options: RequestOptions<T> = {}) {
@@ -124,7 +124,7 @@ export async function request<T = undefined>(path: string, options: RequestOptio
     });
   } catch (error) {
     if (error instanceof DOMException && error.name === 'AbortError') throw error;
-    throw new ApiError(fallbackProblem(503, 'The Slipway API is not reachable.'));
+    throw new ApiError(fallbackProblem(503, 'The Launchway API is not reachable.'));
   }
 
   if (!response.ok) {
@@ -141,7 +141,7 @@ export async function request<T = undefined>(path: string, options: RequestOptio
       .slice(0, 5)
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
-    console.error(`[slipway] contract drift on ${method} ${path}`, parsed.error.issues);
+    console.error(`[launchway] contract drift on ${method} ${path}`, parsed.error.issues);
     throw new ContractDriftError(`${method} ${path}`, issues);
   }
   return parsed.data;

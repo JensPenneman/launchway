@@ -10,7 +10,7 @@ import {
   type NodeJoinToken,
   type NodeList,
   type UpdateNodeInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { asc, eq, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isForeignKeyViolation, isUniqueViolation } from '../../db/errors.js';
@@ -28,18 +28,18 @@ import { nodes } from './schema.js';
 
 type NodeRow = typeof nodes.$inferSelect;
 
-/** Name of the node the bundled agent joins with SLIPWAY_LOCAL_JOIN_TOKEN. */
+/** Name of the node the bundled agent joins with LAUNCHWAY_LOCAL_JOIN_TOKEN. */
 export const LOCAL_NODE_NAME = 'local';
 
 /** Serializes the local bootstrap across API processes. */
-const LOCAL_NODE_LOCK = sql`pg_advisory_xact_lock(hashtext('slipway:nodes:local'))`;
+const LOCAL_NODE_LOCK = sql`pg_advisory_xact_lock(hashtext('launchway:nodes:local'))`;
 
 type NodesDeps = Pick<Deps, 'db' | 'config' | 'events' | 'agents' | 'version'>;
 
 export interface NodesService {
   list(): Promise<NodeList>;
   get(id: NodeId): Promise<Node>;
-  /** `requestOrigin` is the fallback for SLIPWAY_SERVER_URL while no public URL is set. */
+  /** `requestOrigin` is the fallback for LAUNCHWAY_SERVER_URL while no public URL is set. */
   create(input: CreateNodeInput, actor: RequestActor, requestOrigin: string): Promise<CreatedNode>;
   update(id: NodeId, input: UpdateNodeInput, actor: RequestActor): Promise<Node>;
   remove(id: NodeId, actor: RequestActor): Promise<void>;
@@ -280,7 +280,7 @@ export function createNodesService(deps: NodesDeps): NodesService {
 }
 
 /**
- * Startup task: when SLIPWAY_LOCAL_JOIN_TOKEN is configured, make sure a node named `local`
+ * Startup task: when LAUNCHWAY_LOCAL_JOIN_TOKEN is configured, make sure a node named `local`
  * exists and accepts that token (without expiry, so the bundled agent can always rejoin), and
  * make it the edge node while none is set. Returns the local node id, or null when not configured.
  */

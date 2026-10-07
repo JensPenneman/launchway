@@ -1,4 +1,4 @@
-import type { EnvVar } from '@slipway/contracts';
+import type { EnvVar } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { mergeEnvForBulk } from './env-merge';
 

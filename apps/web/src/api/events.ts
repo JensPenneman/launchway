@@ -6,7 +6,7 @@ import {
   PlatformEvent,
   SSE_EVENTS,
   z,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import { keysForTopic } from './keys';

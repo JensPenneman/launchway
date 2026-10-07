@@ -6,7 +6,7 @@ import {
   type PublishedPort,
   ServiceName,
   type ServiceStatus,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 
 const Publisher = z.looseObject({
@@ -89,7 +89,7 @@ export function parseComposePs(stdout: string): ServiceStatus[] {
     );
 }
 
-/** Container names (`slipway-trail-web-1` and Compose's log prefix `web-1`) -> service. */
+/** Container names (`launchway-trail-web-1` and Compose's log prefix `web-1`) -> service. */
 export function containerServiceMap(stdout: string, projectName: string): Map<string, string> {
   const map = new Map<string, string>();
   for (const entry of parsePsEntries(stdout)) {

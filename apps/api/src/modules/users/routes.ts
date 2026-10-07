@@ -1,5 +1,5 @@
 import { createRoute, z } from '@hono/zod-openapi';
-import { PaginationQuery, UpdateUserInput, User, UserId, UserPage } from '@slipway/contracts';
+import { PaginationQuery, UpdateUserInput, User, UserId, UserPage } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';

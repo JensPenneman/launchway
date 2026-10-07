@@ -1,3 +1,12 @@
+import type {
+  Passkey,
+  PasskeyId,
+  PasskeyList,
+  PasskeyLoginInput,
+  PasskeyRegistrationInput,
+  UserId,
+  WebAuthnOptions,
+} from '@launchway/contracts';
 import {
   type AuthenticationResponseJSON,
   generateAuthenticationOptions,
@@ -7,15 +16,6 @@ import {
   verifyRegistrationResponse,
 } from '@simplewebauthn/server';
 import { decodeClientDataJSON } from '@simplewebauthn/server/helpers';
-import type {
-  Passkey,
-  PasskeyId,
-  PasskeyList,
-  PasskeyLoginInput,
-  PasskeyRegistrationInput,
-  UserId,
-  WebAuthnOptions,
-} from '@slipway/contracts';
 import { and, asc, count, eq } from 'drizzle-orm';
 import { isUniqueViolation } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';
@@ -41,7 +41,7 @@ export function relyingPartyFor(origin: string): RelyingParty {
   return { origin, rpID: new URL(origin).hostname };
 }
 
-const RP_NAME = 'Slipway';
+const RP_NAME = 'Launchway';
 const DEFAULT_PASSKEY_NAME = 'Passkey';
 
 function toPasskey(row: PasskeyRow): Passkey {

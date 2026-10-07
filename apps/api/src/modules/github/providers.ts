@@ -1,4 +1,4 @@
-import type { GitHubConnectionId } from '@slipway/contracts';
+import type { GitHubConnectionId } from '@launchway/contracts';
 import { eq } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';

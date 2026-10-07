@@ -1,10 +1,10 @@
-import type { DnsRecord } from '@slipway/contracts';
+import type { DnsRecord } from '@launchway/contracts';
 import { z } from 'zod';
 import type { DnsProvider, DnsProviderDefinition } from './types.js';
 
 const ManualCredentials = z.strictObject({}).meta({
   title: 'No credentials',
-  description: 'Records are created by hand at your DNS host; Slipway only verifies them.',
+  description: 'Records are created by hand at your DNS host; Launchway only verifies them.',
 });
 type ManualCredentials = z.infer<typeof ManualCredentials>;
 
@@ -29,7 +29,7 @@ const manualClient: DnsProvider = {
   deleteRecord: () => Promise.resolve(),
 };
 
-/** Provider without an API: Slipway shows the records to create and only verifies them. */
+/** Provider without an API: Launchway shows the records to create and only verifies them. */
 export const manualProvider: DnsProviderDefinition<ManualCredentials> = {
   kind: 'manual',
   label: 'Manual (no API)',

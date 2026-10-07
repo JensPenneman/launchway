@@ -4,7 +4,7 @@ import {
   DnsRecordInput,
   type DnsRecordType,
   type DnsZone,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2, Pencil, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';

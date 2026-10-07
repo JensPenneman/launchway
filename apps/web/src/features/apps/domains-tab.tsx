@@ -5,7 +5,7 @@ import {
   ROUTE_OPTION_DEFAULTS,
   RoutableServiceName,
   type Route,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, Globe, Loader2, Plus, Settings2, Trash2 } from 'lucide-react';
 import { useState } from 'react';

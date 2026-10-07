@@ -3,7 +3,7 @@ import {
   composeProjectName,
   type RemovePayload,
   type ServiceStatus,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { composeArgs } from './compose.js';
 import { parseComposePs } from './compose-output.js';

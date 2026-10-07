@@ -4,7 +4,7 @@ import {
   PROBLEM_TYPES,
   Problem,
   SESSION_COOKIE_NAME,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { ZodType } from 'zod';
 import type { AppEnv } from '../deps.js';
 
@@ -26,7 +26,7 @@ export function registerSecuritySchemes(app: OpenAPIHono<AppEnv>): void {
   app.openAPIRegistry.registerComponent('securitySchemes', 'bearerAuth', {
     type: 'http',
     scheme: 'bearer',
-    description: 'API token (slp_...)',
+    description: 'API token (lwy_...)',
   });
 }
 
@@ -67,11 +67,11 @@ export function openApiObject(version: string) {
   return {
     openapi: '3.1.0',
     info: {
-      title: 'Slipway API',
+      title: 'Launchway API',
       version,
       description:
-        'REST API of the Slipway control plane. Everything the web UI does goes through this API. ' +
-        'Authenticate with the session cookie or `Authorization: Bearer slp_...`. Errors are RFC 9457 ' +
+        'REST API of the Launchway control plane. Everything the web UI does goes through this API. ' +
+        'Authenticate with the session cookie or `Authorization: Bearer lwy_...`. Errors are RFC 9457 ' +
         'problem documents with stable `type` slugs; lists are cursor-paginated.',
       license: { name: 'Apache-2.0', identifier: 'Apache-2.0' },
     },
@@ -94,7 +94,7 @@ export function openApiObject(version: string) {
       { name: 'Apps', description: 'Apps, their environment, status, logs and lifecycle' },
       { name: 'Deployments', description: 'Deployments of a release or ref, with live logs' },
       { name: 'Nodes', description: 'Machines running the agent, join tokens and credentials' },
-      { name: 'Domains', description: 'Domains Slipway serves and their DNS verification' },
+      { name: 'Domains', description: 'Domains Launchway serves and their DNS verification' },
       {
         name: 'Routes',
         description: 'What a domain serves: an app, an external upstream or a redirect',

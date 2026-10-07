@@ -4,7 +4,7 @@ import {
   type Problem,
   type ProblemType,
   type ValidationIssue,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Context } from 'hono';
 import { HTTPException } from 'hono/http-exception';
 import type { ContentfulStatusCode } from 'hono/utils/http-status';

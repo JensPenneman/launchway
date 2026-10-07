@@ -1,4 +1,4 @@
-import type { UserRole } from '@slipway/contracts';
+import type { UserRole } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { meQuery } from '@/api/auth';
 import { can } from '@/lib/roles';

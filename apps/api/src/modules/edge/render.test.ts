@@ -1,4 +1,4 @@
-import type { AppId, DomainId, NodeId, RouteId, ServiceStatus } from '@slipway/contracts';
+import type { AppId, DomainId, NodeId, RouteId, ServiceStatus } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { type EdgeRenderInput, type EdgeRoute, renderEdge } from './render.js';
 
@@ -168,7 +168,7 @@ describe('renderEdge (golden files)', () => {
     expect(caddyfile).toContain('reverse_proxy shop-api:9000');
     expect(caddyfile).toContain('http://10.0.0.5:8080 {');
     expect(caddyfile).not.toContain(
-      'Strict-Transport-Security "max-age=31536000"\n\treverse_proxy slipway',
+      'Strict-Transport-Security "max-age=31536000"\n\treverse_proxy launchway',
     );
   });
 
@@ -180,7 +180,7 @@ describe('renderEdge (golden files)', () => {
         route('x.example.com', {
           target: {
             kind: 'redirect',
-            to: 'https://example.com/?q={env.SLIPWAY_SECRET_KEY}',
+            to: 'https://example.com/?q={env.LAUNCHWAY_SECRET_KEY}',
             permanent: false,
           },
         }),
@@ -189,6 +189,6 @@ describe('renderEdge (golden files)', () => {
       nodes: [],
     });
     expect(caddyfile).not.toContain('{env.');
-    expect(caddyfile).toContain('redir https://example.com/?q=%7Benv.SLIPWAY_SECRET_KEY%7D 307');
+    expect(caddyfile).toContain('redir https://example.com/?q=%7Benv.LAUNCHWAY_SECRET_KEY%7D 307');
   });
 });

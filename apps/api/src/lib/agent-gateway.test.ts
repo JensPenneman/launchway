@@ -1,4 +1,4 @@
-import { generateId } from '@slipway/contracts';
+import { generateId } from '@launchway/contracts';
 import { describe, expect, it, vi } from 'vitest';
 import { createDeferredDeploymentSink, type DeploymentSink } from './agent-gateway.js';
 

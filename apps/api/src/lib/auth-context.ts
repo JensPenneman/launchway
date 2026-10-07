@@ -8,7 +8,7 @@ import {
   type TokenScope,
   type UserId,
   type UserRole,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Context, MiddlewareHandler } from 'hono';
 import type { AppEnv } from '../deps.js';
 import { forbidden, unauthorized } from './problem.js';
@@ -32,7 +32,7 @@ export type Principal =
 
 /**
  * Resolves the caller of a request. The implementation is `createAuthResolver()` in
- * src/modules/auth/resolver.ts (session cookie or `Authorization: Bearer slp_...`); CSRF is
+ * src/modules/auth/resolver.ts (session cookie or `Authorization: Bearer lwy_...`); CSRF is
  * enforced separately by `csrfProtection()` (src/lib/csrf.ts). Return null for anonymous
  * requests; throw `unauthorized()` for invalid or expired credentials.
  */

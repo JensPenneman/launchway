@@ -3,7 +3,7 @@ import {
   NODE_CREDENTIAL_PREFIX,
   NODE_JOIN_TOKEN_PREFIX,
   SESSION_TTL_SECONDS,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq, gt, lt } from 'drizzle-orm';
 import type { Context } from 'hono';
 import type { AppEnv, Deps } from '../../deps.js';
@@ -36,8 +36,8 @@ export interface AuthResolverOptions {
 }
 
 /**
- * The real `Deps.auth`: resolves the caller from `Authorization: Bearer slp_...` (takes
- * precedence) or the `slipway_session` cookie.
+ * The real `Deps.auth`: resolves the caller from `Authorization: Bearer lwy_...` (takes
+ * precedence) or the `launchway_session` cookie.
  * - Bearer: hashed lookup in `api_tokens`; unknown, malformed or expired tokens are a 401.
  * - Cookie: hashed lookup in `sessions`; unknown or expired sessions make the request anonymous
  *   (and clear the cookie) so that sign-in and setup keep working with a stale cookie.
@@ -53,7 +53,7 @@ export function createAuthResolver(
   async function fromToken(c: Context<AppEnv>, header: string): Promise<Principal> {
     const token = BEARER.exec(header)?.[1];
     if (!token || !API_TOKEN_PATTERN.test(token)) {
-      throw unauthorized('Malformed Authorization header; expected Bearer slp_...');
+      throw unauthorized('Malformed Authorization header; expected Bearer lwy_...');
     }
     const [row] = await deps.db
       .select({

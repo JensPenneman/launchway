@@ -1,4 +1,4 @@
-import { GIT_REF_PATTERN } from '@slipway/contracts';
+import { GIT_REF_PATTERN } from '@launchway/contracts';
 
 /** Extra `git -c key=value` settings, passed through `GIT_CONFIG_*` (never argv, never disk). */
 export type GitConfig = readonly (readonly [key: string, value: string])[];

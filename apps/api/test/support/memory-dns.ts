@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { DnsRecord, DnsZoneInfo } from '@slipway/contracts';
+import type { DnsRecord, DnsZoneInfo } from '@launchway/contracts';
 import { z } from 'zod';
 import {
   type DnsProvider,

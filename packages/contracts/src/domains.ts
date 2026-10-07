@@ -17,7 +17,7 @@ export const Domain = z
     id: DomainId,
     hostname: Hostname,
     zoneId: DnsZoneId.nullable().openapi({
-      description: 'Zone whose record Slipway manages; null = unmanaged',
+      description: 'Zone whose record Launchway manages; null = unmanaged',
     }),
     managed: z.boolean(),
     proxied: z.boolean(),

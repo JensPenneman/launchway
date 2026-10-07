@@ -22,7 +22,7 @@ import type {
   Settings,
   TypeId,
   User,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 
 /** Deterministic type IDs for fixtures (`app_01k7000…0001`), so e2e tests can deep-link. */
 export function fixedId<P extends IdPrefix>(prefix: P, n: number): TypeId<P> {
@@ -148,7 +148,7 @@ export function createTokens(): ApiToken[] {
       id: fixedId('tok', 1),
       name: 'GitHub Actions deploy',
       scopes: ['write'],
-      tokenHint: 'slp_8Hq2',
+      tokenHint: 'lwy_8Hq2',
       expiresAt: later(60 * 24 * 60),
       lastUsedAt: ago(60 * 8),
       createdAt: ago(60 * 24 * 30),
@@ -157,7 +157,7 @@ export function createTokens(): ApiToken[] {
       id: fixedId('tok', 2),
       name: 'Grafana read-only',
       scopes: ['read'],
-      tokenHint: 'slp_Zt71',
+      tokenHint: 'lwy_Zt71',
       expiresAt: null,
       lastUsedAt: ago(3),
       createdAt: ago(60 * 24 * 12),
@@ -181,7 +181,7 @@ export function createInvitations(): Invitation[] {
 }
 
 /** Token of the invitation preview page in the mocks (`/invite/<token>`). */
-export const MOCK_INVITATION_TOKEN = `slpi_${'a'.repeat(43)}`;
+export const MOCK_INVITATION_TOKEN = `lwyi_${'a'.repeat(43)}`;
 
 // --- Nodes -------------------------------------------------------------------------------------
 
@@ -263,13 +263,13 @@ export function createConnections(): GitHubConnection[] {
     {
       id: APP_CONNECTION_ID,
       kind: 'app',
-      name: 'Slipway (example-org)',
+      name: 'Launchway (example-org)',
       account: { login: 'example-org', type: 'Organization' },
       app: {
         appId: 1_204_331,
-        slug: 'slipway-example-org',
-        htmlUrl: 'https://github.com/apps/slipway-example-org',
-        installUrl: 'https://github.com/apps/slipway-example-org/installations/new',
+        slug: 'launchway-example-org',
+        htmlUrl: 'https://github.com/apps/launchway-example-org',
+        installUrl: 'https://github.com/apps/launchway-example-org/installations/new',
         installationId: 61_234_567,
       },
       webhooksEnabled: true,
@@ -445,7 +445,7 @@ export function createDeployments(): Deployment[] {
 export function deploymentLog(deployment: Deployment): LogLine[] {
   const lines: [LogLine['stream'], string][] = [
     ['system', `Cloning example-org at ${deployment.ref} (${deployment.commitSha.slice(0, 7)})`],
-    ['stdout', 'Cloning into /var/lib/slipway/apps/…'],
+    ['stdout', 'Cloning into /var/lib/launchway/apps/…'],
     ['system', 'Checking the Compose policy'],
     ['system', 'Building images'],
     ['stdout', '#1 [internal] load build definition from Dockerfile'],
@@ -453,7 +453,7 @@ export function deploymentLog(deployment: Deployment): LogLine[] {
     ['stdout', '#5 [build 2/6] RUN pnpm install --frozen-lockfile'],
     ['stdout', '#9 exporting to image'],
     ['system', 'Starting containers'],
-    ['stderr', ' Container slipway-app-web-1  Started'],
+    ['stderr', ' Container launchway-app-web-1  Started'],
   ];
   if (deployment.status === 'failed') {
     lines.splice(3, lines.length, ['stderr', deployment.statusMessage ?? 'Deployment failed']);
@@ -513,7 +513,7 @@ export const PROVIDERS: DnsProviderInfo[] = [
           minLength: 1,
           format: 'password',
           title: 'API token',
-          description: 'Token with Zone:Read and DNS:Edit for the zones Slipway may manage',
+          description: 'Token with Zone:Read and DNS:Edit for the zones Launchway may manage',
         },
         accountId: {
           type: 'string',

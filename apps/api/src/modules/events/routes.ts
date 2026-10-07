@@ -1,5 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { PlatformEvent, SSE_EVENTS } from '@slipway/contracts';
+import { PlatformEvent, SSE_EVENTS } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requireRole } from '../../lib/auth-context.js';
 import type { EventBus } from '../../lib/event-bus.js';

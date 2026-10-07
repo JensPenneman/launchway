@@ -7,13 +7,13 @@ export const MOCK_PASSWORD = 'correct horse battery staple';
 export const TRAIL_APP_ID = `app_01k7${'1'.padStart(22, '0')}`;
 export const MAIL_APP_ID = `app_01k7${'3'.padStart(22, '0')}`;
 export const EDGE_NODE_ID = `node_01k7${'1'.padStart(22, '0')}`;
-export const INVITATION_TOKEN = `slpi_${'a'.repeat(43)}`;
+export const INVITATION_TOKEN = `lwyi_${'a'.repeat(43)}`;
 
 type Scenario = 'default' | 'fresh' | 'signed-out' | 'viewer';
 
 /** Picks the mock API scenario before the app boots. */
 export async function useScenario(page: Page, scenario: Scenario): Promise<void> {
   await page.addInitScript((value) => {
-    localStorage.setItem('slipway-mock-scenario', value);
+    localStorage.setItem('launchway-mock-scenario', value);
   }, scenario);
 }

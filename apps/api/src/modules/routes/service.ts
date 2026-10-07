@@ -7,7 +7,7 @@ import type {
   RoutePage,
   RouteTarget,
   UpdateRouteInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, asc, eq, ne, type SQL, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/errors.js';
@@ -25,7 +25,7 @@ import { assertRedirectTarget, findAliasClash, routeAlias } from './validation.j
 type RouteRow = typeof routes.$inferSelect;
 
 /** Serializes route mutations so the alias collision check cannot race. */
-const ROUTES_LOCK = sql`select pg_advisory_xact_lock(hashtext('slipway:routes'))`;
+const ROUTES_LOCK = sql`select pg_advisory_xact_lock(hashtext('launchway:routes'))`;
 
 export interface RoutesService {
   list(query: RouteListQuery): Promise<RoutePage>;

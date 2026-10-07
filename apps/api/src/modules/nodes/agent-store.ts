@@ -5,7 +5,7 @@ import {
   NODE_CREDENTIAL_PREFIX,
   NODE_JOIN_TOKEN_PATTERN,
   type NodeId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, eq, gt, isNull, or, sql } from 'drizzle-orm';
 import type { Database } from '../../db/client.js';
 import type { RequestActor } from '../../lib/auth-context.js';
@@ -16,7 +16,7 @@ import { nodes } from './schema.js';
 /** Result of authenticating an agent's upgrade request. */
 export interface AgentAuth {
   readonly nodeId: NodeId;
-  /** `join`: a one-time join token (a credential is issued at hello); `credential`: slpa_. */
+  /** `join`: a one-time join token (a credential is issued at hello); `credential`: lwya_. */
   readonly via: 'join' | 'credential';
   readonly tokenHash: string;
 }

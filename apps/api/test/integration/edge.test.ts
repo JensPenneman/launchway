@@ -1,5 +1,5 @@
 import { get } from 'node:http';
-import type { EdgeConfig } from '@slipway/contracts';
+import type { EdgeConfig } from '@launchway/contracts';
 import pg from 'pg';
 import { GenericContainer, type StartedTestContainer, Wait } from 'testcontainers';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';

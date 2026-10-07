@@ -1,6 +1,6 @@
 {
-  "name": "slipway-mail",
-  "networks": { "default": { "name": "slipway-mail_default", "ipam": {} } },
+  "name": "launchway-mail",
+  "networks": { "default": { "name": "launchway-mail_default", "ipam": {} } },
   "services": {
     "mail": {
       "image": "ghcr.io/docker-mailserver/docker-mailserver:15",
@@ -25,7 +25,7 @@
     },
     "web": {
       "build": { "context": "/ws/apps/app_1/dep_1/web", "dockerfile": "Dockerfile" },
-      "image": "slipway-mail-web",
+      "image": "launchway-mail-web",
       "networks": { "default": null, "back": null },
       "ports": [{ "mode": "ingress", "target": 8080, "protocol": "tcp" }]
     },
@@ -45,16 +45,16 @@
     }
   },
   "volumes": {
-    "maildata": { "name": "slipway-mail_maildata" },
+    "maildata": { "name": "launchway-mail_maildata" },
     "pg": {
-      "name": "slipway-mail_pg",
+      "name": "launchway-mail_pg",
       "driver": "local",
       "driver_opts": { "type": "nfs", "o": "addr=10.0.0.5,rw", "device": ":/exports/pg" }
     }
   },
   "networks_unused": {},
-  "configs": { "motd": { "content": "hello", "name": "slipway-mail_motd" } },
+  "configs": { "motd": { "content": "hello", "name": "launchway-mail_motd" } },
   "secrets": {
-    "api": { "file": "/ws/apps/app_1/dep_1/secrets/api.txt", "name": "slipway-mail_api" }
+    "api": { "file": "/ws/apps/app_1/dep_1/secrets/api.txt", "name": "launchway-mail_api" }
   }
 }

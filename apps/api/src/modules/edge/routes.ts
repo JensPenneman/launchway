@@ -1,5 +1,5 @@
 import { createRoute } from '@hono/zod-openapi';
-import { EdgeConfig } from '@slipway/contracts';
+import { EdgeConfig } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonResponse, problemResponses } from '../../lib/openapi.js';

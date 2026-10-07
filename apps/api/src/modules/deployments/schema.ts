@@ -7,7 +7,7 @@ import {
   type NodeId,
   type ServiceStatus,
   type UserId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import {
   bigint,

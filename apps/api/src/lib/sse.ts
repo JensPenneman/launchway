@@ -2,7 +2,7 @@ import type { Context } from 'hono';
 import { streamSSE } from 'hono/streaming';
 
 export interface SseMessage {
-  /** SSE `event:` name (see SSE_EVENTS in @slipway/contracts). */
+  /** SSE `event:` name (see SSE_EVENTS in @launchway/contracts). */
   event: string;
   /** Serialized as JSON into `data:`. */
   data: unknown;

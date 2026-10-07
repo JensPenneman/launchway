@@ -9,10 +9,10 @@ test('adds a node and shows its one-time join snippet', async ({ page }) => {
   await page.getByRole('button', { name: 'Create join token' }).click();
 
   const join = page.getByTestId('join-instructions');
-  await expect(join).toContainText('docker run -d --name slipway-agent');
-  await expect(join).toContainText('SLIPWAY_JOIN_TOKEN=slpn_');
+  await expect(join).toContainText('docker run -d --name launchway-agent');
+  await expect(join).toContainText('LAUNCHWAY_JOIN_TOKEN=lwyn_');
   await page.getByRole('tab', { name: 'Compose' }).click();
-  await expect(join).toContainText('slipway-agent:');
+  await expect(join).toContainText('launchway-agent:');
   await page.getByRole('button', { name: 'Done' }).click();
   await expect(page.getByRole('row', { name: /attic-nuc/ })).toContainText('pending');
 });

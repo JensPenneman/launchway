@@ -1,7 +1,7 @@
 // Runs before first paint; mirrors src/lib/theme.ts (storage key and resolution rules).
 (() => {
   try {
-    const stored = localStorage.getItem('slipway-theme');
+    const stored = localStorage.getItem('launchway-theme');
     const preference = stored === 'light' || stored === 'dark' ? stored : 'system';
     const dark =
       preference === 'dark' ||

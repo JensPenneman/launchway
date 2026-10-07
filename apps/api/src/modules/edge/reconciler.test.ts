@@ -2,7 +2,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { DomainId, DomainStatus, RouteId } from '@slipway/contracts';
+import type { DomainId, DomainStatus, RouteId } from '@launchway/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestDeps } from '../../../test/support/deps.js';
 import { ProblemError } from '../../lib/problem.js';

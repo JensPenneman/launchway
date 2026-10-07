@@ -10,9 +10,9 @@ describe('web UI', () => {
   let app: ReturnType<typeof createApp>;
 
   beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), 'slipway-web-'));
+    root = mkdtempSync(join(tmpdir(), 'launchway-web-'));
     mkdirSync(join(root, 'assets'));
-    writeFileSync(join(root, 'index.html'), '<!doctype html><title>Slipway</title>');
+    writeFileSync(join(root, 'index.html'), '<!doctype html><title>Launchway</title>');
     writeFileSync(join(root, 'assets', 'index-abc123.js'), 'console.log("ui");');
     writeFileSync(join(root, 'favicon.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>');
     const deps = createTestDeps();
@@ -41,7 +41,7 @@ describe('web UI', () => {
     const res = await app.request('/apps/app_123?tab=deployments');
     expect(res.status).toBe(200);
     expect(res.headers.get('cache-control')).toBe('no-cache');
-    expect(await res.text()).toContain('<title>Slipway</title>');
+    expect(await res.text()).toContain('<title>Launchway</title>');
   });
 
   it('keeps unknown API paths as problem documents', async () => {

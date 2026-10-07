@@ -1,4 +1,4 @@
-import type { App } from '@slipway/contracts';
+import type { App } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Link } from '@tanstack/react-router';
 import { Rocket, ScrollText } from 'lucide-react';

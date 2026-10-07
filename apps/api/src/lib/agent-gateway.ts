@@ -10,7 +10,7 @@ import type {
   DeployPayload,
   NodeId,
   ServiceStatus,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 
 /** The app a node-side command targets: enough to derive the Compose project name. @public */
 export interface AppTarget {

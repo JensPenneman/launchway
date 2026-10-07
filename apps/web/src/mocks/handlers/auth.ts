@@ -14,7 +14,7 @@ import {
   UpdateMeInput,
   UpdateUserInput,
   type User,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { HttpResponse, http } from 'msw';
 import { db } from '../db';
 import { MOCK_INVITATION_TOKEN } from '../fixtures';
@@ -64,7 +64,7 @@ export const authHandlers = [
     HttpResponse.json({ setupRequired: db.users.length === 0, setupTokenRequired: false }),
   ),
   http.post(`${API}/setup`, async ({ request }) => {
-    if (db.users.length > 0) return problem('conflict', 'Slipway is already set up.');
+    if (db.users.length > 0) return problem('conflict', 'Launchway is already set up.');
     const { data, error } = await parseBody(request, SetupInput);
     if (error) return error;
     const user: User = {
@@ -162,7 +162,7 @@ export const authHandlers = [
     if (!user) return problem('unauthorized');
     return HttpResponse.json({
       challenge: challenge(),
-      rp: { name: 'Slipway', id: location.hostname },
+      rp: { name: 'Launchway', id: location.hostname },
       user: { id: btoa(user.id).replace(/=+$/, ''), name: user.email, displayName: user.name },
       pubKeyCredParams: [
         { type: 'public-key', alg: -7 },
@@ -262,7 +262,7 @@ export const authHandlers = [
       createdAt: now(),
     };
     db.invitations.unshift(invitation);
-    const token = randomToken('slpi_');
+    const token = randomToken('lwyi_');
     invitationTokens.set(token, invitation.id);
     recordAudit('invitation.create', 'invitation', invitation.id, { role: data.role });
     db.emit('invitations', 'created', invitation.id);
@@ -334,7 +334,7 @@ export const authHandlers = [
     if (denied) return denied;
     const { data, error } = await parseBody(request, CreateApiTokenInput);
     if (error) return error;
-    const secret = randomToken('slp_');
+    const secret = randomToken('lwy_');
     const token = {
       id: generateId('tok'),
       name: data.name,

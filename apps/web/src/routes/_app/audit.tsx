@@ -1,4 +1,4 @@
-import type { AuditEvent } from '@slipway/contracts';
+import type { AuditEvent } from '@launchway/contracts';
 import { useInfiniteQuery } from '@tanstack/react-query';
 import { createFileRoute, useNavigate } from '@tanstack/react-router';
 import { ChevronDown, Loader2, ScrollText, X } from 'lucide-react';

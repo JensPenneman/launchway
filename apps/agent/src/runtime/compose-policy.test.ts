@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import type { DeployRoute } from '@slipway/contracts';
+import type { DeployRoute } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   type ComposeConfig,
@@ -13,8 +13,8 @@ const fixture = readFileSync(new URL('./fixtures/mailserver.config.json', import
 
 function context(routes: DeployRoute[] = []): PolicyContext {
   return {
-    projectName: 'slipway-mail',
-    proxyNetwork: 'slipway-proxy',
+    projectName: 'launchway-mail',
+    proxyNetwork: 'launchway-proxy',
     routes,
     isInsideCheckout: (path) => path === CHECKOUT || path.startsWith(`${CHECKOUT}/`),
   };
@@ -86,13 +86,13 @@ describe('evaluateComposePolicy', () => {
     ],
     [
       'network_mode naming the proxy network',
-      { image: 'x', network_mode: 'slipway-proxy' },
-      /network_mode slipway-proxy/,
+      { image: 'x', network_mode: 'launchway-proxy' },
+      /network_mode launchway-proxy/,
     ],
     [
       'network_mode naming another network',
-      { image: 'x', network_mode: 'slipway-other_default' },
-      /network_mode slipway-other_default/,
+      { image: 'x', network_mode: 'launchway-other_default' },
+      /network_mode launchway-other_default/,
     ],
     [
       'network_mode of a service in another project',
@@ -128,7 +128,7 @@ describe('evaluateComposePolicy', () => {
     ['devices', { image: 'x', devices: [{ source: '/dev/sda', target: '/dev/sda' }] }, /devices/],
     [
       'volumes_from another container',
-      { image: 'x', volumes_from: ['container:slipway-agent'] },
+      { image: 'x', volumes_from: ['container:launchway-agent'] },
       /volumes_from/,
     ],
     ['use_api_socket', { image: 'x', use_api_socket: true }, /use_api_socket/],
@@ -136,12 +136,12 @@ describe('evaluateComposePolicy', () => {
     ['reserved container names', { image: 'x', container_name: 'caddy' }, /container_name "caddy"/],
     [
       'joining the proxy network',
-      { image: 'x', networks: { 'slipway-proxy': null } },
+      { image: 'x', networks: { 'launchway-proxy': null } },
       /proxy network/,
     ],
     [
       'env files outside the checkout',
-      { image: 'x', env_file: [{ path: '/var/lib/slipway/agent/credentials.json' }] },
+      { image: 'x', env_file: [{ path: '/var/lib/launchway/agent/credentials.json' }] },
       /env_file.*outside/,
     ],
     ['label files outside the checkout', { image: 'x', label_file: ['/etc/passwd'] }, /label_file/],
@@ -174,12 +174,12 @@ describe('evaluateComposePolicy', () => {
   it.each<[string, Partial<ComposeConfig>, RegExp]>([
     [
       'external volumes',
-      { volumes: { data: { external: true, name: 'slipway_pgdata' } } },
+      { volumes: { data: { external: true, name: 'launchway_pgdata' } } },
       /external volumes/,
     ],
     [
       'custom volume names',
-      { volumes: { data: { name: 'slipway-other_data' } } },
+      { volumes: { data: { name: 'launchway-other_data' } } },
       /custom volume name/,
     ],
     [
@@ -187,7 +187,7 @@ describe('evaluateComposePolicy', () => {
       {
         volumes: {
           data: {
-            name: 'slipway-mail_data',
+            name: 'launchway-mail_data',
             driver_opts: { type: 'none', o: 'bind', device: '/' },
           },
         },
@@ -199,7 +199,7 @@ describe('evaluateComposePolicy', () => {
       {
         volumes: {
           v: {
-            name: 'slipway-mail_v',
+            name: 'launchway-mail_v',
             driver_opts: { type: 'overlay', device: 'overlay', o: 'lowerdir=/etc:/root' },
           },
         },
@@ -214,31 +214,31 @@ describe('evaluateComposePolicy', () => {
     ['volume plugins', { volumes: { v: { driver: 'local-persist' } } }, /volume driver/],
     [
       'reusing another project network by name',
-      { networks: { n: { name: 'slipway-other_default' } } },
+      { networks: { n: { name: 'launchway-other_default' } } },
       /custom network name/,
     ],
     [
       'macvlan networks',
       {
         networks: {
-          n: { name: 'slipway-mail_n', driver: 'macvlan', driver_opts: { parent: 'eth0' } },
+          n: { name: 'launchway-mail_n', driver: 'macvlan', driver_opts: { parent: 'eth0' } },
         },
       },
       /network driver "macvlan"[\s\S]*driver_opts/,
     ],
     [
       'a declared proxy network',
-      { networks: { edge: { name: 'slipway-proxy', external: true } } },
+      { networks: { edge: { name: 'launchway-proxy', external: true } } },
       /proxy network/,
     ],
     [
       'the default proxy network under another key',
-      { networks: { 'slipway-proxy': { name: 'x' } } },
+      { networks: { 'launchway-proxy': { name: 'x' } } },
       /proxy network/,
     ],
     [
       'external networks',
-      { networks: { other: { name: 'slipway-other_default', external: true } } },
+      { networks: { other: { name: 'launchway-other_default', external: true } } },
       /external networks/,
     ],
     ['the host network', { networks: { h: { name: 'host', external: true } } }, /host networking/],
@@ -249,7 +249,7 @@ describe('evaluateComposePolicy', () => {
     ],
     [
       'secret files outside the checkout',
-      { secrets: { s: { file: '/var/lib/slipway/agent/credentials.json' } } },
+      { secrets: { s: { file: '/var/lib/launchway/agent/credentials.json' } } },
       /secret "s".*outside/,
     ],
   ])('rejects %s', (_label, patch, pattern) => {

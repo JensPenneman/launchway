@@ -1,4 +1,4 @@
-import type { RouteTarget } from '@slipway/contracts';
+import type { RouteTarget } from '@launchway/contracts';
 import type { routes } from './schema.js';
 
 type RouteRow = typeof routes.$inferSelect;

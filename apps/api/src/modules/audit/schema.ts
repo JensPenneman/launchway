@@ -1,4 +1,4 @@
-import { AUDIT_ACTOR_TYPES } from '@slipway/contracts';
+import { AUDIT_ACTOR_TYPES } from '@launchway/contracts';
 import { index, inet, jsonb, pgEnum, pgTable, text } from 'drizzle-orm/pg-core';
 import { idColumn, tz } from '../../db/columns.js';
 

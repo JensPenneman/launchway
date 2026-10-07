@@ -30,7 +30,7 @@ export function EdgeSection() {
         <CardDescription>
           {config.data
             ? `Rendered ${formatRelative(config.data.renderedAt)} · loaded into Caddy ${formatRelative(config.data.loadedAt)}`
-            : 'The Caddyfile Slipway renders from routes and settings (read-only).'}
+            : 'The Caddyfile Launchway renders from routes and settings (read-only).'}
         </CardDescription>
         <CardAction className="flex gap-2">
           {config.data && <CopyButton value={config.data.caddyfile} />}

@@ -1,10 +1,10 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-    Installs or upgrades Slipway on Windows with Docker Desktop.
+    Installs or upgrades Launchway on Windows with Docker Desktop.
 
 .DESCRIPTION
-    Installs the Slipway control plane (the API with the web UI, the bundled
+    Installs the Launchway control plane (the API with the web UI, the bundled
     node agent, the Caddy edge proxy and PostgreSQL) with Docker Compose into
     one directory, generates its secrets and starts it.
 
@@ -14,43 +14,43 @@
     pulled again.
 
 .PARAMETER Dir
-    Installation directory. Default: $env:SLIPWAY_DIR, otherwise
-    $env:USERPROFILE\slipway.
+    Installation directory. Default: $env:LAUNCHWAY_DIR, otherwise
+    $env:USERPROFILE\launchway.
 
 .PARAMETER Email
     Contact e-mail for Let's Encrypt certificates. Default:
-    $env:SLIPWAY_ACME_EMAIL. Required on the first install; asked for when the
+    $env:LAUNCHWAY_ACME_EMAIL. Required on the first install; asked for when the
     session is interactive.
 
 .PARAMETER Port
-    Host port of the web UI and API. Default: $env:SLIPWAY_PORT, the value in
+    Host port of the web UI and API. Default: $env:LAUNCHWAY_PORT, the value in
     .env, or 3000.
 
 .PARAMETER Version
-    Slipway image tag, for example v0.1.0. Default: $env:SLIPWAY_VERSION, the
+    Launchway image tag, for example v0.1.0. Default: $env:LAUNCHWAY_VERSION, the
     value in .env, or latest.
 
 .EXAMPLE
-    irm https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.ps1 | iex
+    irm https://raw.githubusercontent.com/JensPenneman/launchway/main/deploy/install.ps1 | iex
 
     Downloads and runs the installer, which asks for the e-mail address. Set
-    $env:SLIPWAY_ACME_EMAIL (and optionally SLIPWAY_DIR, SLIPWAY_PORT and
-    SLIPWAY_VERSION) first to run it without questions.
+    $env:LAUNCHWAY_ACME_EMAIL (and optionally LAUNCHWAY_DIR, LAUNCHWAY_PORT and
+    LAUNCHWAY_VERSION) first to run it without questions.
 
 .EXAMPLE
     .\install.ps1 -Email ops@example.com -Port 8080
 
 .NOTES
     When compose.yaml and the Caddyfile are not next to this script, they are
-    downloaded from GitHub; $env:SLIPWAY_REF selects the Git ref (default: the
+    downloaded from GitHub; $env:LAUNCHWAY_REF selects the Git ref (default: the
     release tag vX.Y.Z for a release version, main for latest and edge).
 #>
 [CmdletBinding()]
 param(
-    [string] $Dir = $(if ($env:SLIPWAY_DIR) { $env:SLIPWAY_DIR } else { Join-Path $env:USERPROFILE 'slipway' }),
-    [string] $Email = $env:SLIPWAY_ACME_EMAIL,
-    [int] $Port = $(if ($env:SLIPWAY_PORT) { $env:SLIPWAY_PORT } else { 0 }),
-    [string] $Version = $env:SLIPWAY_VERSION
+    [string] $Dir = $(if ($env:LAUNCHWAY_DIR) { $env:LAUNCHWAY_DIR } else { Join-Path $env:USERPROFILE 'launchway' }),
+    [string] $Email = $env:LAUNCHWAY_ACME_EMAIL,
+    [int] $Port = $(if ($env:LAUNCHWAY_PORT) { $env:LAUNCHWAY_PORT } else { 0 }),
+    [string] $Version = $env:LAUNCHWAY_VERSION
 )
 
 # The installer runs in a child scope, so that `irm ... | iex` leaves no
@@ -74,15 +74,15 @@ param(
     $ProgressPreference = 'SilentlyContinue'
     Set-StrictMode -Version Latest
 
-    $ProxyNetwork = 'slipway-proxy'
+    $ProxyNetwork = 'launchway-proxy'
     $ProxySubnet = '10.210.0.0/24'
     # Dynamic addresses come from the upper half only, so that no container can
     # take Caddy's fixed address 10.210.0.2 while Caddy is down.
     $ProxyIpRange = '10.210.0.128/25'
-    $DbVolume = 'slipway_db-data'
-    $RawBaseUrl = 'https://raw.githubusercontent.com/JensPenneman/slipway'
-    $EnvKeys = @('SLIPWAY_VERSION', 'SLIPWAY_PORT', 'SLIPWAY_PUBLIC_URL', 'SLIPWAY_ACME_EMAIL',
-        'SLIPWAY_SECRET_KEY', 'SLIPWAY_LOCAL_JOIN_TOKEN', 'SLIPWAY_SETUP_TOKEN', 'POSTGRES_PASSWORD', 'LOG_LEVEL')
+    $DbVolume = 'launchway_db-data'
+    $RawBaseUrl = 'https://raw.githubusercontent.com/JensPenneman/launchway'
+    $EnvKeys = @('LAUNCHWAY_VERSION', 'LAUNCHWAY_PORT', 'LAUNCHWAY_PUBLIC_URL', 'LAUNCHWAY_ACME_EMAIL',
+        'LAUNCHWAY_SECRET_KEY', 'LAUNCHWAY_LOCAL_JOIN_TOKEN', 'LAUNCHWAY_SETUP_TOKEN', 'POSTGRES_PASSWORD', 'LOG_LEVEL')
 
     function Write-Step([string] $Message) {
         Write-Host '==> ' -ForegroundColor Cyan -NoNewline
@@ -126,8 +126,8 @@ param(
         return , $bytes
     }
 
-    # The prefix ("slpn_" by default) followed by 43 characters from A-Z, a-z and 0-9.
-    function New-JoinToken([string] $Prefix = 'slpn_') {
+    # The prefix ("lwyn_" by default) followed by 43 characters from A-Z, a-z and 0-9.
+    function New-JoinToken([string] $Prefix = 'lwyn_') {
         $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
         $token = New-Object System.Text.StringBuilder -ArgumentList $Prefix
         while ($token.Length -lt 48) {
@@ -207,7 +207,7 @@ param(
         }
     }
 
-    function Install-Slipway([string] $Dir, [string] $Email, [int] $Port, [string] $Version) {
+    function Install-Launchway([string] $Dir, [string] $Email, [int] $Port, [string] $Version) {
         # Docker Desktop
         if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
             throw 'Docker was not found. Install Docker Desktop (https://docs.docker.com/desktop/setup/install/windows-install/), start it and run the installer again.'
@@ -231,11 +231,11 @@ param(
             try {
                 $envLines = [System.IO.File]::ReadAllLines($envFile)
             } catch {
-                throw "Cannot read ${envFile}: $($_.Exception.Message) Run the installer as the user that installed Slipway."
+                throw "Cannot read ${envFile}: $($_.Exception.Message) Run the installer as the user that installed Launchway."
             }
         }
 
-        if (-not $Email) { $Email = Get-EnvValue $envLines 'SLIPWAY_ACME_EMAIL' }
+        if (-not $Email) { $Email = Get-EnvValue $envLines 'LAUNCHWAY_ACME_EMAIL' }
         if (-not $Email -and [Environment]::UserInteractive) {
             try {
                 $Email = ([string] (Read-Host "Contact e-mail for Let's Encrypt certificates")).Trim()
@@ -244,20 +244,20 @@ param(
             }
         }
         if (-not $Email) {
-            throw 'An e-mail address for Let''s Encrypt is required: pass -Email <address> or set $env:SLIPWAY_ACME_EMAIL.'
+            throw 'An e-mail address for Let''s Encrypt is required: pass -Email <address> or set $env:LAUNCHWAY_ACME_EMAIL.'
         }
         if ($Email -notmatch '^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$') {
             throw "'$Email' does not look like an e-mail address."
         }
 
         if ($Port -eq 0) {
-            $existingPort = Get-EnvValue $envLines 'SLIPWAY_PORT'
+            $existingPort = Get-EnvValue $envLines 'LAUNCHWAY_PORT'
             if (-not $existingPort) {
                 $Port = 3000
             } elseif ($existingPort -match '^\d{1,5}$') {
                 $Port = [int] $existingPort
             } else {
-                throw "SLIPWAY_PORT in $envFile is not a port number: '$existingPort'."
+                throw "LAUNCHWAY_PORT in $envFile is not a port number: '$existingPort'."
             }
         }
         if ($Port -lt 1 -or $Port -gt 65535) {
@@ -267,33 +267,33 @@ param(
             throw "Port $Port belongs to the Caddy edge proxy; choose another -Port."
         }
 
-        if (-not $Version) { $Version = Get-EnvValue $envLines 'SLIPWAY_VERSION' }
+        if (-not $Version) { $Version = Get-EnvValue $envLines 'LAUNCHWAY_VERSION' }
         if (-not $Version) { $Version = 'latest' }
         $Version = $Version -replace '^v(?=\d)', ''
         if ($Version -notmatch '^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$') {
             throw "Invalid version '$Version': use an image tag such as 0.1.0 or latest."
         }
 
-        $publicUrl = Get-EnvValue $envLines 'SLIPWAY_PUBLIC_URL'
+        $publicUrl = Get-EnvValue $envLines 'LAUNCHWAY_PUBLIC_URL'
         $logLevel = Get-EnvValue $envLines 'LOG_LEVEL'
         if (-not $logLevel) { $logLevel = 'info' }
 
         # Secrets: existing ones are kept, missing ones are generated.
-        $secretKey = Get-EnvValue $envLines 'SLIPWAY_SECRET_KEY'
+        $secretKey = Get-EnvValue $envLines 'LAUNCHWAY_SECRET_KEY'
         $dbPassword = Get-EnvValue $envLines 'POSTGRES_PASSWORD'
-        $joinToken = Get-EnvValue $envLines 'SLIPWAY_LOCAL_JOIN_TOKEN'
-        $setupToken = Get-EnvValue $envLines 'SLIPWAY_SETUP_TOKEN'
+        $joinToken = Get-EnvValue $envLines 'LAUNCHWAY_LOCAL_JOIN_TOKEN'
+        $setupToken = Get-EnvValue $envLines 'LAUNCHWAY_SETUP_TOKEN'
         if ((-not $secretKey -or -not $dbPassword) -and (Invoke-DockerCapture @('volume', 'inspect', $DbVolume)).Ok) {
-            throw ("The Docker volume $DbVolume holds an existing Slipway database, but $envFile does not have its secrets. " +
+            throw ("The Docker volume $DbVolume holds an existing Launchway database, but $envFile does not have its secrets. " +
                 "Restore .env from your backup into $Dir, or point -Dir at the existing installation. " +
-                "To start over and delete all Slipway data instead, remove the old containers and run: docker volume rm $DbVolume")
+                "To start over and delete all Launchway data instead, remove the old containers and run: docker volume rm $DbVolume")
         }
         $freshInstall = -not $secretKey
         if (-not $secretKey) { $secretKey = [Convert]::ToBase64String((Get-RandomByteArray 32)) }
         if (-not $dbPassword) { $dbPassword = [BitConverter]::ToString((Get-RandomByteArray 32)).Replace('-', '').ToLowerInvariant() }
         if (-not $joinToken) { $joinToken = New-JoinToken }
         # Required by the first-run setup, so that only the operator can create the owner.
-        if (-not $setupToken) { $setupToken = New-JoinToken 'slps_' }
+        if (-not $setupToken) { $setupToken = New-JoinToken 'lwys_' }
 
         # Network shared by Caddy, the platform and every routed app.
         $network = Invoke-DockerCapture @('network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Subnet}} {{end}}', $ProxyNetwork)
@@ -306,7 +306,7 @@ param(
         } elseif ((" " + $network.Output + " ") -notlike "* $ProxySubnet *") {
             $current = if ($network.Output) { $network.Output } else { '(none)' }
             Write-Warning ("The Docker network $ProxyNetwork already exists with subnet $current, not $ProxySubnet. " +
-                "Caddy's fixed address 10.210.0.2 and SLIPWAY_TRUSTED_PROXIES assume $ProxySubnet; recreate the network or adapt compose.yaml.")
+                "Caddy's fixed address 10.210.0.2 and LAUNCHWAY_TRUSTED_PROXIES assume $ProxySubnet; recreate the network or adapt compose.yaml.")
         }
 
         # compose.yaml and Caddyfile: from next to this script when it runs from
@@ -325,10 +325,10 @@ param(
         } else {
             # A pinned release gets the compose file and Caddyfile it was released with.
             $ref = 'main'
-            if ($env:SLIPWAY_REF) { $ref = $env:SLIPWAY_REF }
+            if ($env:LAUNCHWAY_REF) { $ref = $env:LAUNCHWAY_REF }
             elseif ($Version -match '^\d+\.\d+\.\d+$') { $ref = "v$Version" }
             if ($ref -notmatch '^[A-Za-z0-9._/][A-Za-z0-9._/-]*$') {
-                throw "Invalid SLIPWAY_REF '$ref'."
+                throw "Invalid LAUNCHWAY_REF '$ref'."
             }
             # Windows PowerShell 5.1 does not always offer TLS 1.2 by default.
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -348,15 +348,15 @@ param(
 
         # .env
         $values = [ordered] @{
-            SLIPWAY_VERSION          = $Version
-            SLIPWAY_PORT             = [string] $Port
-            SLIPWAY_PUBLIC_URL       = $publicUrl
-            SLIPWAY_ACME_EMAIL       = $Email
-            SLIPWAY_SECRET_KEY       = $secretKey
-            SLIPWAY_LOCAL_JOIN_TOKEN = $joinToken
-            SLIPWAY_SETUP_TOKEN      = $setupToken
-            POSTGRES_PASSWORD        = $dbPassword
-            LOG_LEVEL                = $logLevel
+            LAUNCHWAY_VERSION          = $Version
+            LAUNCHWAY_PORT             = [string] $Port
+            LAUNCHWAY_PUBLIC_URL       = $publicUrl
+            LAUNCHWAY_ACME_EMAIL       = $Email
+            LAUNCHWAY_SECRET_KEY       = $secretKey
+            LAUNCHWAY_LOCAL_JOIN_TOKEN = $joinToken
+            LAUNCHWAY_SETUP_TOKEN      = $setupToken
+            POSTGRES_PASSWORD          = $dbPassword
+            LOG_LEVEL                  = $logLevel
         }
         if ($envLines.Count -gt 0) {
             Write-Step "Updating $envFile (existing values are kept)"
@@ -364,10 +364,10 @@ param(
         } else {
             Write-Step "Writing $envFile"
             $baseLines = @(
-                '# Slipway configuration, written by install.ps1. Every key is described in'
-                '# deploy/.env.example in the Slipway repository.'
+                '# Launchway configuration, written by install.ps1. Every key is described in'
+                '# deploy/.env.example in the Launchway repository.'
                 '#'
-                '# Back up this file. Losing SLIPWAY_SECRET_KEY makes all stored secrets'
+                '# Back up this file. Losing LAUNCHWAY_SECRET_KEY makes all stored secrets'
                 '# unrecoverable, and the database only accepts the POSTGRES_PASSWORD it was'
                 '# created with.'
             )
@@ -398,14 +398,14 @@ param(
             }
         }
         try {
-            Write-Step "Pulling images (SLIPWAY_VERSION=$Version)"
+            Write-Step "Pulling images (LAUNCHWAY_VERSION=$Version)"
             if (-not (Invoke-Docker ($composeArgs + 'pull'))) {
                 throw "Pulling the images failed. Check the network connection and that the tag '$Version' exists."
             }
-            Write-Step 'Starting Slipway'
+            Write-Step 'Starting Launchway'
             if (-not (Invoke-Docker ($composeArgs + @('up', '-d', '--wait', '--wait-timeout', '300', '--remove-orphans')))) {
                 $null = Invoke-Docker ($composeArgs + 'ps')
-                throw "Slipway did not start cleanly. Inspect the logs with: cd `"$Dir`"; docker compose logs"
+                throw "Launchway did not start cleanly. Inspect the logs with: cd `"$Dir`"; docker compose logs"
             }
         } finally {
             foreach ($key in $savedEnv.Keys) { Set-Item -LiteralPath "Env:$key" -Value $savedEnv[$key] }
@@ -413,7 +413,7 @@ param(
 
         $url = "http://$(Get-LanAddress):$Port/"
         Write-Host ''
-        Write-Host 'Slipway is running.' -ForegroundColor Green
+        Write-Host 'Launchway is running.' -ForegroundColor Green
         Write-Host ''
         Write-Host "  Web UI: $url"
         Write-Host ''
@@ -421,12 +421,12 @@ param(
             Write-Host (@(
                     'Next steps:'
                     '  1. Create the owner account now with this one-time link (it carries the'
-                    "     setup token, SLIPWAY_SETUP_TOKEN in $envFile):"
+                    "     setup token, LAUNCHWAY_SETUP_TOKEN in $envFile):"
                     "     ${url}setup#token=$setupToken"
                     '  2. Forward TCP ports 80 and 443 (and UDP 443 for HTTP/3) from your router to'
                     '     this machine and allow them in Windows Defender Firewall, then add your'
                     '     domain in the web UI.'
-                    "  3. Back up $envFile. Losing SLIPWAY_SECRET_KEY makes the stored secrets"
+                    "  3. Back up $envFile. Losing LAUNCHWAY_SECRET_KEY makes the stored secrets"
                     '     unrecoverable.'
                     ''
                 ) -join [Environment]::NewLine)
@@ -434,13 +434,13 @@ param(
         Write-Host (@(
                 "Manage the installation from ${Dir}:"
                 '  docker compose ps                                     status'
-                '  docker compose logs -f slipway                        API logs'
+                '  docker compose logs -f launchway                      API logs'
                 '  docker compose pull; docker compose up -d --wait      upgrade'
             ) -join [Environment]::NewLine)
     }
 
     try {
-        Install-Slipway -Dir $Dir -Email $Email -Port $Port -Version $Version
+        Install-Launchway -Dir $Dir -Email $Email -Port $Port -Version $Version
     } catch {
         Write-Host "error: $($_.Exception.Message)" -ForegroundColor Red
         # A script file reports the failure through its exit code; under iex,

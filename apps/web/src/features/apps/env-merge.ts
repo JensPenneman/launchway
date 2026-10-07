@@ -1,4 +1,4 @@
-import type { EnvVar, SetEnvVarsInput, z } from '@slipway/contracts';
+import type { EnvVar, SetEnvVarsInput, z } from '@launchway/contracts';
 import type { DotenvEntry } from '@/lib/dotenv';
 
 type BulkVariables = z.input<typeof SetEnvVarsInput>['variables'];

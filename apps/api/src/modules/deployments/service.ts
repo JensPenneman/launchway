@@ -11,7 +11,7 @@ import {
   isInProgressStatus,
   type ServiceStatus,
   SSE_EVENTS,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { and, asc, desc, eq, gt, inArray, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';

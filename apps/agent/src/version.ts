@@ -5,4 +5,4 @@ const pkg = JSON.parse(readFileSync(new URL('../package.json', import.meta.url),
 };
 
 /** Agent version: the image build version when set, otherwise the package version. */
-export const AGENT_VERSION: string = process.env.SLIPWAY_BUILD_VERSION || pkg.version;
+export const AGENT_VERSION: string = process.env.LAUNCHWAY_BUILD_VERSION || pkg.version;

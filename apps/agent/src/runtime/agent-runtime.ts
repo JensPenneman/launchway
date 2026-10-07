@@ -1,4 +1,8 @@
-import type { AgentToServerMessage, DeploymentId, ServerToAgentMessage } from '@slipway/contracts';
+import type {
+  AgentToServerMessage,
+  DeploymentId,
+  ServerToAgentMessage,
+} from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { createRequestHandler } from '../handlers.js';
 import { AppOps } from './app-ops.js';
@@ -11,7 +15,7 @@ import { Workspace } from './workspace.js';
 
 export interface AgentRuntimeOptions {
   logger: Logger;
-  /** SLIPWAY_WORKSPACE. */
+  /** LAUNCHWAY_WORKSPACE. */
   workspace: string;
   /** Sends one frame; false when not connected (the outbox keeps it for later). */
   trySend: (message: AgentToServerMessage) => boolean;

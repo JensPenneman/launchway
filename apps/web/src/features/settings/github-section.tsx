@@ -1,4 +1,4 @@
-import { CreatePatConnectionInput, GitHubLogin } from '@slipway/contracts';
+import { CreatePatConnectionInput, GitHubLogin } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ExternalLink, FolderGit2, KeyRound, Loader2, Trash2 } from 'lucide-react';
 import { useState } from 'react';
@@ -48,7 +48,7 @@ export function GitHubSection() {
               <StatusBadge tone="info">recommended</StatusBadge>
             </CardTitle>
             <CardDescription>
-              Slipway registers its own GitHub App for you: repository access you choose per
+              Launchway registers its own GitHub App for you: repository access you choose per
               installation, release webhooks for auto-deploy, short-lived clone tokens.
             </CardDescription>
           </CardHeader>
@@ -168,7 +168,7 @@ function CreateAppDialog() {
         <DialogHeader>
           <DialogTitle>Create a GitHub App</DialogTitle>
           <DialogDescription>
-            You confirm the app on GitHub, then install it on the repositories Slipway may deploy.
+            You confirm the app on GitHub, then install it on the repositories Launchway may deploy.
           </DialogDescription>
         </DialogHeader>
         <form

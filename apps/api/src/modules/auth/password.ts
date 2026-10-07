@@ -20,7 +20,7 @@ let dummyHash: Promise<string> | undefined;
  */
 export async function verifyPassword(hash: string | null, password: string): Promise<boolean> {
   if (!hash) {
-    dummyHash ??= hashPassword('slipway-dummy-password-for-timing');
+    dummyHash ??= hashPassword('launchway-dummy-password-for-timing');
     dummyHash.catch(() => {
       dummyHash = undefined;
     });

@@ -1,5 +1,5 @@
 {
-  "extends": "@slipway/tsconfig/react.json",
+  "extends": "@launchway/tsconfig/react.json",
   "compilerOptions": {
     "tsBuildInfoFile": "node_modules/.cache/tsbuildinfo/app.tsbuildinfo",
     "paths": { "@/*": ["./src/*"] }

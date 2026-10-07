@@ -1,4 +1,4 @@
-import type { DdnsRun, DdnsSourceResult, DdnsStatus, DnsRecordInput } from '@slipway/contracts';
+import type { DdnsRun, DdnsSourceResult, DdnsStatus, DnsRecordInput } from '@launchway/contracts';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';
 import { systemActor } from '../../lib/auth-context.js';

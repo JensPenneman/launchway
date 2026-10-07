@@ -1,4 +1,4 @@
-import type { DeploymentStatus, DomainStatus, NodeStatus } from '@slipway/contracts';
+import type { DeploymentStatus, DomainStatus, NodeStatus } from '@launchway/contracts';
 import { cn } from '@/lib/utils';
 
 type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';

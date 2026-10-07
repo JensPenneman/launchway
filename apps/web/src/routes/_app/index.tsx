@@ -1,4 +1,4 @@
-import type { App, Deployment } from '@slipway/contracts';
+import type { App, Deployment } from '@launchway/contracts';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Boxes, Globe, type LucideIcon, Rocket, Server } from 'lucide-react';

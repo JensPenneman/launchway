@@ -99,7 +99,7 @@ describe('agent protocol', () => {
         build: { kind: 'compose', composeFiles: ['compose.yaml'] },
         env: { DATABASE_URL: 'postgres://example' },
         routes: [{ service: 'web', port: 8080, alias: 'trail-web' }],
-        network: { proxyNetwork: 'slipway-proxy', publishOnIp: null },
+        network: { proxyNetwork: 'launchway-proxy', publishOnIp: null },
       },
     };
     expect(parseServerToAgentMessage(JSON.stringify(deploy)).ok).toBe(true);

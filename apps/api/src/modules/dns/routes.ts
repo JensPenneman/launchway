@@ -14,7 +14,7 @@ import {
   DnsZoneList,
   DnsZoneListQuery,
   UpdateDnsProviderAccountInput,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';

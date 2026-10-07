@@ -1,4 +1,4 @@
-import { type DockerInfo, NODE_STATUSES } from '@slipway/contracts';
+import { type DockerInfo, NODE_STATUSES } from '@launchway/contracts';
 import { inet, integer, jsonb, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 
@@ -17,10 +17,10 @@ export const nodes = pgTable(
     agentVersion: text('agent_version'),
     protocolVersion: integer('protocol_version'),
     dockerInfo: jsonb('docker_info').$type<DockerInfo>(),
-    /** Long-lived node credential (`slpa_...`), issued on join; rotate by replacing. */
+    /** Long-lived node credential (`lwya_...`), issued on join; rotate by replacing. */
     credentialHash: text('credential_hash'),
     credentialIssuedAt: tz('credential_issued_at'),
-    /** One-time join token (`slpn_...`); expiry null only for the local bootstrap token. */
+    /** One-time join token (`lwyn_...`); expiry null only for the local bootstrap token. */
     joinTokenHash: text('join_token_hash'),
     joinTokenExpiresAt: tz('join_token_expires_at'),
     joinedAt: tz('joined_at'),

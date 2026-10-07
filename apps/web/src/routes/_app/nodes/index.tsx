@@ -1,4 +1,4 @@
-import { DisplayName, type NodeJoinToken } from '@slipway/contracts';
+import { DisplayName, type NodeJoinToken } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
 import { Loader2, Plus, Server } from 'lucide-react';
@@ -44,7 +44,7 @@ function NodeList() {
     <Page>
       <PageHeader
         title="Nodes"
-        description="Machines running the Slipway agent. One of them is the edge that runs Caddy."
+        description="Machines running the Launchway agent. One of them is the edge that runs Caddy."
         actions={canAdd && <AddNodeDialog />}
       />
       {nodes.isPending ? (
@@ -55,7 +55,7 @@ function NodeList() {
         <EmptyState
           icon={Server}
           title="No nodes"
-          description="Add a node and run the agent on it with the snippet Slipway shows you."
+          description="Add a node and run the agent on it with the snippet Launchway shows you."
           action={canAdd && <AddNodeDialog />}
         />
       ) : (
@@ -146,7 +146,7 @@ function AddNodeDialog() {
           <DialogDescription>
             {join
               ? 'Copy one of the snippets now; the token is shown only once.'
-              : 'Give the machine a name; Slipway creates a one-time join token for its agent.'}
+              : 'Give the machine a name; Launchway creates a one-time join token for its agent.'}
           </DialogDescription>
         </DialogHeader>
         {join ? (

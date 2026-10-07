@@ -46,17 +46,17 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [slipway, slipway-agent]
+        image: [launchway, launchway-agent]
         platform: [linux/amd64, linux/arm64]
         include:
-          - image: slipway
+          - image: launchway
             dockerfile: apps/api/Dockerfile
-            title: Slipway
-            description: Slipway control plane with the REST API and the web UI.
-          - image: slipway-agent
+            title: Launchway
+            description: Launchway control plane with the REST API and the web UI.
+          - image: launchway-agent
             dockerfile: apps/agent/Dockerfile
-            title: Slipway agent
-            description: Slipway node agent that builds and runs deployments with Docker Compose.
+            title: Launchway agent
+            description: Launchway node agent that builds and runs deployments with Docker Compose.
           # Native runners: building arm64 under QEMU took over an hour.
           - platform: linux/amd64
             arch: amd64
@@ -128,7 +128,7 @@ jobs:
           platforms: ${{ matrix.platform }}
           tags: ${{ env.IMAGE }}
           labels: ${{ steps.meta.outputs.labels }}
-          build-args: SLIPWAY_VERSION=${{ steps.meta.outputs.version }}
+          build-args: LAUNCHWAY_VERSION=${{ steps.meta.outputs.version }}
           outputs: type=image,push-by-digest=true,name-canonical=true,push=true
           provenance: mode=max
           sbom: true
@@ -142,8 +142,8 @@ jobs:
           mkdir -p "${RUNNER_TEMP}/digests"
           touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
 
-      # Named <image>-digest-<arch>: a digests-<image>-* pattern for slipway
-      # would also match the slipway-agent artifacts.
+      # Named <image>-digest-<arch>: a digests-<image>-* pattern for launchway
+      # would also match the launchway-agent artifacts.
       - name: Upload digest
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -167,7 +167,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: [slipway, slipway-agent]
+        image: [launchway, launchway-agent]
     env:
       IMAGE: ghcr.io/jenspenneman/${{ matrix.image }}
     steps:

@@ -1,4 +1,4 @@
-import { type AppId, type DeploymentId, QUEUED_DEPLOYMENT_TIMEOUT_MS } from '@slipway/contracts';
+import { type AppId, type DeploymentId, QUEUED_DEPLOYMENT_TIMEOUT_MS } from '@launchway/contracts';
 import { and, asc, eq, inArray, isNotNull, isNull, lt, or } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';

@@ -1,4 +1,4 @@
-import { generateId, type UserRole } from '@slipway/contracts';
+import { generateId, type UserRole } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import { createTestDeps, fixedAuth, testPrincipal } from '../../../test/support/deps.js';
 import { createApp } from '../../app.js';

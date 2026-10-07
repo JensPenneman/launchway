@@ -19,7 +19,7 @@
   ],
   "packages": {
     ".": {
-      "package-name": "slipway",
+      "package-name": "launchway",
       "release-as": "0.1.0",
       "extra-files": [
         { "type": "json", "path": "apps/api/package.json", "jsonpath": "$.version" },

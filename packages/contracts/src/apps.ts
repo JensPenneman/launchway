@@ -7,16 +7,16 @@ import { z } from './zod.js';
 
 // --- Runtime naming conventions (spec section 3) ---------------------------------------------
 
-export const DEFAULT_PROXY_NETWORK = 'slipway-proxy';
-export const SLIPWAY_LABELS = {
-  app: 'slipway.app',
-  deployment: 'slipway.deployment',
-  service: 'slipway.service',
+export const DEFAULT_PROXY_NETWORK = 'launchway-proxy';
+export const LAUNCHWAY_LABELS = {
+  app: 'launchway.app',
+  deployment: 'launchway.deployment',
+  service: 'launchway.service',
 } as const;
 
 /** Compose project name of an app. */
 export function composeProjectName(slug: string): string {
-  return `slipway-${slug}`;
+  return `launchway-${slug}`;
 }
 
 /** Network alias of a routed service on the proxy network (`<app-slug>-<service>`). */
@@ -29,7 +29,7 @@ export function serviceAlias(slug: string, service: string): string {
 // --- App ---------------------------------------------------------------------------------------
 
 /** Slugs that would collide with platform containers on the proxy network. */
-export const RESERVED_APP_SLUGS: readonly string[] = ['slipway', 'caddy', 'db', 'agent'];
+export const RESERVED_APP_SLUGS: readonly string[] = ['launchway', 'caddy', 'db', 'agent'];
 
 export const AppSlug = z
   .string()

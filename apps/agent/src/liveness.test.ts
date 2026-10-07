@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { isAlive, writeLiveness } from './liveness.js';
 
-const dir = await mkdtemp(join(tmpdir(), 'slipway-liveness-'));
+const dir = await mkdtemp(join(tmpdir(), 'launchway-liveness-'));
 afterAll(() => rm(dir, { recursive: true, force: true }));
 
 describe('liveness file', () => {

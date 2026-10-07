@@ -4,19 +4,20 @@ import {
   GITHUB_APP_PERMISSIONS,
   type GitHubAppManifest,
   GitHubConnectionId,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import { z } from 'zod';
 
 /** GitHub limits app names to 34 characters. */
 const MAX_APP_NAME = 34;
 export const MANIFEST_STATE_TTL_MS = 60 * 60 * 1000;
 
-/** Default app name: `Slipway (<public host>)`, shortened to GitHub's limit. */
+/** Default app name: `Launchway (<public host>)`, shortened to GitHub's limit. */
 export function defaultAppName(publicUrl: string): string {
   const host = new URL(publicUrl).host;
-  const name = `Slipway (${host})`;
+  const name = `Launchway (${host})`;
   if (name.length <= MAX_APP_NAME) return name;
-  return `Slipway (${host.slice(0, MAX_APP_NAME - 13)}...)`;
+  // Leave room for the `Launchway (` prefix and the `...)` suffix.
+  return `Launchway (${host.slice(0, MAX_APP_NAME - 'Launchway (...)'.length)}...)`;
 }
 
 /** Callback URLs of a connection; `publicUrl` is an origin without trailing slash. */
@@ -42,7 +43,7 @@ export function buildManifest(
     redirect_url: urls.redirectUrl,
     callback_urls: [urls.redirectUrl],
     setup_url: urls.setupUrl,
-    description: 'Deploys GitHub releases of your repositories with Slipway.',
+    description: 'Deploys GitHub releases of your repositories with Launchway.',
     public: false,
     default_permissions: { ...GITHUB_APP_PERMISSIONS },
     default_events: [...GITHUB_APP_EVENTS],
@@ -72,7 +73,7 @@ const StatePayload = z.object({
 export type ManifestState = z.infer<typeof StatePayload>;
 
 function stateKey(secretKey: Buffer): Buffer {
-  return createHmac('sha256', secretKey).update('slipway:github-manifest-state:v1').digest();
+  return createHmac('sha256', secretKey).update('launchway:github-manifest-state:v1').digest();
 }
 
 function sign(secretKey: Buffer, body: string): Buffer {

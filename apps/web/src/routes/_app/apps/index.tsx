@@ -39,7 +39,7 @@ function AppList() {
     <Page>
       <PageHeader
         title="Apps"
-        description="Repositories Slipway builds and runs."
+        description="Repositories Launchway builds and runs."
         actions={newButton}
       />
       {apps.isPending ? (
@@ -50,7 +50,7 @@ function AppList() {
         <EmptyState
           icon={Boxes}
           title="No apps yet"
-          description="An app is a GitHub repository with a Compose file or a Dockerfile. Pick a release and Slipway runs it on one of your nodes."
+          description="An app is a GitHub repository with a Compose file or a Dockerfile. Pick a release and Launchway runs it on one of your nodes."
           action={newButton}
         />
       ) : (

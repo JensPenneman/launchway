@@ -208,7 +208,7 @@ export function createWebhookHandler(deps: Deps) {
             outcome = 'processed';
             break;
           default:
-            outcome = 'ignored'; // ping and events Slipway does not subscribe to
+            outcome = 'ignored'; // ping and events Launchway does not subscribe to
         }
         logger.info({ event, deliveryId, connectionId: connection.id, outcome }, 'webhook handled');
         return outcome;

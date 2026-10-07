@@ -1,4 +1,4 @@
-import { type App, EnvKey, type EnvVar } from '@slipway/contracts';
+import { type App, EnvKey, type EnvVar } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { ClipboardPaste, EyeOff, Loader2, Pencil, Plus, Trash2, Variable } from 'lucide-react';
 import { useState } from 'react';

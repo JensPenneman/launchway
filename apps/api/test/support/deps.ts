@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { generateId, type UserRole } from '@slipway/contracts';
+import { generateId, type UserRole } from '@launchway/contracts';
 import pg from 'pg';
 import { pino } from 'pino';
 import { loadConfig } from '../../src/config.js';
@@ -23,8 +23,8 @@ export function createTestDeps(overrides: Partial<Deps> = {}): Deps {
   const config = loadConfig({
     NODE_ENV: 'test',
     DATABASE_URL: 'postgres://test:test@127.0.0.1:1/test',
-    SLIPWAY_SECRET_KEY: randomBytes(32).toString('base64'),
-    SLIPWAY_WEB_ROOT: '/nonexistent',
+    LAUNCHWAY_SECRET_KEY: randomBytes(32).toString('base64'),
+    LAUNCHWAY_WEB_ROOT: '/nonexistent',
   });
   return {
     config,

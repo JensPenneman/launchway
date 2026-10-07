@@ -9,7 +9,7 @@ import {
   InvitationPreview,
   Me,
   PaginationQuery,
-} from '@slipway/contracts';
+} from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
 import { requestActor, requireRole } from '../../lib/auth-context.js';
 import { createPlatformOriginResolver } from '../../lib/csrf.js';
@@ -26,8 +26,8 @@ import { createInvitationsService } from './service.js';
 const TokenParams = z.object({
   token: z
     .string()
-    .regex(INVITATION_TOKEN_PATTERN, 'Must be an invitation token (slpi_...)')
-    .openapi({ param: { name: 'token', in: 'path' }, example: `slpi_${'0'.repeat(43)}` }),
+    .regex(INVITATION_TOKEN_PATTERN, 'Must be an invitation token (lwyi_...)')
+    .openapi({ param: { name: 'token', in: 'path' }, example: `lwyi_${'0'.repeat(43)}` }),
 });
 
 const createInvitation = createRoute({

@@ -1,4 +1,4 @@
-import type { DomainVerification } from '@slipway/contracts';
+import type { DomainVerification } from '@launchway/contracts';
 import { CheckCircle2, XCircle } from 'lucide-react';
 import { CopyButton } from '@/components/copy-button';
 import { formatDateTime } from '@/lib/format';
@@ -19,7 +19,9 @@ export function VerificationResult({ result }: { result: DomainVerification }) {
           <XCircle className="mt-0.5 size-4 shrink-0 text-destructive" aria-hidden="true" />
         )}
         <div>
-          <p className="font-medium">{result.ok ? 'DNS points at Slipway' : 'DNS is not ready'}</p>
+          <p className="font-medium">
+            {result.ok ? 'DNS points at Launchway' : 'DNS is not ready'}
+          </p>
           <p className="text-muted-foreground">{result.message}</p>
         </div>
       </div>

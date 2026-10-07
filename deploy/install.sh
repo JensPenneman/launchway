@@ -1,11 +1,11 @@
 #!/bin/sh
-# Slipway installer for Linux and macOS.
+# Launchway installer for Linux and macOS.
 #
-# Installs the Slipway control plane (the API with the web UI, the bundled node
+# Installs the Launchway control plane (the API with the web UI, the bundled node
 # agent, the Caddy edge proxy and PostgreSQL) with Docker Compose into one
 # directory, generates its secrets and starts it:
 #
-#   curl -fsSL https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.sh | sh -s -- --email you@example.com
+#   curl -fsSL https://raw.githubusercontent.com/JensPenneman/launchway/main/deploy/install.sh | sh -s -- --email you@example.com
 #
 # Running it again is safe and upgrades the installation: the settings and
 # secrets in the existing .env are kept (only values passed as options change),
@@ -15,13 +15,13 @@
 
 set -eu
 
-PROXY_NETWORK=slipway-proxy
+PROXY_NETWORK=launchway-proxy
 PROXY_SUBNET=10.210.0.0/24
 # Dynamic addresses come from the upper half only, so that no container can take
 # Caddy's fixed address 10.210.0.2 while Caddy is down.
 PROXY_IP_RANGE=10.210.0.128/25
-DB_VOLUME=slipway_db-data
-RAW_BASE_URL=https://raw.githubusercontent.com/JensPenneman/slipway
+DB_VOLUME=launchway_db-data
+RAW_BASE_URL=https://raw.githubusercontent.com/JensPenneman/launchway
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ] && [ "${TERM:-}" != dumb ]; then
   c_bold=$(printf '\033[1m')
@@ -43,22 +43,22 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 usage() {
   cat <<'USAGE'
-Install or upgrade Slipway with Docker Compose.
+Install or upgrade Launchway with Docker Compose.
 
 Usage: install.sh [options]
-       curl -fsSL https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.sh | sh -s -- [options]
+       curl -fsSL https://raw.githubusercontent.com/JensPenneman/launchway/main/deploy/install.sh | sh -s -- [options]
 
 Options:
-  --dir <path>       Installation directory (default: /opt/slipway when run as
-                     root on Linux, otherwise $HOME/slipway)
+  --dir <path>       Installation directory (default: /opt/launchway when run as
+                     root on Linux, otherwise $HOME/launchway)
   --email <address>  Contact e-mail for Let's Encrypt certificates. Required on
                      the first install; asked for when a terminal is available.
   --port <n>         Host port of the web UI and API (default: 3000)
-  --version <tag>    Slipway image tag, for example v0.1.0 (default: latest)
+  --version <tag>    Launchway image tag, for example v0.1.0 (default: latest)
   -h, --help         Show this help
 
-Environment: SLIPWAY_DIR, SLIPWAY_ACME_EMAIL, SLIPWAY_PORT and SLIPWAY_VERSION
-stand in for the options above. SLIPWAY_REF selects the Git ref compose.yaml and
+Environment: LAUNCHWAY_DIR, LAUNCHWAY_ACME_EMAIL, LAUNCHWAY_PORT and LAUNCHWAY_VERSION
+stand in for the options above. LAUNCHWAY_REF selects the Git ref compose.yaml and
 the Caddyfile are downloaded from (default: the release tag vX.Y.Z for a release
 version, main for latest and edge).
 
@@ -68,10 +68,10 @@ USAGE
 }
 
 parse_args() {
-  opt_dir=${SLIPWAY_DIR:-}
-  opt_email=${SLIPWAY_ACME_EMAIL:-}
-  opt_port=${SLIPWAY_PORT:-}
-  opt_version=${SLIPWAY_VERSION:-}
+  opt_dir=${LAUNCHWAY_DIR:-}
+  opt_email=${LAUNCHWAY_ACME_EMAIL:-}
+  opt_port=${LAUNCHWAY_PORT:-}
+  opt_version=${LAUNCHWAY_VERSION:-}
   while [ "$#" -gt 0 ]; do
     case $1 in
       --dir | --email | --port | --version)
@@ -113,10 +113,10 @@ resolve_dir() {
   dir=$opt_dir
   if [ -z "$dir" ]; then
     if [ "$(id -u)" -eq 0 ] && [ "$(uname -s)" = Linux ]; then
-      dir=/opt/slipway
+      dir=/opt/launchway
     else
       [ -n "${HOME:-}" ] || die "HOME is not set; pass --dir <path>."
-      dir=$HOME/slipway
+      dir=$HOME/launchway
     fi
   fi
   case $dir in
@@ -125,7 +125,7 @@ resolve_dir() {
   esac
   env_file=$dir/.env
   if [ -e "$env_file" ] && [ ! -r "$env_file" ]; then
-    die "Cannot read $env_file. Run the installer as the user that installed Slipway (or with sudo)."
+    die "Cannot read $env_file. Run the installer as the user that installed Launchway (or with sudo)."
   fi
 }
 
@@ -169,15 +169,15 @@ valid_email() {
 }
 
 resolve_settings() {
-  email=${opt_email:-$(env_get SLIPWAY_ACME_EMAIL)}
+  email=${opt_email:-$(env_get LAUNCHWAY_ACME_EMAIL)}
   if [ -z "$email" ] && (: </dev/tty) 2>/dev/null; then
     printf "Contact e-mail for Let's Encrypt certificates: " >/dev/tty
     read -r email </dev/tty || email=''
   fi
-  [ -n "$email" ] || die "An e-mail address for Let's Encrypt is required: pass --email <address> or set SLIPWAY_ACME_EMAIL."
+  [ -n "$email" ] || die "An e-mail address for Let's Encrypt is required: pass --email <address> or set LAUNCHWAY_ACME_EMAIL."
   valid_email "$email" || die "'$email' does not look like an e-mail address."
 
-  port=${opt_port:-$(env_get SLIPWAY_PORT)}
+  port=${opt_port:-$(env_get LAUNCHWAY_PORT)}
   port=${port:-3000}
   case $port in
     '' | *[!0-9]* | ??????*) die "Invalid port '$port': use a number from 1 to 65535." ;;
@@ -190,47 +190,47 @@ resolve_settings() {
     80 | 443) die "Port $port belongs to the Caddy edge proxy; choose another --port." ;;
   esac
 
-  version=${opt_version:-$(env_get SLIPWAY_VERSION)}
+  version=${opt_version:-$(env_get LAUNCHWAY_VERSION)}
   version=${version:-latest}
   version=${version#v}
   case $version in
     [!A-Za-z0-9_]* | *[!A-Za-z0-9._-]*) die "Invalid version '$version': use an image tag such as 0.1.0 or latest." ;;
   esac
 
-  public_url=$(env_get SLIPWAY_PUBLIC_URL)
+  public_url=$(env_get LAUNCHWAY_PUBLIC_URL)
   log_level=$(env_get LOG_LEVEL)
   log_level=${log_level:-info}
 }
 
 # Keeps existing secrets and generates the missing ones from /dev/urandom.
 resolve_secrets() {
-  secret_key=$(env_get SLIPWAY_SECRET_KEY)
+  secret_key=$(env_get LAUNCHWAY_SECRET_KEY)
   db_password=$(env_get POSTGRES_PASSWORD)
-  join_token=$(env_get SLIPWAY_LOCAL_JOIN_TOKEN)
-  setup_token=$(env_get SLIPWAY_SETUP_TOKEN)
+  join_token=$(env_get LAUNCHWAY_LOCAL_JOIN_TOKEN)
+  setup_token=$(env_get LAUNCHWAY_SETUP_TOKEN)
 
   if { [ -z "$secret_key" ] || [ -z "$db_password" ]; } && docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
-    die "The Docker volume $DB_VOLUME holds an existing Slipway database, but $env_file does not have its secrets. Restore .env from your backup into $dir, or point --dir at the existing installation. To start over and delete all Slipway data instead, remove the old containers and run: docker volume rm $DB_VOLUME"
+    die "The Docker volume $DB_VOLUME holds an existing Launchway database, but $env_file does not have its secrets. Restore .env from your backup into $dir, or point --dir at the existing installation. To start over and delete all Launchway data instead, remove the old containers and run: docker volume rm $DB_VOLUME"
   fi
 
   fresh_install=no
   if [ -z "$secret_key" ]; then
     fresh_install=yes
     secret_key=$(head -c 32 /dev/urandom | base64 | tr -d '\n')
-    [ "${#secret_key}" -eq 44 ] || die "Could not generate SLIPWAY_SECRET_KEY (needs /dev/urandom, head and base64)."
+    [ "${#secret_key}" -eq 44 ] || die "Could not generate LAUNCHWAY_SECRET_KEY (needs /dev/urandom, head and base64)."
   fi
   if [ -z "$db_password" ]; then
     db_password=$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')
     [ "${#db_password}" -eq 64 ] || die "Could not generate POSTGRES_PASSWORD (needs /dev/urandom, head and od)."
   fi
   if [ -z "$join_token" ]; then
-    join_token=slpn_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
-    [ "${#join_token}" -eq 48 ] || die "Could not generate SLIPWAY_LOCAL_JOIN_TOKEN (needs /dev/urandom, tr and head)."
+    join_token=lwyn_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
+    [ "${#join_token}" -eq 48 ] || die "Could not generate LAUNCHWAY_LOCAL_JOIN_TOKEN (needs /dev/urandom, tr and head)."
   fi
   # Required by the first-run setup, so that only the operator can create the owner.
   if [ -z "$setup_token" ]; then
-    setup_token=slps_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
-    [ "${#setup_token}" -eq 48 ] || die "Could not generate SLIPWAY_SETUP_TOKEN (needs /dev/urandom, tr and head)."
+    setup_token=lwys_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
+    [ "${#setup_token}" -eq 48 ] || die "Could not generate LAUNCHWAY_SETUP_TOKEN (needs /dev/urandom, tr and head)."
   fi
 }
 
@@ -240,7 +240,7 @@ ensure_network() {
     subnets=${subnets% }
     case " $subnets " in
       *" $PROXY_SUBNET "*) ;;
-      *) warn "The Docker network $PROXY_NETWORK already exists with subnet ${subnets:-(none)}, not $PROXY_SUBNET. Caddy's fixed address 10.210.0.2 and SLIPWAY_TRUSTED_PROXIES assume $PROXY_SUBNET: recreate the network or adapt compose.yaml." ;;
+      *) warn "The Docker network $PROXY_NETWORK already exists with subnet ${subnets:-(none)}, not $PROXY_SUBNET. Caddy's fixed address 10.210.0.2 and LAUNCHWAY_TRUSTED_PROXIES assume $PROXY_SUBNET: recreate the network or adapt compose.yaml." ;;
     esac
   else
     step "Creating Docker network $PROXY_NETWORK ($PROXY_SUBNET)"
@@ -278,11 +278,11 @@ install_files() {
     case $version in
       [0-9]*.[0-9]*.[0-9]*) default_ref=v$version ;;
     esac
-    ref=${SLIPWAY_REF:-$default_ref}
+    ref=${LAUNCHWAY_REF:-$default_ref}
     case $ref in
-      '' | -* | *[!A-Za-z0-9._/-]*) die "Invalid SLIPWAY_REF '$ref'." ;;
+      '' | -* | *[!A-Za-z0-9._/-]*) die "Invalid LAUNCHWAY_REF '$ref'." ;;
     esac
-    have curl || have wget || die "Downloading the Slipway files needs curl or wget. Install one of them, then run the installer again."
+    have curl || have wget || die "Downloading the Launchway files needs curl or wget. Install one of them, then run the installer again."
     step "Downloading compose.yaml and Caddyfile ($ref)"
     for name in compose.yaml Caddyfile; do
       url=$RAW_BASE_URL/$ref/deploy/$name
@@ -302,31 +302,31 @@ write_env() {
   umask 077
   if [ -f "$env_file" ]; then
     step "Updating $env_file (existing values are kept)"
-    env_set SLIPWAY_VERSION "$version"
-    env_set SLIPWAY_PORT "$port"
-    env_set SLIPWAY_PUBLIC_URL "$public_url"
-    env_set SLIPWAY_ACME_EMAIL "$email"
-    env_set SLIPWAY_SECRET_KEY "$secret_key"
-    env_set SLIPWAY_LOCAL_JOIN_TOKEN "$join_token"
-    env_set SLIPWAY_SETUP_TOKEN "$setup_token"
+    env_set LAUNCHWAY_VERSION "$version"
+    env_set LAUNCHWAY_PORT "$port"
+    env_set LAUNCHWAY_PUBLIC_URL "$public_url"
+    env_set LAUNCHWAY_ACME_EMAIL "$email"
+    env_set LAUNCHWAY_SECRET_KEY "$secret_key"
+    env_set LAUNCHWAY_LOCAL_JOIN_TOKEN "$join_token"
+    env_set LAUNCHWAY_SETUP_TOKEN "$setup_token"
     env_set POSTGRES_PASSWORD "$db_password"
     env_set LOG_LEVEL "$log_level"
   else
     step "Writing $env_file"
     cat >"$env_file" <<ENV
-# Slipway configuration, written by install.sh. Every key is described in
-# deploy/.env.example in the Slipway repository.
+# Launchway configuration, written by install.sh. Every key is described in
+# deploy/.env.example in the Launchway repository.
 #
-# Back up this file. Losing SLIPWAY_SECRET_KEY makes all stored secrets
+# Back up this file. Losing LAUNCHWAY_SECRET_KEY makes all stored secrets
 # unrecoverable, and the database only accepts the POSTGRES_PASSWORD it was
 # created with.
-SLIPWAY_VERSION=$version
-SLIPWAY_PORT=$port
-SLIPWAY_PUBLIC_URL=$public_url
-SLIPWAY_ACME_EMAIL=$email
-SLIPWAY_SECRET_KEY=$secret_key
-SLIPWAY_LOCAL_JOIN_TOKEN=$join_token
-SLIPWAY_SETUP_TOKEN=$setup_token
+LAUNCHWAY_VERSION=$version
+LAUNCHWAY_PORT=$port
+LAUNCHWAY_PUBLIC_URL=$public_url
+LAUNCHWAY_ACME_EMAIL=$email
+LAUNCHWAY_SECRET_KEY=$secret_key
+LAUNCHWAY_LOCAL_JOIN_TOKEN=$join_token
+LAUNCHWAY_SETUP_TOKEN=$setup_token
 POSTGRES_PASSWORD=$db_password
 LOG_LEVEL=$log_level
 ENV
@@ -344,14 +344,14 @@ compose() {
 
 start_stack() {
   # Compose prefers variables from the environment over .env: let .env decide.
-  unset SLIPWAY_VERSION SLIPWAY_PORT SLIPWAY_PUBLIC_URL SLIPWAY_ACME_EMAIL \
-    SLIPWAY_SECRET_KEY SLIPWAY_LOCAL_JOIN_TOKEN SLIPWAY_SETUP_TOKEN POSTGRES_PASSWORD LOG_LEVEL
-  step "Pulling images (SLIPWAY_VERSION=$version)"
+  unset LAUNCHWAY_VERSION LAUNCHWAY_PORT LAUNCHWAY_PUBLIC_URL LAUNCHWAY_ACME_EMAIL \
+    LAUNCHWAY_SECRET_KEY LAUNCHWAY_LOCAL_JOIN_TOKEN LAUNCHWAY_SETUP_TOKEN POSTGRES_PASSWORD LOG_LEVEL
+  step "Pulling images (LAUNCHWAY_VERSION=$version)"
   compose pull || die "Pulling the images failed. Check the network connection and that the tag '$version' exists."
-  step "Starting Slipway"
+  step "Starting Launchway"
   if ! compose up -d --wait --wait-timeout 300 --remove-orphans; then
     compose ps >&2 || true
-    die "Slipway did not start cleanly. Inspect the logs with: cd \"$dir\" && docker compose logs"
+    die "Launchway did not start cleanly. Inspect the logs with: cd \"$dir\" && docker compose logs"
   fi
 }
 
@@ -375,17 +375,17 @@ detect_host() {
 
 print_summary() {
   url="http://$(detect_host):$port/"
-  printf '\n%sSlipway is running.%s\n\n' "$c_green$c_bold" "$c_reset"
+  printf '\n%sLaunchway is running.%s\n\n' "$c_green$c_bold" "$c_reset"
   printf '  Web UI: %s%s%s\n\n' "$c_bold" "$url" "$c_reset"
   if [ "$fresh_install" = yes ]; then
     cat <<NEXT
 Next steps:
   1. Create the owner account now with this one-time link (it carries the
-     setup token, SLIPWAY_SETUP_TOKEN in $env_file):
+     setup token, LAUNCHWAY_SETUP_TOKEN in $env_file):
      ${url}setup#token=$setup_token
   2. Forward TCP ports 80 and 443 (and UDP 443 for HTTP/3) from your router to
      this machine, then add your domain in the web UI.
-  3. Back up $env_file. Losing SLIPWAY_SECRET_KEY makes the stored secrets
+  3. Back up $env_file. Losing LAUNCHWAY_SECRET_KEY makes the stored secrets
      unrecoverable.
 
 NEXT
@@ -393,7 +393,7 @@ NEXT
   cat <<MANAGE
 Manage the installation from $dir:
   docker compose ps                                     status
-  docker compose logs -f slipway                        API logs
+  docker compose logs -f launchway                      API logs
   docker compose pull && docker compose up -d --wait    upgrade
 MANAGE
 }

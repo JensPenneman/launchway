@@ -16,6 +16,8 @@ export function toDeployment(row: DeploymentRow): Deployment {
     ref: row.ref,
     commitSha: row.commitSha,
     trigger: row.trigger,
+    previewId: row.previewId,
+    environmentName: row.environmentName,
     status: row.status,
     statusMessage: row.statusMessage,
     triggeredBy: row.triggeredById,
@@ -44,17 +46,22 @@ export function agentActor(nodeId: NodeId): RequestActor {
 /**
  * Announces a status change after commit: the change feed (`deployments` topic) and the live
  * log stream of the deployment (`status`, plus `end` once it left the in-progress states).
+ * Deployments of a preview carry `previewId`, which the previews module follows.
  */
 export function announceStatus(
   deps: Pick<Deps, 'events'>,
-  row: Pick<DeploymentRow, 'id' | 'appId' | 'status'>,
+  row: Pick<DeploymentRow, 'id' | 'appId' | 'status'> & Partial<Pick<DeploymentRow, 'previewId'>>,
   ended: boolean,
 ): void {
   deps.events.publish({
     topic: 'deployments',
     action: 'updated',
     resourceId: row.id,
-    data: { appId: row.appId, status: row.status },
+    data: {
+      appId: row.appId,
+      status: row.status,
+      ...(row.previewId ? { previewId: row.previewId } : {}),
+    },
   });
   const hub = logHubFor(deps.events);
   hub.publish(row.id, { kind: 'status', status: row.status });

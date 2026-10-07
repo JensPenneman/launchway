@@ -1,5 +1,5 @@
 import { CommitSha, GitRef, IpAddress, Port, ServiceName, Timestamp } from './common.js';
-import { AppId, DeploymentId, NodeId, UserId } from './ids.js';
+import { AppId, DeploymentId, NodeId, PreviewId, UserId } from './ids.js';
 import { PaginationQuery, page } from './pagination.js';
 import { z } from './zod.js';
 
@@ -138,11 +138,28 @@ export type ServiceStatus = z.infer<typeof ServiceStatus>;
 
 // --- Deployment ----------------------------------------------------------------------------------
 
-export const DEPLOYMENT_TRIGGERS = ['manual', 'auto'] as const;
+export const DEPLOYMENT_TRIGGERS = ['manual', 'auto', 'preview'] as const;
 export const DeploymentTrigger = z.enum(DEPLOYMENT_TRIGGERS).openapi('DeploymentTrigger', {
-  description: 'manual: user/API request (incl. rollbacks); auto: release webhook or poll',
+  description:
+    'manual: user/API request (incl. rollbacks); auto: release webhook or poll; preview: pull request preview (webhook or API)',
 });
 export type DeploymentTrigger = z.infer<typeof DeploymentTrigger>;
+
+// --- Environments --------------------------------------------------------------------------------
+
+/** `Deployment.environmentName` of production deployments. */
+export const PRODUCTION_ENVIRONMENT = 'production';
+
+/** `Deployment.environmentName` of a preview: `preview/pr-<number>`. */
+export function previewEnvironmentName(prNumber: number): string {
+  return `preview/pr-${prNumber}`;
+}
+
+export const EnvironmentName = z
+  .string()
+  .regex(/^(?:production|preview\/pr-[1-9][0-9]{0,9})$/, 'production or preview/pr-<number>')
+  .openapi('EnvironmentName', { example: 'preview/pr-42' });
+export type EnvironmentName = z.infer<typeof EnvironmentName>;
 
 export const Deployment = z
   .object({
@@ -152,6 +169,8 @@ export const Deployment = z
     ref: GitRef,
     commitSha: CommitSha,
     trigger: DeploymentTrigger,
+    previewId: PreviewId.nullable().openapi({ description: 'Set for deployments of a preview' }),
+    environmentName: EnvironmentName,
     status: DeploymentStatus,
     statusMessage: z
       .string()
@@ -180,7 +199,13 @@ export type Deployment = z.infer<typeof Deployment>;
 export const DeploymentPage = page(Deployment).openapi('DeploymentPage');
 export type DeploymentPage = z.infer<typeof DeploymentPage>;
 
-export const DeploymentListQuery = PaginationQuery.extend({ status: DeploymentStatus.optional() });
+export const DeploymentListQuery = PaginationQuery.extend({
+  status: DeploymentStatus.optional(),
+  environment: z.enum(['production', 'preview']).optional().openapi({
+    description: 'Only production deployments, or only deployments of previews',
+  }),
+  previewId: PreviewId.optional(),
+});
 export type DeploymentListQuery = z.infer<typeof DeploymentListQuery>;
 
 export const CreateDeploymentInput = z

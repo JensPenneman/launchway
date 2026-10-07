@@ -132,6 +132,9 @@ describe('dynamic DNS service', () => {
       forwardAuthUrl: null,
       forwardAuthTarget: null,
       edgeNodeId: null,
+      previewBaseDomain: null,
+      previewMaxPerApp: 10,
+      previewMaxTotal: 20,
       updatedAt: new Date().toISOString(),
       ...initial,
     };

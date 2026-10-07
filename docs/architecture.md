@@ -48,20 +48,21 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
 | **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
-| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route). |
+| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route) and `previews` settings (enabled, host template, env overrides, Compose files). |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
-| **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app. Has a state machine and logs. |
+| **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app in one environment (`production` or a preview's `preview/pr-<n>`). Has a state machine and logs. |
+| **Preview** | The running copy of an app for one pull request: branch, head commit, host name, the domain and route it created, status (section 4). |
 | **Node** | A machine running the agent. Reports Docker info, LAN IP, architecture, health. One node is the `edge` (runs Caddy). |
 | **DnsProviderAccount** | Credentials for one DNS provider (kind + encrypted credentials). |
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
 | **Domain** | A fully-qualified name Launchway serves (`trail.example.com`). Optionally bound to a zone so Launchway manages its record. |
 | **Route** | What a domain serves: an app service port, an external host:port, or a redirect. Options: `protected` (forward auth), `compress`, `hsts`, and admin-only `extraDirectives` (verbatim Caddyfile). |
-| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth gate (external URL or app service), edge node. |
+| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth gate (external URL or app service), edge node, preview base domain and limits. |
 | **AuditEvent** | Who changed what, when, from where. Written for every mutation. |
 
 IDs are prefixed type IDs (`typeid-js`, UUIDv7 underneath): `user_…`, `sess_…`,
 `pk_…`, `tok_…`, `inv_…`, `gh_…`, `app_…`, `env_…`, `dep_…`, `node_…`, `prov_…`,
-`zone_…`, `dom_…`, `rt_…`, `aud_…`.
+`zone_…`, `dom_…`, `rt_…`, `aud_…`, `prv_…`.
 
 ### Deployment state machine
 
@@ -75,10 +76,13 @@ queued ──▶ cloning ──▶ building ──▶ starting ──▶ running
 *Image retry (ADR 0019): an automatic deployment that fails in `building`
 because its image does not exist yet returns to `queued` with `retryCount`
 and `nextAttemptAt` (backoff 1, 2, 4, 8, 15, 15, 15 minutes, 60 minutes in
-total). Manual deployments fail at once.*
+total). Manual deployments fail at once. A newer deployment cancels older ones
+of the same environment that are still waiting for their image.*
 
-`App.activeDeploymentId` points at the `running` deployment. A newer
-deployment reaching `running` marks the previous one `superseded`. A rollback is
+`App.activeDeploymentId` points at the `running` production deployment. A
+newer deployment reaching `running` marks the previous one of the same
+environment `superseded` (production and every preview are separate
+environments). A rollback is
 simply a new deployment of an older ref (images are cached, so it is fast).
 
 ## 3. System architecture
@@ -198,6 +202,9 @@ Every deployment's environment contains, next to the app's own variables:
 | `LAUNCHWAY_COMMIT_SHA` | Resolved commit (40 hex characters) |
 | `LAUNCHWAY_COMMIT_SHA_SHORT` | Its first 7 characters |
 | `LAUNCHWAY_NODE` | Name of the node that runs the deployment |
+| `LAUNCHWAY_ENVIRONMENT` | `production` or `preview` |
+| `LAUNCHWAY_PREVIEW_NUMBER` | Pull request number of a preview; empty in production |
+| `LAUNCHWAY_PUBLIC_URL` | `https://<host>` of the first route (of the preview's own route); empty without a route |
 
 They are written to `.env`, so Compose files can interpolate them
 (`${LAUNCHWAY_COMMIT_SHA}`) and services that load `.env` through `env_file`
@@ -214,6 +221,46 @@ the edge's `forward_auth` calls. The service of the forward-auth target
 (section 5) is attached the same way. Aliases are unique across apps, whether
 they come from a route, `proxyServices` or the forward-auth target. Like
 routes, attachments take effect with the app's next deployment.
+
+### Pull request previews
+
+An app with `previews.enabled` gets a running copy for every pull request
+whose head is a branch of its repository (fork pull requests are ignored)
+([ADR 0018](adr/0018-pull-request-previews.md)):
+
+- **Lifecycle.** The GitHub `pull_request` webhook drives it: `opened`,
+  `reopened` and `synchronize` upsert the `Preview` (one per app and pull
+  request number), ensure its domain and route and queue a deployment of the
+  head commit (trigger `preview`, `ref` = the commit); queued preview
+  deployments that no node has yet are cancelled by a newer push. `closed`
+  (merged or not) removes the route, the domain with its DNS record and the
+  Compose project with its volumes, and keeps the row as `closed` for seven
+  days; then it is purged with its deployments. The API offers the same by
+  hand: `POST /apps/{id}/previews` `{prNumber}` (reads the pull request
+  through the `GitProvider`), `GET /apps/{id}/previews`, `GET /previews`,
+  `GET /previews/{id}`, `POST /previews/{id}/redeploy`, `DELETE
+  /previews/{id}`. At most `Setting.previewMaxPerApp` (10) previews per app
+  and `previewMaxTotal` (20) in total are open.
+- **Status** (`pending → deploying → running`, `failed`, `closing →
+  closed`) follows the preview's deployments; a worker re-derives it, retries
+  removals that waited for a node or the DNS provider, and purges old rows.
+- **Runtime.** A preview deployment is an ordinary deployment with
+  `previewId` and `environmentName = preview/pr-<n>`; it shares the app's
+  dispatch lane. The agent gets the slug `<slug>-pr-<n>` (Compose project
+  `launchway-<slug>-pr-<n>`, aliases `<slug>-pr-<n>-<service>`) and the app
+  id `app_<suffix of the preview id>`, which keeps its checkouts and volumes
+  apart from production. Previews never get trusted mounts; `previews.
+  composeFiles` can name other Compose files for them.
+- **Environment.** The app's variables (secrets included), then
+  `previews.envOverrides` with `{{previewUrl}}`, `{{previewHost}}`,
+  `{{prNumber}}`, `{{branch}}` and `{{sha}}` filled in, then the platform
+  variables.
+- **Host name.** `previews.hostTemplate` (default
+  `{slug}-pr-{number}.{base}`, must end with `.{base}`) with
+  `{base} = Setting.previewBaseDomain`, which must lie in a zone of a
+  provider Launchway can write to. The domain is managed (`CNAME <anchor>`)
+  and forced through the DNS preflight; its route copies the service, port
+  and options of the app's first route (no extra directives).
 
 ## 5. Edge, TLS and public exposure
 
@@ -267,6 +314,10 @@ routes, attachments take effect with the app's next deployment.
   when it changed. Managed app domains are created as `CNAME <anchor>`
   (DNS-only / not proxied by default; `proxied` is a per-record option exposed
   by providers that support it).
+- **Preview routes** render like app routes with the preview's alias
+  (`reverse_proxy <slug>-pr-<n>-<service>:<port>`), or off the edge node the
+  port the preview's running deployment publishes. Each preview host name
+  gets its own certificate (HTTP-01), like every route.
 - Routes to apps on other nodes use upstream `<node.lanIp>:<publishedPort>`.
   Routes of kind `external` use whatever `host:port` the user entered
   (e.g. `host.docker.internal:7878` for a service on the Windows host).
@@ -342,21 +393,24 @@ export interface DnsProvider {
   (`published`/`released`, or `edited` from draft to published → deployment
   when auto-deploy is on; drafts never, prereleases only with
   `autoDeployPrereleases`), `push` (to `App.autoDeployBranch` → deployment of
-  the pushed commit; the App must subscribe to `push`), `installation`,
-  `installation_repositories`, `ping`. *(Such deployments carry the trigger
-  `auto` and are deduplicated per tag or commit.)*
+  the pushed commit), `pull_request` (previews, section 4), `installation`,
+  `installation_repositories`, `ping`. *(Release and push deployments carry
+  the trigger `auto` and are deduplicated per tag or commit.)*
+- The GitHub App asks for `contents: read`, `metadata: read`,
+  `deployments: write` and `pull_requests: read`, and subscribes to `release`,
+  `push` and `pull_request`.
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
-  resolveRef; cloneCredentials; }` so another host could be added later.
+  resolveRef; cloneCredentials; getPullRequest; }` so another host could be
+  added later.
 - **Deployments on GitHub**: Launchway mirrors every deployment to GitHub's
-  Deployments API (environment `production`, or `preview/<previewKey>` for
-  previews) and posts its status as it moves (`in_progress`, `success` with
-  the app's first route as environment URL and the deployment page as log
-  link, `failure`, `inactive`, `error`). The GitHub id is kept in
-  `deployments.github_deployment_id`. It is best effort: a missing permission
-  or a GitHub outage is logged and never fails a deployment. Apps opt out with
-  `App.githubDeployments: false`. This needs `deployments: write`; the app
-  manifest also requests `pull_requests: read` and the `pull_request` event.
-  Apps created before must be updated on GitHub, and
+  Deployments API (environment `production`, or `preview/pr-<n>` for
+  previews, which are transient) and posts its status as it moves
+  (`in_progress`, `success` with the app's first route or the preview host as
+  environment URL and the deployment page as log link, `failure`, `inactive`,
+  `error`). The GitHub id is kept in `deployments.github_deployment_id`. It is
+  best effort: a missing permission or a GitHub outage is logged and never
+  fails a deployment. Apps opt out with `App.githubDeployments: false`. Apps
+  created before these permissions must be updated on GitHub, and
   `GET /github/connections/{id}/capabilities` (cached 5 minutes) reports what
   is missing ([ADR 0017](adr/0017-github-deployments-mirror.md)).
 
@@ -422,7 +476,8 @@ export interface DnsProvider {
   `tokens`, `settings`, `audit`, `github/connections`,
   `github/connections/{id}/capabilities`, `github/repos`,
   `github/repos/{owner}/{repo}/releases`, `apps`, `apps/{id}/env`,
-  `apps/{id}/deployments`, `deployments/{id}`, `deployments/{id}/logs`,
+  `apps/{id}/deployments`, `apps/{id}/previews`, `previews`, `previews/{id}`,
+  `previews/{id}/redeploy`, `deployments/{id}`, `deployments/{id}/logs`,
   `deployments/{id}/cancel`, `domains`, `domains/{id}/verify`, `routes`,
   `dns/providers`, `dns/accounts`, `dns/zones`, `dns/zones/{id}/records`,
   `nodes`, `nodes/{id}/join-token`, `edge/config` (rendered Caddyfile, read-only),
@@ -535,7 +590,6 @@ Agent (`launchway-agent` container):
 Blue/green deployments with health-gated switch · build cache / image registry
 shared between nodes · placement by labels and resources · per-app managed
 volumes with scheduled encrypted backups · metrics and alerts · OIDC login
-(sign in to Launchway with an external IdP) · preview deployments from pull
-requests · a CLI · TCP/UDP routing at the edge (Caddy L4) · Cloudflare Tunnel
+(sign in to Launchway with an external IdP) · a CLI · TCP/UDP routing at the edge (Caddy L4) · Cloudflare Tunnel
 as an alternative to port forwarding · a host-native agent (no container) for
 machines without Docker Desktop · other Git hosts.

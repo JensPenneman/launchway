@@ -1,11 +1,12 @@
-import type {
-  ForwardAuthTarget,
-  Settings,
-  SettingsHint,
-  UpdateSettingsInput,
-  UpdateSettingsResult,
+import {
+  type ForwardAuthTarget,
+  PRODUCTION_ENVIRONMENT,
+  type Settings,
+  type SettingsHint,
+  type UpdateSettingsInput,
+  type UpdateSettingsResult,
 } from '@launchway/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import { isForeignKeyViolation } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';
@@ -14,6 +15,7 @@ import { invalidField } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
 import { deployments } from '../deployments/schema.js';
+import { dnsProviderAccounts, dnsZones } from '../dns/schema.js';
 import { ALIASES_LOCK, assertAliasesFree, loadAttachedServices } from '../routes/attach.js';
 import { settings } from './schema.js';
 
@@ -27,6 +29,9 @@ const WRITABLE_KEYS = [
   'forwardAuthUrl',
   'forwardAuthTarget',
   'edgeNodeId',
+  'previewBaseDomain',
+  'previewMaxPerApp',
+  'previewMaxTotal',
 ] as const satisfies readonly (keyof UpdateSettingsInput & keyof SettingsRow)[];
 
 export interface SettingsService {
@@ -71,6 +76,9 @@ export function createSettingsService(
       forwardAuthUrl: row.forwardAuthUrl,
       forwardAuthTarget: row.forwardAuthTarget,
       edgeNodeId: row.edgeNodeId,
+      previewBaseDomain: row.previewBaseDomain,
+      previewMaxPerApp: row.previewMaxPerApp,
+      previewMaxTotal: row.previewMaxTotal,
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -103,7 +111,13 @@ export function createSettingsService(
     const [running] = await tx
       .select({ id: deployments.id })
       .from(deployments)
-      .where(and(eq(deployments.appId, app.id), eq(deployments.status, 'running')))
+      .where(
+        and(
+          eq(deployments.appId, app.id),
+          eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+          eq(deployments.status, 'running'),
+        ),
+      )
       .limit(1);
     const attached = (await loadAttachedServices(tx, { appId: app.id })).some(
       (entry) => entry.service === target.service,
@@ -122,6 +136,27 @@ export function createSettingsService(
       });
     }
     return hints;
+  }
+
+  /**
+   * Preview host names get a CNAME through the zone they lie in, so the base domain must lie in a
+   * zone of a provider Launchway can write to (not the `manual` one).
+   */
+  async function assertManagedBaseDomain(tx: Executor, hostname: string): Promise<void> {
+    const labels = hostname.split('.');
+    const candidates = labels.slice(0, -1).map((_, index) => labels.slice(index).join('.'));
+    const [zone] = await tx
+      .select({ id: dnsZones.id })
+      .from(dnsZones)
+      .innerJoin(dnsProviderAccounts, eq(dnsProviderAccounts.id, dnsZones.accountId))
+      .where(and(inArray(dnsZones.name, candidates), ne(dnsProviderAccounts.kind, 'manual')))
+      .limit(1);
+    if (!zone) {
+      throw invalidField(
+        'body.previewBaseDomain',
+        `${hostname} does not lie in a DNS zone Launchway manages; add the provider account of its zone first`,
+      );
+    }
   }
 
   return {
@@ -154,6 +189,7 @@ export function createSettingsService(
               'Set either forwardAuthUrl or forwardAuthTarget; clear the other one with null',
             );
           }
+          if (patch.previewBaseDomain) await assertManagedBaseDomain(tx, patch.previewBaseDomain);
           if (patch.forwardAuthTarget) {
             hints = await checkForwardAuthTarget(
               tx,

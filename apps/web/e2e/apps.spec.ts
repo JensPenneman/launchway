@@ -116,3 +116,34 @@ test('shows trusted mounts and lets an admin turn them off', async ({ page }) =>
   await expect(toggle).not.toBeChecked();
   await expect(page.getByText('trusted mounts', { exact: true })).toHaveCount(0);
 });
+
+test('lists pull request previews and opens one by its number', async ({ page }) => {
+  await page.goto(`/apps/${TRAIL_APP_ID}?tab=previews`);
+  const existing = page.getByRole('row', { name: /#42 Show elevation profiles/ });
+  await expect(existing).toContainText('running');
+  await expect(
+    existing.getByRole('link', { name: /trail-pr-42\.preview\.example\.com/ }),
+  ).toBeVisible();
+
+  await page.getByLabel('Pull request number').fill('7');
+  await page.getByRole('button', { name: 'Open preview' }).click();
+  const opened = page.getByRole('row', { name: /#7 / });
+  await expect(opened).toContainText('trail-pr-7.preview.example.com');
+  await expect(opened).toContainText('running', { timeout: 10_000 });
+
+  await opened.getByRole('button', { name: 'Close' }).click();
+  await page.getByRole('alertdialog').getByRole('button', { name: 'Close preview' }).click();
+  await expect(opened).toContainText('closed');
+});
+
+test('saves the preview settings of an app', async ({ page }) => {
+  await page.goto(`/apps/${TRAIL_APP_ID}?tab=settings`);
+  const overrides = page.getByLabel('Environment overrides');
+  await expect(overrides).toHaveValue('BASE_URL={{previewUrl}}');
+  await overrides.fill('BASE_URL={{previewURL}}');
+  await expect(page.getByText(/Unknown placeholder \{\{previewURL\}\}/)).toBeVisible();
+  await overrides.fill('BASE_URL={{previewUrl}}\nDB_NAME=trail_{{prNumber}}');
+  await expect(page.getByText('trail-pr-42.preview.example.com')).toBeVisible();
+  await page.getByRole('button', { name: 'Save preview settings' }).click();
+  await expect(page.getByText('Preview settings saved')).toBeVisible();
+});

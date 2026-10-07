@@ -22,6 +22,7 @@ import { startDeploymentsMirror } from './modules/github/deployments-mirror.js';
 import { startReleasePoller } from './modules/github/poller.js';
 import { createAgentGateway } from './modules/nodes/gateway.js';
 import { ensureLocalNode } from './modules/nodes/service.js';
+import { startPreviewWorker } from './modules/previews/worker.js';
 import { createSettingsService } from './modules/settings/service.js';
 import { APP_VERSION } from './version.js';
 
@@ -102,6 +103,7 @@ export async function start(): Promise<void> {
   startReleasePoller(deps);
   // Mirrors deployment status changes to GitHub's Deployments API (best effort, ADR 0017).
   startDeploymentsMirror(deps);
+  startPreviewWorker(deps);
 
   // WebSocket upgrades (agent socket) are handled by `upgradeWebSocket` from @hono/node-server.
   // Agent frames are at most 500 log lines of 16 KiB each.

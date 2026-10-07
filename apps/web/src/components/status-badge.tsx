@@ -1,4 +1,9 @@
-import type { DeploymentStatus, DomainStatus, NodeStatus } from '@launchway/contracts';
+import type {
+  DeploymentStatus,
+  DomainStatus,
+  NodeStatus,
+  PreviewStatus,
+} from '@launchway/contracts';
 import { cn } from '@/lib/utils';
 
 type Tone = 'success' | 'warning' | 'danger' | 'info' | 'neutral';
@@ -87,6 +92,23 @@ const NODE_TONES: Record<NodeStatus, Tone> = {
 export function NodeStatusBadge({ status }: { status: NodeStatus }) {
   return (
     <StatusBadge tone={NODE_TONES[status]} className="capitalize">
+      {status}
+    </StatusBadge>
+  );
+}
+
+const PREVIEW_TONES: Record<PreviewStatus, Tone> = {
+  pending: 'warning',
+  deploying: 'info',
+  running: 'success',
+  failed: 'danger',
+  closing: 'neutral',
+  closed: 'neutral',
+};
+
+export function PreviewStatusBadge({ status }: { status: PreviewStatus }) {
+  return (
+    <StatusBadge tone={PREVIEW_TONES[status]} className="capitalize">
       {status}
     </StatusBadge>
   );

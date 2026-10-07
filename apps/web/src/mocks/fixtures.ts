@@ -17,6 +17,7 @@ import type {
   LogLine,
   Node,
   Passkey,
+  Preview,
   Route,
   Session,
   Settings,
@@ -351,6 +352,12 @@ export function createApps(): App[] {
     githubDeployments: true,
     trustedMounts: false,
     proxyServices: [] as string[],
+    previews: {
+      enabled: false,
+      hostTemplate: '{slug}-pr-{number}.{base}',
+      envOverrides: {} as Record<string, string>,
+      composeFiles: null,
+    },
   };
   return [
     {
@@ -365,6 +372,12 @@ export function createApps(): App[] {
       nodeId: EDGE_NODE_ID,
       autoDeployReleases: true,
       trustedMounts: true,
+      previews: {
+        enabled: true,
+        hostTemplate: '{slug}-pr-{number}.{base}',
+        envOverrides: { BASE_URL: '{{previewUrl}}' },
+        composeFiles: ['compose.preview.yaml'],
+      },
       activeDeploymentId: fixedId('dep', 2),
       createdAt: ago(60 * 24 * 30),
       updatedAt: ago(60 * 24),
@@ -417,6 +430,8 @@ export function createDeployments(): Deployment[] {
     ref,
     commitSha: sha(n),
     trigger: 'manual',
+    previewId: null,
+    environmentName: 'production',
     status,
     statusMessage: null,
     triggeredBy: OWNER_ID,
@@ -703,6 +718,9 @@ export function createSettings(): Settings {
     forwardAuthUrl: 'http://gate-proxy:4180/oauth2/auth',
     forwardAuthTarget: null,
     edgeNodeId: EDGE_NODE_ID,
+    previewBaseDomain: 'preview.example.com',
+    previewMaxPerApp: 10,
+    previewMaxTotal: 20,
     updatedAt: ago(60 * 24),
   };
 }
@@ -750,4 +768,60 @@ export function createAuditEvents(): AuditEvent[] {
       createdAt: ago(index * 47 + 3),
     };
   });
+}
+
+export const TRAIL_PREVIEW_ID = fixedId('prv', 1);
+/** Deployment of the Trail preview (kept out of createDeployments' numbering). */
+export const TRAIL_PREVIEW_DEPLOYMENT_ID = fixedId('dep', 90);
+
+/** A running preview of Trail's pull request #42 and its deployment. */
+export function createPreviews(): { previews: Preview[]; deployments: Deployment[] } {
+  const commitSha = sha(90);
+  return {
+    previews: [
+      {
+        id: TRAIL_PREVIEW_ID,
+        appId: TRAIL_APP_ID,
+        prNumber: 42,
+        prTitle: 'Show elevation profiles',
+        branch: 'feature/elevation',
+        headSha: commitSha,
+        environmentName: 'preview/pr-42',
+        hostname: 'trail-pr-42.preview.example.com',
+        url: 'https://trail-pr-42.preview.example.com',
+        domainId: fixedId('dom', 90),
+        routeId: fixedId('rt', 90),
+        status: 'running',
+        statusMessage: null,
+        activeDeploymentId: TRAIL_PREVIEW_DEPLOYMENT_ID,
+        lastDeployment: { id: TRAIL_PREVIEW_DEPLOYMENT_ID, status: 'running', commitSha },
+        createdAt: ago(60 * 5),
+        updatedAt: ago(60 * 2),
+        closedAt: null,
+      },
+    ],
+    deployments: [
+      {
+        id: TRAIL_PREVIEW_DEPLOYMENT_ID,
+        appId: TRAIL_APP_ID,
+        nodeId: EDGE_NODE_ID,
+        ref: commitSha,
+        commitSha,
+        trigger: 'preview',
+        previewId: TRAIL_PREVIEW_ID,
+        environmentName: 'preview/pr-42',
+        status: 'running',
+        statusMessage: null,
+        failureReason: null,
+        retryCount: 0,
+        nextAttemptAt: null,
+        triggeredBy: null,
+        services: [],
+        createdAt: ago(60 * 2),
+        startedAt: ago(60 * 2 - 0.1),
+        finishedAt: null,
+        updatedAt: ago(60 * 2 - 1.5),
+      },
+    ],
+  };
 }

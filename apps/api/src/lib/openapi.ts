@@ -93,6 +93,10 @@ export function openApiObject(version: string) {
       },
       { name: 'Apps', description: 'Apps, their environment, status, logs and lifecycle' },
       { name: 'Deployments', description: 'Deployments of a release or ref, with live logs' },
+      {
+        name: 'Previews',
+        description: 'Preview environments of pull requests, each at its own host name',
+      },
       { name: 'Nodes', description: 'Machines running the agent, join tokens and credentials' },
       { name: 'Domains', description: 'Domains Launchway serves and their DNS verification' },
       {

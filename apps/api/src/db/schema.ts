@@ -10,6 +10,7 @@ export * from '../modules/domains/schema.js';
 export * from '../modules/github/schema.js';
 export * from '../modules/invitations/schema.js';
 export * from '../modules/nodes/schema.js';
+export * from '../modules/previews/schema.js';
 export * from '../modules/routes/schema.js';
 export * from '../modules/settings/schema.js';
 export * from '../modules/tokens/schema.js';

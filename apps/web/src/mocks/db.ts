@@ -6,6 +6,7 @@ import type {
   EventTopic,
   LogLine,
   PlatformEvent,
+  Preview,
   User,
   UserRole,
 } from '@launchway/contracts';
@@ -20,6 +21,7 @@ import {
   createInvitations,
   createNodes,
   createPasskeys,
+  createPreviews,
   createRecords,
   createRoutes,
   createSessions,
@@ -70,7 +72,9 @@ export class MockDb {
   nodes = createNodes();
   connections = createConnections();
   apps = createApps();
-  deployments = createDeployments();
+  private readonly previewFixtures = createPreviews();
+  previews: Preview[] = this.previewFixtures.previews;
+  deployments = [...createDeployments(), ...this.previewFixtures.deployments];
   logs = new Map<string, LogLine[]>(this.deployments.map((d) => [d.id, deploymentLog(d)]));
   env = createEnv();
   dnsAccounts = createDnsAccounts();

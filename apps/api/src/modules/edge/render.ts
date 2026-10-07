@@ -46,6 +46,16 @@ export interface EdgeRoute {
   readonly hsts: boolean;
   /** Admin-supplied directives rendered verbatim inside the site block; absent means none. */
   readonly extraDirectives?: string | null;
+  /**
+   * Set for the route of a pull request preview: the upstream is the preview's alias
+   * (`<slug>-pr-<number>-<service>`) or, off the edge node, a port its running deployment
+   * publishes. Absent means a production route.
+   */
+  readonly preview?: {
+    readonly number: number;
+    /** Services of the preview's `running` deployment; null when nothing runs. */
+    readonly runningServices: readonly ServiceStatus[] | null;
+  } | null;
 }
 
 export interface EdgeApp {
@@ -173,11 +183,12 @@ function handler(
     case 'app': {
       const app = apps.get(target.appId);
       if (!app) return { kind: 'skip', reason: 'the app does not exist' };
+      const preview = route.preview ?? null;
       const edgeNodeId = input.settings.edgeNodeId;
       if (edgeNodeId === null || app.nodeId === edgeNodeId) {
         let alias: string;
         try {
-          alias = serviceAlias(app.slug, target.service);
+          alias = serviceAlias(app.slug, target.service, preview?.number);
         } catch {
           return { kind: 'skip', reason: 'the service alias is too long' };
         }
@@ -187,10 +198,16 @@ function handler(
       if (!node?.lanIp) {
         return { kind: 'skip', reason: `node ${node?.name ?? app.nodeId} has no LAN address` };
       }
-      if (!app.runningServices) {
-        return { kind: 'skip', reason: `app ${app.slug} has no running deployment` };
+      const runningServices = preview ? preview.runningServices : app.runningServices;
+      if (!runningServices) {
+        return {
+          kind: 'skip',
+          reason: preview
+            ? `preview #${preview.number} of app ${app.slug} has no running deployment`
+            : `app ${app.slug} has no running deployment`,
+        };
       }
-      const service = app.runningServices.find((s) => s.service === target.service);
+      const service = runningServices.find((s) => s.service === target.service);
       const published = service?.publishedPorts
         .filter((p) => p.containerPort === target.port && p.protocol === 'tcp')
         .sort((a, b) => a.hostPort - b.hostPort)[0];

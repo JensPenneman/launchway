@@ -24,6 +24,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
+import { PreviewsCard } from './previews-card';
 
 /** Service names from a textarea: one per line, blanks ignored. */
 function parseServiceList(text: string): string[] {
@@ -283,6 +284,7 @@ export function SettingsTab({ app }: { app: App }) {
         </Button>
       </form>
       <TrustedMountsCard app={app} />
+      <PreviewsCard app={app} />
     </div>
   );
 }

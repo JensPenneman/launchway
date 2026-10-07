@@ -20,6 +20,9 @@ const settings = {
   forwardAuthUrl: null,
   forwardAuthTarget: null,
   edgeNodeId: null,
+  previewBaseDomain: null,
+  previewMaxPerApp: 10,
+  previewMaxTotal: 20,
   updatedAt: '2026-10-06T12:00:00.000Z',
 };
 

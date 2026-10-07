@@ -19,6 +19,7 @@ export const keys = {
   apps: ['apps'] as const,
   env: ['env'] as const,
   deployments: ['deployments'] as const,
+  previews: ['previews'] as const,
   domains: ['domains'] as const,
   routes: ['routes'] as const,
   dns: ['dns'] as const,
@@ -32,8 +33,8 @@ export function keysForTopic(topic: EventTopic): QueryKey[] {
     case 'apps':
       return [keys.apps, keys.routes, keys.edge];
     case 'deployments':
-      // A deployment reaching `running` changes the app's active deployment and status.
-      return [keys.deployments, keys.apps];
+      // A deployment reaching `running` changes the app's (or preview's) active deployment.
+      return [keys.deployments, keys.apps, keys.previews];
     case 'env':
       return [keys.env];
     case 'nodes':
@@ -54,6 +55,8 @@ export function keysForTopic(topic: EventTopic): QueryKey[] {
       return [keys.invitations];
     case 'tokens':
       return [keys.tokens];
+    case 'previews':
+      return [keys.previews, keys.deployments, keys.domains, keys.routes, keys.edge];
     case 'edge':
       return [keys.edge];
   }

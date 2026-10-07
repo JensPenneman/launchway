@@ -2,6 +2,7 @@ import {
   type AppId,
   type DeploymentId,
   type DeploymentTrigger,
+  previewAgentAppId,
   QUEUED_DEPLOYMENT_TIMEOUT_MS,
 } from '@launchway/contracts';
 import { and, asc, eq, gt, inArray, isNotNull, isNull, lt, lte, or, type SQL } from 'drizzle-orm';
@@ -16,6 +17,7 @@ import { recordAudit } from '../audit/service.js';
 import { domains } from '../domains/schema.js';
 import { getConnection, providerFor } from '../github/providers.js';
 import { nodes } from '../nodes/schema.js';
+import { previews } from '../previews/schema.js';
 import { routes } from '../routes/schema.js';
 import { createSettingsService } from '../settings/service.js';
 import { ACTIVE_STATUSES, announceStatus, type DeploymentRow } from './model.js';
@@ -101,7 +103,8 @@ export function createDispatcher(deps: Deps): Dispatcher {
 
   /**
    * Claims the next due queued deployment (sets `startedAt`) under a lock on the app row and
-   * cancels older deployments still waiting for an image retry: the newer one wins.
+   * cancels older deployments of the same environment still waiting for an image retry: the
+   * newer one wins.
    */
   async function claim(
     appId: AppId,
@@ -155,6 +158,8 @@ export function createDispatcher(deps: Deps): Dispatcher {
         .where(
           and(
             eq(deployments.appId, appId),
+            // Only the same environment: a production deployment never cancels a preview's.
+            eq(deployments.environmentName, claimed.environmentName),
             eq(deployments.status, 'queued'),
             isNull(deployments.startedAt),
             gt(deployments.retryCount, 0),
@@ -215,15 +220,41 @@ export function createDispatcher(deps: Deps): Dispatcher {
       .select({ lanIp: nodes.lanIp, name: nodes.name, allowedBindRoots: nodes.allowedBindRoots })
       .from(nodes)
       .where(eq(nodes.id, deployment.nodeId));
+    // Production gets the app's routes except those of previews; a preview only its own route.
+    const [preview] = deployment.previewId
+      ? await deps.db.select().from(previews).where(eq(previews.id, deployment.previewId))
+      : [];
+    if (deployment.previewId && !preview) throw new Error('the preview no longer exists');
     const appRoutes = await deps.db
-      .select({ service: routes.appService, port: routes.appPort })
+      .select({ service: routes.appService, port: routes.appPort, hostname: domains.hostname })
       .from(routes)
       .innerJoin(domains, eq(domains.id, routes.domainId))
-      .where(and(eq(routes.appId, app.id), eq(routes.targetKind, 'app')));
+      .leftJoin(previews, eq(previews.routeId, routes.id))
+      .where(
+        and(
+          eq(routes.appId, app.id),
+          eq(routes.targetKind, 'app'),
+          preview ? eq(previews.id, preview.id) : isNull(previews.id),
+        ),
+      )
+      .orderBy(asc(routes.createdAt), asc(routes.id));
     const { edgeNodeId, forwardAuthTarget } = await settings.get();
     return buildDeployPayload({
       deployment,
       app,
+      ...(preview
+        ? {
+            preview: {
+              number: preview.prNumber,
+              agentAppId: previewAgentAppId(preview.id),
+              branch: preview.branch,
+              hostname: preview.hostname,
+              envOverrides: app.previews.envOverrides,
+              composeFiles: app.previews.composeFiles,
+            },
+          }
+        : {}),
+      publicHostname: appRoutes[0]?.hostname ?? null,
       node: { name: node?.name ?? deployment.nodeId },
       clone,
       env: await loadDecryptedEnv(deps.db, deps.secrets, app.id),

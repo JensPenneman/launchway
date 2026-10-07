@@ -8,6 +8,15 @@ export interface FakeRelease {
   prerelease?: boolean;
 }
 
+export interface FakePull {
+  title: string;
+  state?: 'open' | 'closed';
+  headRef: string;
+  headSha: string;
+  /** The head lives in a fork (`<forker>/<repo>`). */
+  fromFork?: boolean;
+}
+
 export interface FakeRepo {
   owner: string;
   name: string;
@@ -18,6 +27,8 @@ export interface FakeRepo {
   branches?: Record<string, string>;
   commits?: string[];
   releases?: FakeRelease[];
+  /** Pull requests by number. */
+  pulls?: Record<number, FakePull>;
 }
 
 export interface FakeApp {
@@ -359,6 +370,25 @@ export class FakeGitHub {
       return entry
         ? json(200, { sha: r[1], object: { sha: entry[1], type: 'commit' } })
         : json(404, { message: 'Not Found' });
+    }
+    r = /^pulls\/(\d+)$/.exec(rest);
+    if (r) {
+      const number = Number(r[1]);
+      const pull = repo.pulls?.[number];
+      if (!pull) return json(404, { message: 'Not Found' });
+      const fullName = `${repo.owner}/${repo.name}`;
+      return json(200, {
+        number,
+        title: pull.title,
+        state: pull.state ?? 'open',
+        merged: false,
+        head: {
+          ref: pull.headRef,
+          sha: pull.headSha,
+          repo: { full_name: pull.fromFork ? `forker/${repo.name}` : fullName },
+        },
+        base: { ref: 'main', repo: { full_name: fullName } },
+      });
     }
     r = /^commits\/([0-9a-f]{7,64})$/.exec(rest);
     if (r) {

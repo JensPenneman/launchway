@@ -11,6 +11,7 @@ import { registerGitHubRoutes } from './github/routes.js';
 import { registerHealthRoutes } from './health/routes.js';
 import { registerInvitationsRoutes } from './invitations/routes.js';
 import { registerAgentSocketRoutes, registerNodesRoutes } from './nodes/routes.js';
+import { registerPreviewsRoutes } from './previews/routes.js';
 import { registerRoutesRoutes } from './routes/routes.js';
 import { registerSettingsRoutes } from './settings/routes.js';
 import { registerTokensRoutes } from './tokens/routes.js';
@@ -46,6 +47,7 @@ export const modules: readonly ModuleDefinition[] = [
   { name: 'github', mount: 'v1', register: registerGitHubRoutes },
   { name: 'apps', mount: 'v1', register: registerAppsRoutes },
   { name: 'deployments', mount: 'v1', register: registerDeploymentsRoutes },
+  { name: 'previews', mount: 'v1', register: registerPreviewsRoutes },
   { name: 'nodes', mount: 'v1', register: registerNodesRoutes },
   { name: 'nodes', mount: 'api', register: registerAgentSocketRoutes },
   { name: 'routes', mount: 'v1', register: registerRoutesRoutes },

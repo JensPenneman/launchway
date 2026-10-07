@@ -12,15 +12,25 @@ import { DeploymentsTab } from '@/features/apps/deployments-tab';
 import { DomainsTab } from '@/features/apps/domains-tab';
 import { EnvironmentTab } from '@/features/apps/environment-tab';
 import { OverviewTab } from '@/features/apps/overview-tab';
+import { PreviewsTab } from '@/features/apps/previews-tab';
 import { SettingsTab } from '@/features/apps/settings-tab';
 import { useCan } from '@/hooks/use-me';
 
-const TABS = ['overview', 'deployments', 'environment', 'domains', 'settings', 'danger'] as const;
+const TABS = [
+  'overview',
+  'deployments',
+  'previews',
+  'environment',
+  'domains',
+  'settings',
+  'danger',
+] as const;
 type AppTab = (typeof TABS)[number];
 
 const TAB_LABELS: Record<AppTab, string> = {
   overview: 'Overview',
   deployments: 'Deployments',
+  previews: 'Previews',
   environment: 'Environment',
   domains: 'Domains & routes',
   settings: 'Settings',
@@ -132,6 +142,14 @@ function AppDetail() {
               void navigate({
                 search: id ? { tab: 'deployments', deployment: id } : { tab: 'deployments' },
               })
+            }
+          />
+        </TabsContent>
+        <TabsContent value="previews" className="mt-4">
+          <PreviewsTab
+            app={data}
+            onOpenDeployment={(id) =>
+              void navigate({ search: { tab: 'deployments', deployment: id } })
             }
           />
         </TabsContent>

@@ -146,6 +146,9 @@ describe('buildDeployPayload', () => {
       LAUNCHWAY_COMMIT_SHA: sha,
       LAUNCHWAY_COMMIT_SHA_SHORT: '0123456',
       LAUNCHWAY_NODE: 'edge-1',
+      LAUNCHWAY_ENVIRONMENT: 'production',
+      LAUNCHWAY_PREVIEW_NUMBER: '',
+      LAUNCHWAY_PUBLIC_URL: '',
     });
   });
 
@@ -175,5 +178,88 @@ describe('buildDeployPayload', () => {
       }),
     );
     expect(payload.attach).toEqual([]);
+  });
+});
+
+describe('buildDeployPayload for previews', () => {
+  const previewInput = (overrides: Partial<DeployPayloadInput> = {}) => {
+    const base = input();
+    return input({
+      deployment: { ...base.deployment, ref: SHA },
+      app: { ...base.app, trustedMounts: true, proxyServices: ['oauth2-proxy'] },
+      env: { PLAIN: 'a', BASE_URL: 'https://trail.example.com', SECRET: 's3' },
+      routes: [{ service: 'web', port: 8080 }],
+      forwardAuthTarget: { appId: base.app.id, service: 'gate', port: 4180, uri: '/' },
+      nodeAllowedBindRoots: ['/srv/data'],
+      publicHostname: 'trail.example.com',
+      preview: {
+        number: 42,
+        agentAppId: generateId('app'),
+        branch: 'feature/login',
+        hostname: 'trail-pr-42.preview.example.com',
+        envOverrides: {
+          BASE_URL: '{{previewUrl}}',
+          DB_NAME: 'trail_pr_{{prNumber}}',
+          INFO: '{{branch}}@{{sha}} on {{previewHost}}',
+          LAUNCHWAY_ENVIRONMENT: 'spoofed',
+        },
+        composeFiles: ['compose.preview.yaml'],
+      },
+      ...overrides,
+    });
+  };
+
+  it('runs as <slug>-pr-<n> under the preview agent id, with preview aliases', () => {
+    const value = previewInput();
+    const payload = buildDeployPayload(value);
+    expect(payload.app).toEqual({ id: value.preview?.agentAppId, slug: 'trail-pr-42' });
+    expect(payload.routes).toEqual([{ service: 'web', port: 8080, alias: 'trail-pr-42-web' }]);
+    // Only routed services: no proxyServices, no forward-auth target of the production app.
+    expect(payload.attach).toEqual([{ service: 'web', alias: 'trail-pr-42-web' }]);
+    expect(payload.build).toEqual({ kind: 'compose', composeFiles: ['compose.preview.yaml'] });
+  });
+
+  it('never grants the mount trust to a preview', () => {
+    expect(buildDeployPayload(previewInput()).policy).toEqual({
+      trustedMounts: false,
+      allowedBindRoots: [],
+    });
+  });
+
+  it('merges app variables with the rendered overrides and the platform variables', () => {
+    const payload = buildDeployPayload(previewInput());
+    expect(payload.env).toMatchObject({
+      PLAIN: 'a',
+      SECRET: 's3',
+      BASE_URL: 'https://trail-pr-42.preview.example.com',
+      DB_NAME: 'trail_pr_42',
+      INFO: `feature/login@${SHA} on trail-pr-42.preview.example.com`,
+      LAUNCHWAY_APP: 'trail',
+      LAUNCHWAY_ENVIRONMENT: 'preview',
+      LAUNCHWAY_PREVIEW_NUMBER: '42',
+      LAUNCHWAY_PUBLIC_URL: 'https://trail-pr-42.preview.example.com',
+    });
+  });
+
+  it('uses the app source without a preview compose override', () => {
+    const base = previewInput();
+    const payload = buildDeployPayload(
+      previewInput({
+        preview: {
+          ...(base.preview as NonNullable<DeployPayloadInput['preview']>),
+          composeFiles: null,
+        },
+      }),
+    );
+    expect(payload.build).toEqual({ kind: 'compose', composeFiles: ['compose.yaml'] });
+  });
+
+  it('gives production its first route as public URL and an empty preview number', () => {
+    const payload = buildDeployPayload(input({ publicHostname: 'trail.example.com' }));
+    expect(payload.env).toMatchObject({
+      LAUNCHWAY_ENVIRONMENT: 'production',
+      LAUNCHWAY_PREVIEW_NUMBER: '',
+      LAUNCHWAY_PUBLIC_URL: 'https://trail.example.com',
+    });
   });
 });

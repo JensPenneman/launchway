@@ -16,6 +16,7 @@ export type GitHubConnectionKind = z.infer<typeof GitHubConnectionKind>;
 export const GITHUB_WEBHOOK_EVENTS = [
   'ping',
   'release',
+  'pull_request',
   'installation',
   'installation_repositories',
 ] as const;

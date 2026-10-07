@@ -120,7 +120,9 @@ export function DeploymentsTab({ app, openDeploymentId, onOpenDeployment }: Depl
                   <TableCell className="hidden font-mono text-xs sm:table-cell">
                     {shortSha(deployment.commitSha)}
                   </TableCell>
-                  <TableCell className="hidden md:table-cell">{deployment.trigger}</TableCell>
+                  <TableCell className="hidden md:table-cell">
+                    {deployment.previewId ? deployment.environmentName : deployment.trigger}
+                  </TableCell>
                   <TableCell className="hidden text-muted-foreground md:table-cell">
                     {formatRelative(deployment.createdAt)}
                   </TableCell>

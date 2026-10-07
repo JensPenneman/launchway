@@ -1,10 +1,11 @@
 import type { App, Deployment } from '@launchway/contracts';
 import { useQueries, useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link } from '@tanstack/react-router';
-import { Boxes, Globe, type LucideIcon, Rocket, Server } from 'lucide-react';
+import { Boxes, GitPullRequest, Globe, type LucideIcon, Rocket, Server } from 'lucide-react';
 import { appsQuery, recentDeploymentsQuery } from '@/api/apps';
 import { domainsQuery } from '@/api/domains';
 import { nodesQuery } from '@/api/nodes';
+import { openPreviewsQuery } from '@/api/previews';
 import { EmptyState } from '@/components/empty-state';
 import { Page, PageHeader } from '@/components/page-header';
 import { ErrorAlert, ListSkeleton } from '@/components/query-state';
@@ -58,10 +59,16 @@ function Stat({
   );
 }
 
+/** Open previews that run (the list holds every open one). */
+function previewCount(items: readonly { status: string }[]): number {
+  return items.filter((preview) => preview.status === 'running').length;
+}
+
 function Overview() {
   const apps = useQuery(appsQuery);
   const nodes = useQuery(nodesQuery);
   const domains = useQuery(domainsQuery);
+  const previews = useQuery(openPreviewsQuery);
   const canDeploy = useCan('member');
 
   const appList = apps.data?.items ?? [];
@@ -98,7 +105,7 @@ function Overview() {
           )
         }
       />
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Stat
           icon={Server}
           label="Nodes"
@@ -119,6 +126,13 @@ function Overview() {
           value={domains.data ? String(problems.length) : undefined}
           hint={problems.length === 1 ? 'needs attention' : 'need attention'}
           to="/domains"
+        />
+        <Stat
+          icon={GitPullRequest}
+          label="Previews"
+          value={previews.data ? String(previewCount(previews.data.items)) : undefined}
+          hint="of pull requests running"
+          to="/apps"
         />
       </div>
 

@@ -9,6 +9,7 @@ import { badRequest, ProblemError, unauthorized } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
 import { createDeploymentsService } from '../deployments/service.js';
+import { createPreviewsService } from '../previews/service.js';
 import type { ConnectionRow } from './providers.js';
 import { secretContext } from './providers.js';
 import { githubConnections, githubWebhookDeliveries } from './schema.js';
@@ -102,6 +103,25 @@ export function pushedBranch(event: z.infer<typeof PushEvent>): {
   return { branch: branch.data, commitSha: commitSha.data };
 }
 
+const PullRequestEvent = z.object({
+  action: z.string(),
+  number: z.number().int().positive(),
+  pull_request: z.object({
+    title: z.string(),
+    merged: z.boolean().nullish(),
+    head: z.object({
+      ref: z.string(),
+      sha: z.string().regex(/^[0-9a-f]{40}$/),
+      repo: z.object({ full_name: z.string() }).nullable(),
+    }),
+    base: z.object({ repo: z.object({ full_name: z.string() }) }),
+  }),
+  repository: Repository,
+});
+
+/** `pull_request` actions that open or update a preview; `closed` removes it. */
+const PREVIEW_UPDATE_ACTIONS: ReadonlySet<string> = new Set(['opened', 'reopened', 'synchronize']);
+
 const InstallationEvent = z.object({
   action: z.string(),
   installation: z.object({ id: z.number().int().positive(), account: Account.nullish() }),
@@ -113,9 +133,74 @@ export function createWebhookHandler(deps: Deps) {
   const logger = deps.logger.child({ component: 'github-webhooks' });
   const actor = systemActor('github-webhook');
   const deployments = createDeploymentsService(deps);
+  const previews = createPreviewsService(deps, { deployments });
 
-  /** Apps of the connection linked to the event's repository that match `filter`. */
-  function appsOf(connection: ConnectionRow, repository: z.infer<typeof Repository>, filter: SQL) {
+  /**
+   * Pull requests from branches of the repository open, update and close previews. Pull requests
+   * from forks are ignored: their code is not trusted with the app's environment.
+   */
+  async function onPullRequest(
+    connection: ConnectionRow,
+    payload: unknown,
+  ): Promise<WebhookOutcome> {
+    const event = PullRequestEvent.parse(payload);
+    const closing = event.action === 'closed';
+    if (!closing && !PREVIEW_UPDATE_ACTIONS.has(event.action)) return 'ignored';
+    const pr = event.pull_request;
+    const head = pr.head.repo?.full_name.toLowerCase() ?? null;
+    if (head !== pr.base.repo.full_name.toLowerCase()) {
+      logger.info(
+        { connectionId: connection.id, prNumber: event.number, action: event.action },
+        'ignoring a pull request from a fork',
+      );
+      return 'ignored';
+    }
+    const targets = await appsOf(connection, event.repository);
+    let retry = false;
+    let handled = false;
+    for (const app of targets) {
+      try {
+        const preview = closing
+          ? await previews.closeForPullRequest(app, event.number, actor)
+          : await previews.openFromPullRequest(
+              app,
+              { number: event.number, title: pr.title, branch: pr.head.ref, headSha: pr.head.sha },
+              actor,
+            );
+        if (preview) {
+          handled = true;
+          logger.info(
+            {
+              appId: app.id,
+              previewId: preview.id,
+              action: event.action,
+              merged: pr.merged ?? false,
+            },
+            closing ? 'preview closed' : 'preview deployed',
+          );
+        }
+      } catch (error) {
+        logger.warn(
+          {
+            appId: app.id,
+            prNumber: event.number,
+            reason: error instanceof Error ? error.message : 'unknown',
+          },
+          'handling a pull request for a preview failed',
+        );
+        retry ||= !(error instanceof ProblemError) || error.type === 'upstream-failed';
+      }
+    }
+    if (retry) {
+      throw new ProblemError('upstream-failed', {
+        detail: 'Updating a preview failed for at least one app; redeliver to retry',
+      });
+    }
+    return handled ? 'processed' : 'ignored';
+  }
+
+  /** Apps of the connection linked to the event's repository (case-insensitive, like GitHub). */
+  function appsOf(connection: ConnectionRow, repository: z.infer<typeof Repository>, filter?: SQL) {
     return deps.db
       .select()
       .from(apps)
@@ -291,6 +376,9 @@ export function createWebhookHandler(deps: Deps) {
             break;
           case 'push':
             outcome = await onPush(connection, payload);
+            break;
+          case 'pull_request':
+            outcome = await onPullRequest(connection, payload);
             break;
           case 'installation':
             outcome = await onInstallation(connection, payload);

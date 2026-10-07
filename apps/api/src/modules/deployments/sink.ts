@@ -11,6 +11,7 @@ import {
   isInProgressStatus,
   type LogLine,
   type NodeId,
+  PRODUCTION_ENVIRONMENT,
 } from '@launchway/contracts';
 import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
@@ -277,12 +278,14 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
         const now = new Date();
         let superseded: DeploymentRow[] = [];
         if (target === 'running') {
+          // Production and every preview are separate environments of the app.
           superseded = await tx
             .update(deployments)
             .set({ status: 'superseded', finishedAt: now })
             .where(
               and(
                 eq(deployments.appId, row.appId),
+                eq(deployments.environmentName, row.environmentName),
                 eq(deployments.status, 'running'),
                 ne(deployments.id, row.id),
               ),
@@ -323,12 +326,14 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
       logger.info({ deploymentId: row.id, status: target }, 'deployment finished');
       for (const previous of changed.superseded) announceStatus(deps, previous, false);
       announceStatus(deps, changed.updated, true);
-      deps.events.publish({
-        topic: 'apps',
-        action: 'updated',
-        resourceId: row.appId,
-        data: { activeDeploymentId: target === 'running' ? row.id : null },
-      });
+      if (row.previewId === null) {
+        deps.events.publish({
+          topic: 'apps',
+          action: 'updated',
+          resourceId: row.appId,
+          data: { activeDeploymentId: target === 'running' ? row.id : null },
+        });
+      }
       await dispatcher.dispatchApp(row.appId);
     },
 
@@ -339,6 +344,7 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
         .where(
           and(
             eq(deployments.appId, payload.appId),
+            eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
             eq(deployments.nodeId, nodeId),
             eq(deployments.status, 'running'),
           ),

@@ -26,6 +26,22 @@ export interface GitProvider {
   resolveRef(owner: string, repo: string, ref: string): Promise<ResolvedRef>;
   /** HTTPS clone URL plus the `Authorization` header value for `git -c http.extraHeader`. */
   cloneCredentials(owner: string, repo: string): Promise<CloneCredentials>;
+  /** One pull request with its head; `not-found` when the repository has no such number. */
+  getPullRequest(owner: string, repo: string, number: number): Promise<PullRequestInfo>;
+}
+
+/** What previews need to know about a pull request. */
+export interface PullRequestInfo {
+  readonly number: number;
+  readonly title: string;
+  readonly state: 'open' | 'closed';
+  readonly merged: boolean;
+  /** Branch name of the head (`head.ref`). */
+  readonly headRef: string;
+  readonly headSha: string;
+  /** `owner/repo` of the head; null when the fork was deleted. */
+  readonly headRepoFullName: string | null;
+  readonly baseRepoFullName: string;
 }
 
 export interface ResolvedRef {
@@ -156,6 +172,19 @@ const RawRelease = z.object({
   html_url: z.string(),
   body: z.string().nullable().optional(),
   target_commitish: z.string(),
+});
+
+const RawPullRequest = z.object({
+  number: z.number().int().positive(),
+  title: z.string(),
+  state: z.enum(['open', 'closed']),
+  merged: z.boolean().nullish(),
+  head: z.object({
+    ref: z.string(),
+    sha: z.string(),
+    repo: z.object({ full_name: z.string() }).nullable(),
+  }),
+  base: z.object({ repo: z.object({ full_name: z.string() }) }),
 });
 
 const iso = (value: string | null | undefined) => (value ? new Date(value).toISOString() : null);
@@ -340,6 +369,25 @@ function createGitHubProvider(
         cloneUrl: `https://github.com/${owner}/${repo}.git`,
         authorization: basicAuthorization(await cloneToken(owner, repo)),
       })),
+
+    getPullRequest: (owner, repo, number) =>
+      call(async (): Promise<PullRequestInfo> => {
+        const res = await client(await token()).request(
+          'GET /repos/{owner}/{repo}/pulls/{pull_number}',
+          { owner, repo, pull_number: number, ...requestOptions() },
+        );
+        const pr = RawPullRequest.parse(res.data);
+        return {
+          number: pr.number,
+          title: pr.title,
+          state: pr.state,
+          merged: pr.merged ?? false,
+          headRef: pr.head.ref,
+          headSha: pr.head.sha,
+          headRepoFullName: pr.head.repo?.full_name ?? null,
+          baseRepoFullName: pr.base.repo.full_name,
+        };
+      }),
   };
 }
 

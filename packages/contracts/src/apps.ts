@@ -21,14 +21,25 @@ export const LAUNCHWAY_LABELS = {
   service: 'launchway.service',
 } as const;
 
-/** Compose project name of an app. */
-export function composeProjectName(slug: string): string {
-  return `launchway-${slug}`;
+/**
+ * Slug a preview of an app runs under (`<slug>-pr-<number>`). The agent derives the Compose project
+ * name and the network aliases from the slug it receives, so a preview is an ordinary project.
+ */
+export function previewSlug(slug: string, prNumber: number): string {
+  return `${slug}-pr-${prNumber}`;
 }
 
-/** Network alias of a routed service on the proxy network (`<app-slug>-<service>`). */
-export function serviceAlias(slug: string, service: string): string {
-  const alias = `${slug}-${service}`;
+/** Compose project name of an app (`launchway-<slug>`), or of one of its previews. */
+export function composeProjectName(slug: string, preview?: number): string {
+  return `launchway-${preview === undefined ? slug : previewSlug(slug, preview)}`;
+}
+
+/**
+ * Network alias of a routed service on the proxy network (`<app-slug>-<service>`; for a preview
+ * `<app-slug>-pr-<number>-<service>`).
+ */
+export function serviceAlias(slug: string, service: string, preview?: number): string {
+  const alias = `${preview === undefined ? slug : previewSlug(slug, preview)}-${service}`;
   if (alias.length > 63) throw new RangeError(`Service alias "${alias}" exceeds 63 characters`);
   return alias;
 }
@@ -123,6 +134,141 @@ export const AutoDeployBranch = GitRef.openapi({
     'Branch whose pushes create an automatic deployment of the pushed commit (GitHub App connections; the app must subscribe to push events)',
   example: 'main',
 });
+// --- Environment variables ---------------------------------------------------------------------
+
+export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** Prefix of the variables Launchway sets on every deployment; user keys may not use it. */
+export const PLATFORM_ENV_PREFIX = 'LAUNCHWAY_';
+
+/** Variables Launchway adds to the environment of every deployment (spec section 4). */
+export const PLATFORM_ENV_KEYS = [
+  'LAUNCHWAY_APP',
+  'LAUNCHWAY_APP_ID',
+  'LAUNCHWAY_DEPLOYMENT_ID',
+  'LAUNCHWAY_REF',
+  'LAUNCHWAY_COMMIT_SHA',
+  'LAUNCHWAY_COMMIT_SHA_SHORT',
+  'LAUNCHWAY_NODE',
+  'LAUNCHWAY_ENVIRONMENT',
+  'LAUNCHWAY_PREVIEW_NUMBER',
+  'LAUNCHWAY_PUBLIC_URL',
+] as const;
+export type PlatformEnvKey = (typeof PLATFORM_ENV_KEYS)[number];
+
+/** Syntax of an environment variable name, platform variables included. */
+export const EnvKeyName = z
+  .string()
+  .min(1)
+  .max(255)
+  .regex(ENV_KEY_PATTERN, 'Must match [A-Za-z_][A-Za-z0-9_]*');
+
+/** Name of a user-defined variable: `LAUNCHWAY_*` is reserved for the platform variables. */
+export const EnvKey = EnvKeyName.refine(
+  (key) => !key.startsWith(PLATFORM_ENV_PREFIX),
+  `Keys starting with ${PLATFORM_ENV_PREFIX} are reserved for the variables Launchway sets (${PLATFORM_ENV_KEYS.join(', ')})`,
+).openapi({ example: 'DATABASE_URL' });
+
+export const EnvValue = z
+  .string()
+  .max(65_536)
+  .regex(/^[^\0]*$/, 'Must not contain NUL characters');
+
+// --- Preview settings (spec section 4, previews) ----------------------------------------------
+
+/** Placeholders of a preview host template. */
+export const PREVIEW_HOST_PLACEHOLDERS = ['slug', 'number', 'base'] as const;
+export const DEFAULT_PREVIEW_HOST_TEMPLATE = '{slug}-pr-{number}.{base}';
+
+/** Placeholders an environment override of a preview may use (`{{name}}`). */
+export const PREVIEW_ENV_PLACEHOLDERS = [
+  'previewUrl',
+  'previewHost',
+  'prNumber',
+  'branch',
+  'sha',
+] as const;
+export type PreviewEnvPlaceholder = (typeof PREVIEW_ENV_PLACEHOLDERS)[number];
+
+export const PreviewHostTemplate = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1)
+  .max(200)
+  .regex(
+    /^(?:[a-z0-9-]|\{(?:slug|number|base)\})+(?:\.(?:[a-z0-9-]|\{(?:slug|number|base)\})+)*$/,
+    'Use lower-case letters, digits, dashes, dots and the placeholders {slug}, {number} and {base}',
+  )
+  .refine((value) => value.includes('{number}'), 'Must contain {number}')
+  .refine((value) => value.endsWith('.{base}'), 'Must end with .{base}')
+  .openapi({ example: DEFAULT_PREVIEW_HOST_TEMPLATE });
+
+const ENV_PLACEHOLDER = /\{\{\s*([A-Za-z]+)\s*\}\}/g;
+
+/** Names of the `{{placeholders}}` in an override value that previews do not know. */
+export function unknownEnvPlaceholders(value: string): string[] {
+  const known: readonly string[] = PREVIEW_ENV_PLACEHOLDERS;
+  return [...value.matchAll(ENV_PLACEHOLDER)]
+    .map((match) => match[1] ?? '')
+    .filter((name) => !known.includes(name));
+}
+
+/** Environment overrides of previews: app variables are replaced or added, placeholders filled. */
+export const PreviewEnvOverrides = z
+  .record(EnvKey, EnvValue)
+  .refine((value) => Object.keys(value).length <= 100, 'At most 100 overrides')
+  .superRefine((value, ctx) => {
+    for (const [key, text] of Object.entries(value)) {
+      const unknown = unknownEnvPlaceholders(text);
+      if (unknown.length > 0) {
+        ctx.addIssue({
+          code: 'custom',
+          path: [key],
+          message: `Unknown placeholder ${unknown.map((name) => `{{${name}}}`).join(', ')}; use ${PREVIEW_ENV_PLACEHOLDERS.map((name) => `{{${name}}}`).join(', ')}`,
+        });
+      }
+    }
+  })
+  .openapi({
+    description:
+      'Variables replaced or added in previews. Values may use {{previewUrl}}, {{previewHost}}, {{prNumber}}, {{branch}} and {{sha}}. Stored like plain variables: do not put secrets here.',
+    example: { BASE_URL: '{{previewUrl}}', DATABASE_NAME: 'trail_pr_{{prNumber}}' },
+  });
+
+/** Per-app preview settings. */
+export const AppPreviewSettings = z
+  .object({
+    enabled: z.boolean().openapi({
+      description: 'Pull requests from branches of the repository get a preview environment',
+    }),
+    hostTemplate: PreviewHostTemplate,
+    envOverrides: PreviewEnvOverrides,
+    composeFiles: ComposeFiles.nullable().openapi({
+      description:
+        "Compose files of previews (e.g. without the production volumes); null uses the app's own source",
+    }),
+  })
+  .openapi('AppPreviewSettings');
+export type AppPreviewSettings = z.infer<typeof AppPreviewSettings>;
+
+export const DEFAULT_APP_PREVIEW_SETTINGS: AppPreviewSettings = {
+  enabled: false,
+  hostTemplate: DEFAULT_PREVIEW_HOST_TEMPLATE,
+  envOverrides: {},
+  composeFiles: null,
+};
+
+/** Partial update of the preview settings; omitted fields keep their value. */
+export const UpdateAppPreviewSettings = z
+  .strictObject({
+    enabled: z.boolean().optional(),
+    hostTemplate: PreviewHostTemplate.optional(),
+    envOverrides: PreviewEnvOverrides.optional(),
+    composeFiles: ComposeFiles.nullable().optional(),
+  })
+  .openapi('UpdateAppPreviewSettings');
+export type UpdateAppPreviewSettings = z.infer<typeof UpdateAppPreviewSettings>;
 
 export const App = z
   .object({
@@ -148,7 +294,10 @@ export const App = z
     githubDeployments: GitHubDeploymentsFlag,
     trustedMounts: TrustedMounts,
     proxyServices: ProxyServices,
-    activeDeploymentId: DeploymentId.nullable(),
+    previews: AppPreviewSettings,
+    activeDeploymentId: DeploymentId.nullable().openapi({
+      description: 'The running production deployment',
+    }),
     createdAt: Timestamp,
     updatedAt: Timestamp,
   })
@@ -204,6 +353,7 @@ export const UpdateAppInput = z
     proxyServices: ProxyServices.optional().openapi({
       description: 'Requires the admin role; takes effect with the next deployment',
     }),
+    previews: UpdateAppPreviewSettings.optional(),
   })
   .superRefine((value, ctx) => {
     checkSourceXor(value, ctx);
@@ -214,42 +364,7 @@ export const UpdateAppInput = z
   .openapi('UpdateAppInput');
 export type UpdateAppInput = z.infer<typeof UpdateAppInput>;
 
-// --- Environment variables ---------------------------------------------------------------------
-
-export const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/** Prefix of the variables Launchway sets on every deployment; user keys may not use it. */
-export const PLATFORM_ENV_PREFIX = 'LAUNCHWAY_';
-
-/** Variables Launchway adds to the environment of every deployment (spec section 4). */
-export const PLATFORM_ENV_KEYS = [
-  'LAUNCHWAY_APP',
-  'LAUNCHWAY_APP_ID',
-  'LAUNCHWAY_DEPLOYMENT_ID',
-  'LAUNCHWAY_REF',
-  'LAUNCHWAY_COMMIT_SHA',
-  'LAUNCHWAY_COMMIT_SHA_SHORT',
-  'LAUNCHWAY_NODE',
-] as const;
-export type PlatformEnvKey = (typeof PLATFORM_ENV_KEYS)[number];
-
-/** Syntax of an environment variable name, platform variables included. */
-export const EnvKeyName = z
-  .string()
-  .min(1)
-  .max(255)
-  .regex(ENV_KEY_PATTERN, 'Must match [A-Za-z_][A-Za-z0-9_]*');
-
-/** Name of a user-defined variable: `LAUNCHWAY_*` is reserved for the platform variables. */
-export const EnvKey = EnvKeyName.refine(
-  (key) => !key.startsWith(PLATFORM_ENV_PREFIX),
-  `Keys starting with ${PLATFORM_ENV_PREFIX} are reserved for the variables Launchway sets (${PLATFORM_ENV_KEYS.join(', ')})`,
-).openapi({ example: 'DATABASE_URL' });
-
-export const EnvValue = z
-  .string()
-  .max(65_536)
-  .regex(/^[^\0]*$/, 'Must not contain NUL characters');
+// --- Environment variables (continued) -------------------------------------------------------
 
 /** Values are encrypted at rest; `secret` ones are never returned (value is null). */
 export const EnvVar = z

@@ -179,6 +179,53 @@ describe('renderEdge (golden files)', () => {
     );
   });
 
+  it('serves preview routes by the preview alias, or its own published port off the edge', () => {
+    sequence = 0;
+    const previewServices: ServiceStatus[] = [
+      {
+        ...(shopServices[0] as ServiceStatus),
+        publishedPorts: [
+          { containerPort: 3000, hostPort: 18090, protocol: 'tcp', hostIp: '192.168.1.30' },
+        ],
+      },
+    ];
+    const { caddyfile } = renderEdge({
+      settings: {
+        publicUrl: null,
+        acmeEmail: null,
+        forwardAuthUrl: null,
+        edgeNodeId: EDGE,
+      },
+      routes: [
+        route('trail-pr-4.preview.example.com', {
+          target: { kind: 'app', appId: TRAIL, service: 'web', port: 8080 },
+          preview: { number: 4, runningServices: null },
+        }),
+        route('shop-pr-9.preview.example.com', {
+          target: { kind: 'app', appId: SHOP, service: 'web', port: 3000 },
+          preview: { number: 9, runningServices: previewServices },
+        }),
+        route('shop-pr-10.preview.example.com', {
+          target: { kind: 'app', appId: SHOP, service: 'web', port: 3000 },
+          preview: { number: 10, runningServices: null },
+        }),
+      ],
+      apps: [
+        { id: TRAIL, slug: 'trail', nodeId: EDGE, runningServices: null },
+        { id: SHOP, slug: 'shop', nodeId: REMOTE, runningServices: shopServices },
+      ],
+      nodes: [
+        { id: EDGE, name: 'local', lanIp: '192.168.1.10' },
+        { id: REMOTE, name: 'nuc', lanIp: '192.168.1.30' },
+      ],
+    });
+    expect(caddyfile).toContain('reverse_proxy trail-pr-4-web:8080');
+    // Off the edge: the preview's own published port, never the production one (18080).
+    expect(caddyfile).toContain('reverse_proxy 192.168.1.30:18090');
+    expect(caddyfile).not.toContain('18080');
+    expect(caddyfile).toContain('preview #10 of app shop has no running deployment');
+  });
+
   it('neutralizes Caddy placeholders and whitespace in user-supplied URLs', () => {
     sequence = 0;
     const { caddyfile } = renderEdge({

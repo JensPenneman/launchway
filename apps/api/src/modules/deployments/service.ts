@@ -9,10 +9,13 @@ import {
   type DeploymentTrigger,
   IN_PROGRESS_DEPLOYMENT_STATUSES,
   isInProgressStatus,
+  PRODUCTION_ENVIRONMENT,
+  type PreviewId,
+  previewEnvironmentName,
   type ServiceStatus,
   SSE_EVENTS,
 } from '@launchway/contracts';
-import { and, asc, desc, eq, gt, inArray, lt, or, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
@@ -53,6 +56,16 @@ export interface DeploymentsService {
     commitSha: string,
     actor: RequestActor,
   ): Promise<Deployment | null>;
+  /**
+   * Deploys the head commit of a preview (trigger `preview`). Older deployments of the preview
+   * that were not sent to the node yet are cancelled: only the newest push matters.
+   */
+  createForPreview(
+    app: AppRow,
+    preview: PreviewTarget,
+    actor: RequestActor,
+    dispatch?: 'await' | 'background',
+  ): Promise<Deployment>;
   list(appId: AppId, query: DeploymentListQuery): Promise<DeploymentPage>;
   get(id: DeploymentId): Promise<Deployment>;
   cancel(id: DeploymentId, actor: RequestActor): Promise<Deployment>;
@@ -64,8 +77,15 @@ export interface DeploymentsService {
   ): AsyncIterable<SseMessage>;
 }
 
+/** What a deployment of a preview needs from the preview. */
+export interface PreviewTarget {
+  readonly id: PreviewId;
+  readonly prNumber: number;
+  readonly headSha: string;
+}
+
 /**
- * Marks the running deployment of an app `stopped` (after `compose stop`). Runs inside the
+ * Marks the running production deployment of an app `stopped` (after `compose stop`). Runs inside the
  * caller's transaction; returns the stopped row, if any.
  * @public
  */
@@ -77,12 +97,34 @@ export async function markRunningStopped(
   const [row] = await tx
     .update(deployments)
     .set({ status: 'stopped', services, finishedAt: new Date() })
-    .where(and(eq(deployments.appId, appId), eq(deployments.status, 'running')))
+    .where(
+      and(
+        eq(deployments.appId, appId),
+        eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+        eq(deployments.status, 'running'),
+      ),
+    )
     .returning();
   return row;
 }
 
-/** The running deployment of an app (read-only helper for the apps module). */
+/**
+ * Marks the running deployment of a preview `stopped` (after its project was removed). Runs inside
+ * the caller's transaction; returns the stopped row, if any.
+ */
+export async function markPreviewStopped(
+  tx: Executor,
+  previewId: PreviewId,
+): Promise<DeploymentRow | undefined> {
+  const [row] = await tx
+    .update(deployments)
+    .set({ status: 'stopped', finishedAt: new Date() })
+    .where(and(eq(deployments.previewId, previewId), eq(deployments.status, 'running')))
+    .returning();
+  return row;
+}
+
+/** The running production deployment of an app (read-only helper for the apps module). */
 export async function findRunningDeployment(
   db: Executor,
   appId: AppId,
@@ -90,7 +132,13 @@ export async function findRunningDeployment(
   const [row] = await db
     .select()
     .from(deployments)
-    .where(and(eq(deployments.appId, appId), eq(deployments.status, 'running')));
+    .where(
+      and(
+        eq(deployments.appId, appId),
+        eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+        eq(deployments.status, 'running'),
+      ),
+    );
   return row;
 }
 
@@ -110,6 +158,18 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
     return row;
   }
 
+  async function resolveCommit(app: AppRow, ref: string): Promise<string> {
+    const connection = await getConnection(deps.db, app.connectionId);
+    try {
+      return (await providerFor(deps, connection).resolveRef(app.repoOwner, app.repoName, ref)).sha;
+    } catch (error) {
+      if (error instanceof GitProviderError && error.kind === 'not-found') {
+        throw invalidField('body.ref', `Ref not found in ${app.repoOwner}/${app.repoName}`);
+      }
+      throw toGitProblem(error);
+    }
+  }
+
   interface InsertOptions {
     /** `background`: do not wait for the agent's acknowledgement (webhook deliveries). */
     dispatch?: 'await' | 'background';
@@ -119,7 +179,9 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
      * Skip the insert when a deployment of the app matches (checked under the app row lock, so
      * concurrent deliveries of the same release or push create one deployment).
      */
-    unlessExists?: SQL;
+    unlessExists?: SQL | undefined;
+    /** Preview whose head commit is deployed; older unsent deployments of it are cancelled. */
+    preview?: PreviewTarget;
   }
 
   function insert(
@@ -144,26 +206,13 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
     options: InsertOptions = {},
   ): Promise<Deployment | null> {
     const dispatch = options.dispatch ?? 'await';
-    let commitSha: string;
-    if (options.commitSha) {
-      commitSha = options.commitSha;
-    } else {
-      const connection = await getConnection(deps.db, app.connectionId);
-      try {
-        ({ sha: commitSha } = await providerFor(deps, connection).resolveRef(
-          app.repoOwner,
-          app.repoName,
-          ref,
-        ));
-      } catch (error) {
-        if (error instanceof GitProviderError && error.kind === 'not-found') {
-          throw invalidField('body.ref', `Ref not found in ${app.repoOwner}/${app.repoName}`);
-        }
-        throw toGitProblem(error);
-      }
-    }
+    const { preview } = options;
+    // A preview deploys the exact head commit GitHub reported; push events carry their commit.
+    const commitSha = preview
+      ? preview.headSha
+      : (options.commitSha ?? (await resolveCommit(app, ref)));
 
-    const row = await deps.db.transaction(async (tx) => {
+    const result = await deps.db.transaction(async (tx) => {
       if (options.unlessExists) {
         await tx.select({ id: apps.id }).from(apps).where(eq(apps.id, app.id)).for('update');
         const [existing] = await tx
@@ -173,6 +222,24 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
           .limit(1);
         if (existing) return null;
       }
+      // Queued deployments of the same preview that no node has yet are outdated by this push.
+      const outdated = preview
+        ? await tx
+            .update(deployments)
+            .set({
+              status: 'cancelled',
+              statusMessage: 'Superseded by a newer commit',
+              finishedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(deployments.previewId, preview.id),
+                eq(deployments.status, 'queued'),
+                isNull(deployments.startedAt),
+              ),
+            )
+            .returning()
+        : [];
       const [created] = await tx
         .insert(deployments)
         .values({
@@ -181,26 +248,56 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
           ref,
           commitSha,
           trigger,
+          previewId: preview?.id ?? null,
+          environmentName: preview
+            ? previewEnvironmentName(preview.prNumber)
+            : PRODUCTION_ENVIRONMENT,
           triggeredById: actor.principal?.user.id ?? null,
           createdAt: new Date(),
         })
         .returning();
       if (!created) throw new Error('insert returned no row');
+      for (const cancelled of outdated) {
+        await recordAudit(tx, actor, {
+          action: 'deployment.cancel',
+          target: { type: 'deployment', id: cancelled.id },
+          summary: {
+            appId: app.id,
+            supersededBy: created.id,
+            status: { from: 'queued', to: 'cancelled' },
+          },
+        });
+      }
       await recordAudit(tx, actor, {
         action: 'deployment.create',
         target: { type: 'deployment', id: created.id },
-        summary: { appId: app.id, ref, commitSha, trigger },
+        summary: {
+          appId: app.id,
+          ref,
+          commitSha,
+          trigger,
+          ...(preview ? { previewId: preview.id } : {}),
+        },
       });
-      return created;
+      return { row: created, superseded: outdated };
     });
-    if (!row) return null;
+    if (!result) return null;
+    const { row, superseded } = result;
+    for (const cancelled of superseded) announceStatus(deps, cancelled, true);
     deps.events.publish({
       topic: 'deployments',
       action: 'created',
       resourceId: row.id,
-      data: { appId: app.id, status: row.status },
+      data: {
+        appId: app.id,
+        status: row.status,
+        ...(row.previewId ? { previewId: row.previewId } : {}),
+      },
     });
-    deps.logger.info({ deploymentId: row.id, appId: app.id, trigger }, 'deployment queued');
+    deps.logger.info(
+      { deploymentId: row.id, appId: app.id, trigger, previewId: row.previewId ?? undefined },
+      'deployment queued',
+    );
     if (dispatch === 'background') {
       void dispatcher.dispatchApp(app.id);
       return toDeployment(row);
@@ -238,12 +335,21 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       const [existing] = await deps.db
         .select({ id: deployments.id })
         .from(deployments)
-        .where(and(eq(deployments.appId, app.id), eq(deployments.ref, tag)))
+        .where(
+          and(
+            eq(deployments.appId, app.id),
+            eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+            eq(deployments.ref, tag),
+          ),
+        )
         .limit(1);
       if (existing) return null;
       return insert(app, tag, 'auto', actor, {
         dispatch: 'background',
-        unlessExists: eq(deployments.ref, tag),
+        unlessExists: and(
+          eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+          eq(deployments.ref, tag),
+        ),
       });
     },
 
@@ -251,14 +357,27 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       return insert(app, branch, 'auto', actor, {
         dispatch: 'background',
         commitSha,
-        unlessExists: eq(deployments.commitSha, commitSha),
+        unlessExists: and(
+          eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+          eq(deployments.commitSha, commitSha),
+        ),
       });
+    },
+
+    async createForPreview(app, preview, actor, dispatch = 'background') {
+      return insert(app, preview.headSha, 'preview', actor, { dispatch, preview });
     },
 
     async list(appId, query) {
       await loadApp(appId);
       const conditions: SQL[] = [eq(deployments.appId, appId)];
       if (query.status) conditions.push(eq(deployments.status, query.status));
+      if (query.environment === 'production') {
+        conditions.push(eq(deployments.environmentName, PRODUCTION_ENVIRONMENT));
+      } else if (query.environment === 'preview') {
+        conditions.push(isNotNull(deployments.previewId));
+      }
+      if (query.previewId) conditions.push(eq(deployments.previewId, query.previewId));
       if (query.cursor) {
         const position = decodeCursor(query.cursor, ListCursor);
         const t = new Date(position.t);

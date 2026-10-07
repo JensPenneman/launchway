@@ -6,6 +6,8 @@ import {
   type DeploymentId,
   LOG_STREAMS,
   type NodeId,
+  PRODUCTION_ENVIRONMENT,
+  type PreviewId,
   type ServiceStatus,
   type UserId,
 } from '@launchway/contracts';
@@ -23,6 +25,7 @@ import {
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { apps } from '../apps/schema.js';
 import { nodes } from '../nodes/schema.js';
+import { previews } from '../previews/schema.js';
 import { users } from '../users/schema.js';
 
 export const deploymentStatus = pgEnum('deployment_status', DEPLOYMENT_STATUSES);
@@ -45,6 +48,12 @@ export const deployments = pgTable(
     ref: text('ref').notNull(),
     commitSha: text('commit_sha').notNull(),
     trigger: deploymentTrigger('trigger').notNull().default('manual'),
+    /** Set for deployments of a pull request preview; purged together with the preview. */
+    previewId: text('preview_id')
+      .$type<PreviewId>()
+      .references(() => previews.id, { onDelete: 'cascade' }),
+    /** `production` or `preview/pr-<number>`; at most one deployment per environment runs. */
+    environmentName: text('environment_name').notNull().default(PRODUCTION_ENVIRONMENT),
     status: deploymentStatus('status').notNull().default('queued'),
     statusMessage: text('status_message'),
     triggeredById: text('triggered_by_id')
@@ -68,7 +77,10 @@ export const deployments = pgTable(
     index('deployments_app_id_created_at_idx').on(t.appId, t.createdAt.desc()),
     index('deployments_status_idx').on(t.status),
     index('deployments_node_id_idx').on(t.nodeId),
-    uniqueIndex('deployments_one_running_per_app').on(t.appId).where(sql`${t.status} = 'running'`),
+    index('deployments_preview_id_idx').on(t.previewId),
+    uniqueIndex('deployments_one_running_per_environment')
+      .on(t.appId, t.environmentName)
+      .where(sql`${t.status} = 'running'`),
   ],
 );
 

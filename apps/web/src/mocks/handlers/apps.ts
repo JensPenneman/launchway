@@ -2,6 +2,7 @@ import {
   type App,
   CreateAppInput,
   CreateDeploymentInput,
+  DEFAULT_APP_PREVIEW_SETTINGS,
   type Deployment,
   type DeploymentStatus,
   type EnvVar,
@@ -182,6 +183,7 @@ export const appHandlers = [
       githubDeployments: data.githubDeployments,
       trustedMounts: data.trustedMounts,
       proxyServices: [],
+      previews: { ...DEFAULT_APP_PREVIEW_SETTINGS },
       activeDeploymentId: null,
       createdAt: now(),
       updatedAt: now(),
@@ -209,7 +211,14 @@ export const appHandlers = [
       const trustDenied = guardTrustedMounts();
       if (trustDenied) return trustDenied;
     }
-    const { composeFiles, dockerfile, context, proxyServices, ...rest } = data;
+    const { composeFiles, dockerfile, context, proxyServices, previews, ...rest } = data;
+    if (previews) {
+      const next = { ...app.previews };
+      for (const [key, value] of Object.entries(previews)) {
+        if (value !== undefined) Object.assign(next, { [key]: value });
+      }
+      app.previews = next;
+    }
     if (proxyServices && proxyServices.join(',') !== app.proxyServices.join(',')) {
       const adminOnly = guard('admin');
       if (adminOnly) return adminOnly;
@@ -358,6 +367,8 @@ export const appHandlers = [
       ref: data.ref,
       commitSha: randomSha(),
       trigger: 'manual',
+      previewId: null,
+      environmentName: 'production',
       status: 'queued',
       statusMessage: null,
       triggeredBy: user?.id ?? null,

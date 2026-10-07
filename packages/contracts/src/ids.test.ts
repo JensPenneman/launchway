@@ -15,6 +15,7 @@ describe('type ids', () => {
         'node',
         'pk',
         'prov',
+        'prv',
         'rt',
         'sess',
         'tok',

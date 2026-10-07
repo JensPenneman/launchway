@@ -283,12 +283,71 @@ request_header -X-API-KEY
 lists `warnings` when Caddy could not be reached and only the structural
 check ran.
 
+## Pull request previews
+
+Every pull request from a branch of an app's repository can run as its own
+copy of the app at its own host name, for example
+`trail-pr-42.preview.example.com`. Each push redeploys it; closing or merging
+the pull request removes it. Setting it up once:
+
+1. **Base domain.** Pick a name below a zone of a DNS provider account
+   Launchway manages (not a `manual` one), for example `preview.example.com`,
+   and enter it under Settings → Platform → Previews (or `PATCH
+   /api/v1/settings` with `previewBaseDomain`). The save fails when no managed
+   zone contains it. Nothing has to exist in DNS yet: every preview gets its
+   own `CNAME` to the anchor host name. The limits (10 open previews per app,
+   20 in total) are on the same card.
+2. **GitHub App permission.** Previews follow the `pull_request` webhook, which
+   needs the `pull_requests: read` permission and the *Pull request* event. A
+   GitHub App created before previews existed lacks both: on GitHub, open the
+   app's settings → Permissions & events, set *Pull requests* to *Read-only*,
+   tick *Pull request* under events, save, and accept the new permission on
+   the installation (GitHub asks the account owner). Personal access token
+   connections get no webhooks; open previews through the app's Previews tab
+   or `POST /api/v1/apps/{id}/previews` with `{ "prNumber": 42 }`.
+3. **App.** In the app's settings → Previews, turn previews on. The app needs a
+   route: a preview serves the service and port of the app's first route, with
+   its protection, compression and HSTS options. Optionally:
+   - change the **host name template** (`{slug}`, `{number}`, `{base}`; it
+     must contain `{number}` and end with `.{base}`);
+   - add **environment overrides**, e.g. `BASE_URL={{previewUrl}}` or
+     `DATABASE_NAME=trail_pr_{{prNumber}}` (placeholders `{{previewUrl}}`,
+     `{{previewHost}}`, `{{prNumber}}`, `{{branch}}`, `{{sha}}`). Previews
+     otherwise get all app variables, secrets included, so point anything that
+     must not touch production data elsewhere here. Overrides are visible to
+     every member; keep secrets in the app's environment;
+   - name **Compose files for previews**. Previews never get trusted mounts,
+     so an app whose production Compose file bind-mounts host paths or reuses
+     an external volume (a database volume, a backup folder) needs a file
+     without them, e.g. `compose.preview.yaml` with project-owned named
+     volumes. Published host `ports:` collide with production; leave them out
+     of the preview file as well.
+
+Only pull requests from branches of the same repository get previews; pull
+requests from forks are ignored, since their code would run with the app's
+environment. A preview runs as Compose project `launchway-<slug>-pr-<n>`, so
+`docker compose -p launchway-trail-pr-42 ps` on the node shows it. Its named
+volumes are removed together with the preview. Closed previews stay listed
+for seven days.
+
+**Let's Encrypt limits.** Each preview host name gets its own certificate
+through HTTP-01, and Let's Encrypt issues at most 50 certificates per
+registered domain (for example `example.com`, including production names) per
+week, and at most 5 identical ones. Reopening the same preview often or
+running many short-lived previews counts against that; the default limits stay
+well below it. The preview domain skips the DNS preflight (`force`), so a
+broken anchor record shows up as failed ACME attempts in the Caddy log
+(`docker compose logs caddy` in the installation directory).
+
 ## Platform variables
 
 Every deployment writes these variables into the app's environment, next to
 the variables you set: `LAUNCHWAY_APP` (slug), `LAUNCHWAY_APP_ID`,
 `LAUNCHWAY_DEPLOYMENT_ID`, `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA`,
-`LAUNCHWAY_COMMIT_SHA_SHORT` and `LAUNCHWAY_NODE` (node name). The
+`LAUNCHWAY_COMMIT_SHA_SHORT`, `LAUNCHWAY_NODE` (node name),
+`LAUNCHWAY_ENVIRONMENT` (`production` or `preview`), `LAUNCHWAY_PREVIEW_NUMBER`
+(the pull request number, empty in production) and `LAUNCHWAY_PUBLIC_URL`
+(`https://` plus the host name of the app's first route, or of the preview). The
 `LAUNCHWAY_` prefix is reserved: the API refuses app variables that start with
 it. They reach the containers the same way as your own variables: a
 single-`Dockerfile` app gets them in its environment, and Compose files can

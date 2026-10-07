@@ -1,6 +1,11 @@
-import type { ForwardAuthTarget, NodeId } from '@launchway/contracts';
+import {
+  DEFAULT_PREVIEW_MAX_PER_APP,
+  DEFAULT_PREVIEW_MAX_TOTAL,
+  type ForwardAuthTarget,
+  type NodeId,
+} from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { boolean, check, inet, jsonb, pgTable, smallint, text } from 'drizzle-orm/pg-core';
+import { boolean, check, inet, integer, jsonb, pgTable, smallint, text } from 'drizzle-orm/pg-core';
 import { timestamps, tz } from '../../db/columns.js';
 import { nodes } from '../nodes/schema.js';
 
@@ -22,6 +27,10 @@ export const settings = pgTable(
     edgeNodeId: text('edge_node_id')
       .$type<NodeId>()
       .references(() => nodes.id, { onDelete: 'set null' }),
+    /** Base domain of preview host names; validated against the managed zones on save. */
+    previewBaseDomain: text('preview_base_domain'),
+    previewMaxPerApp: integer('preview_max_per_app').notNull().default(DEFAULT_PREVIEW_MAX_PER_APP),
+    previewMaxTotal: integer('preview_max_total').notNull().default(DEFAULT_PREVIEW_MAX_TOTAL),
     ...timestamps(),
   },
   (t) => [

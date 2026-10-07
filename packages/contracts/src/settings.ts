@@ -36,6 +36,9 @@ export const ForwardAuthTarget = z
   });
 export type ForwardAuthTarget = z.infer<typeof ForwardAuthTarget>;
 
+/** Upper bound of open previews (per app or in total); 0 turns previews off. */
+export const PreviewLimit = z.number().int().min(0).max(100);
+
 /** Platform settings (a single record). */
 export const Settings = z
   .object({
@@ -63,6 +66,13 @@ export const Settings = z
         'Forward-auth gate run as a Launchway app service. At most one of forwardAuthUrl and forwardAuthTarget is set.',
     }),
     edgeNodeId: NodeId.nullable().openapi({ description: 'Node that runs Caddy' }),
+    previewBaseDomain: Hostname.nullable().openapi({
+      description:
+        'Domain below which previews get their host names ({base} of the host template); must lie in a managed DNS zone',
+      example: 'preview.example.com',
+    }),
+    previewMaxPerApp: PreviewLimit.openapi({ description: 'Open previews allowed per app' }),
+    previewMaxTotal: PreviewLimit.openapi({ description: 'Open previews allowed in total' }),
     updatedAt: Timestamp,
   })
   .openapi('Settings');
@@ -78,6 +88,9 @@ export const UpdateSettingsInput = z
     forwardAuthUrl: HttpUrl.nullable().optional(),
     forwardAuthTarget: ForwardAuthTarget.nullable().optional(),
     edgeNodeId: NodeId.nullable().optional(),
+    previewBaseDomain: Hostname.nullable().optional(),
+    previewMaxPerApp: PreviewLimit.optional(),
+    previewMaxTotal: PreviewLimit.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one setting')
   .refine((v) => !(v.forwardAuthUrl && v.forwardAuthTarget), {

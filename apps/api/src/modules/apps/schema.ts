@@ -1,13 +1,14 @@
-import type { AppId, GitHubConnectionId, NodeId } from '@launchway/contracts';
+import type { AppId, AppPreviewSettings, GitHubConnectionId, NodeId } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { boolean, check, index, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import { boolean, check, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps } from '../../db/columns.js';
 import { githubConnections } from '../github/schema.js';
 import { nodes } from '../nodes/schema.js';
 
 /**
- * Deployable units. `App.activeDeploymentId` (API) is derived from `deployments`: the one row
- * with status `running` (enforced by deployments_one_running_per_app), so it cannot go stale.
+ * Deployable units. `App.activeDeploymentId` (API) is derived from `deployments`: the one
+ * production row with status `running` (enforced by deployments_one_running_per_environment), so
+ * it cannot go stale.
  */
 export const apps = pgTable(
   'apps',
@@ -42,6 +43,13 @@ export const apps = pgTable(
     trustedMounts: boolean('trusted_mounts').notNull().default(false),
     /** Services attached to the proxy network without a route (sorted, unique). */
     proxyServices: text('proxy_services').array().notNull().default(sql`'{}'::text[]`),
+    /** `AppPreviewSettings` (enabled, host template, env overrides, compose files). */
+    previews: jsonb('previews')
+      .$type<AppPreviewSettings>()
+      .notNull()
+      .default(
+        sql`'{"enabled":false,"hostTemplate":"{slug}-pr-{number}.{base}","envOverrides":{},"composeFiles":null}'::jsonb`,
+      ),
     ...timestamps(),
   },
   (t) => [

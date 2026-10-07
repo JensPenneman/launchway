@@ -8,11 +8,13 @@ import {
   type AppRuntimeStatus,
   AppSlug,
   type CreateAppInput,
+  DEFAULT_APP_PREVIEW_SETTINGS,
   DEFAULT_COMPOSE_FILES,
   type DeleteAppQuery,
   type EnvVar,
   type EnvVarList,
   maskEnvVar,
+  PRODUCTION_ENVIRONMENT,
   roleAtLeast,
   type SetEnvVarsInput,
   SSE_EVENTS,
@@ -39,6 +41,7 @@ import { deployments } from '../deployments/schema.js';
 import { findRunningDeployment, markRunningStopped } from '../deployments/service.js';
 import { githubConnections } from '../github/schema.js';
 import { nodes } from '../nodes/schema.js';
+import { createPreviewsService } from '../previews/service.js';
 import { ALIASES_LOCK, assertAliasesFree } from '../routes/attach.js';
 import { envContext } from './env.js';
 import { apps, envVars } from './schema.js';
@@ -81,6 +84,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     githubDeployments: row.githubDeployments,
     trustedMounts: row.trustedMounts,
     proxyServices: row.proxyServices,
+    previews: { ...DEFAULT_APP_PREVIEW_SETTINGS, ...row.previews },
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -318,7 +322,11 @@ export function createAppsService(deps: Deps): AppsService {
         .from(apps)
         .leftJoin(
           deployments,
-          and(eq(deployments.appId, apps.id), eq(deployments.status, 'running')),
+          and(
+            eq(deployments.appId, apps.id),
+            eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+            eq(deployments.status, 'running'),
+          ),
         )
         .where(conditions.length > 0 ? and(...conditions) : undefined)
         .orderBy(desc(apps.createdAt), desc(apps.id))
@@ -386,6 +394,15 @@ export function createAppsService(deps: Deps): AppsService {
               () => 'body.proxyServices',
             );
             patch.proxyServices = proxyServices;
+          }
+          if (input.previews !== undefined) {
+            // Partial update: omitted preview settings keep their value.
+            const current = { ...DEFAULT_APP_PREVIEW_SETTINGS, ...before.previews };
+            const next = { ...current };
+            for (const [key, value] of Object.entries(input.previews)) {
+              if (value !== undefined) Object.assign(next, { [key]: value });
+            }
+            if (JSON.stringify(next) !== JSON.stringify(current)) patch.previews = next;
           }
           if (patch.nodeId !== undefined && patch.nodeId !== before.nodeId) {
             const [busy] = await tx
@@ -467,6 +484,8 @@ export function createAppsService(deps: Deps): AppsService {
           'The node of this app is offline, so its containers cannot be removed; retry with force=true to delete it anyway',
         );
       }
+      // Previews own DNS records and Compose projects that the row cascade would not reach.
+      await createPreviewsService(deps).removeAllForApp(id, actor);
       await deps.db.transaction(async (tx) => {
         await tx.delete(apps).where(eq(apps.id, id));
         await recordAudit(tx, actor, {

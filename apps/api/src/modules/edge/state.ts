@@ -1,9 +1,11 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { PRODUCTION_ENVIRONMENT } from '@launchway/contracts';
+import { and, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { apps } from '../apps/schema.js';
 import { deployments } from '../deployments/schema.js';
 import { domains } from '../domains/schema.js';
 import { nodes } from '../nodes/schema.js';
+import { previews } from '../previews/schema.js';
 import { routes } from '../routes/schema.js';
 import { toRouteTarget } from '../routes/target.js';
 import { settings } from '../settings/schema.js';
@@ -20,9 +22,11 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
         hostname: domains.hostname,
         status: domains.status,
         force: domains.force,
+        preview: { id: previews.id, number: previews.prNumber },
       })
       .from(routes)
-      .innerJoin(domains, eq(routes.domainId, domains.id)),
+      .innerJoin(domains, eq(routes.domainId, domains.id))
+      .leftJoin(previews, eq(previews.routeId, routes.id)),
     db.select({ id: nodes.id, name: nodes.name, lanIp: nodes.lanIp }).from(nodes),
   ]);
   const settingsRow = settingsRows[0];
@@ -44,7 +48,13 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
       db
         .select({ appId: deployments.appId, services: deployments.services })
         .from(deployments)
-        .where(and(inArray(deployments.appId, appIds), eq(deployments.status, 'running'))),
+        .where(
+          and(
+            inArray(deployments.appId, appIds),
+            eq(deployments.environmentName, PRODUCTION_ENVIRONMENT),
+            eq(deployments.status, 'running'),
+          ),
+        ),
     ]);
     const servicesByApp = new Map(running.map((row) => [row.appId, row.services]));
     edgeApps = appRows.map((app) => ({
@@ -52,6 +62,25 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
       runningServices: servicesByApp.get(app.id) ?? null,
     }));
   }
+
+  // Running deployments of the previews that have a route (their published ports, off the edge).
+  const previewIds = routeRows.flatMap((row) => (row.preview ? [row.preview.id] : []));
+  const previewServices = new Map(
+    previewIds.length === 0
+      ? []
+      : (
+          await db
+            .select({ previewId: deployments.previewId, services: deployments.services })
+            .from(deployments)
+            .where(
+              and(
+                inArray(deployments.previewId, previewIds),
+                isNotNull(deployments.previewId),
+                eq(deployments.status, 'running'),
+              ),
+            )
+        ).map((row) => [row.previewId, row.services]),
+  );
 
   return {
     adminListen: config.caddyAdminListen,
@@ -72,6 +101,12 @@ export async function loadEdgeInput(deps: Pick<Deps, 'db' | 'config'>): Promise<
       compress: row.route.compress,
       hsts: row.route.hsts,
       extraDirectives: row.route.extraDirectives,
+      preview: row.preview
+        ? {
+            number: row.preview.number,
+            runningServices: previewServices.get(row.preview.id) ?? null,
+          }
+        : null,
     })),
     apps: edgeApps,
     nodes: nodeRows,

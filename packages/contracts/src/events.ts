@@ -16,6 +16,8 @@ export const EVENT_TOPICS = [
   'users',
   'invitations',
   'tokens',
+  /** Preview environments of pull requests. */
+  'previews',
   /** The edge configuration was (or failed to be) loaded into Caddy. */
   'edge',
 ] as const;

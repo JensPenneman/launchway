@@ -57,6 +57,10 @@ describe('app', () => {
     const res = await app.request('/api/docs');
     expect(res.status).toBe(200);
     expect(res.headers.get('content-type')).toContain('text/html');
+    // An exact version with SRI, never the floating latest bundle.
+    expect(await res.text()).toMatch(
+      /<script src="https:\/\/cdn\.jsdelivr\.net\/npm\/@scalar\/api-reference@\d+\.\d+\.\d+\/[^"]+" integrity="sha384-[A-Za-z0-9+/=]{64}" crossorigin="anonymous">/,
+    );
   });
 
   it('answers unknown API routes with a problem document', async () => {

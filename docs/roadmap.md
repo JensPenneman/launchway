@@ -108,8 +108,9 @@ features that are deliberately out of scope for v0.1 are listed in
 
 ## Operations and delivery
 
-- The API reference page (Scalar) loads its bundle from a CDN; self-host it if
-  outbound access must be avoided.
+- The API reference page (Scalar) loads an exact version of its bundle from a
+  CDN with an SRI hash; Dependabot does not update that pin. Self-host the
+  bundle (and serve the page with a CSP) if outbound access must be avoided.
 - Recommend a backup schedule and retention, and add scheduled, encrypted
   backups of app volumes (§15).
 - Release images are published by the image workflow once the GitHub

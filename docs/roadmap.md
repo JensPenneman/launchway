@@ -89,11 +89,18 @@ features that are deliberately out of scope for v0.1 are listed in
   features fail closed.
 - Trusted apps may bind-mount below the node's allowed roots, but local-driver
   volumes with `o=bind` or a `device` below such a root are still refused.
-- Compose also gives every service its bare service name as an alias on the
-  proxy network, so two apps with a service called `app` both answer to `app`
-  there. Only the `<slug>-<service>` aliases are checked for collisions; set
-  the proxy network aliases explicitly in the generated override (or attach
-  through a network-scoped alias only).
+- Compose gives every service its bare service name as a DNS alias on each
+  network it joins, the shared proxy network included. Two apps that both
+  attach a service called `app` therefore both answer to `app` there, and a
+  container on the proxy network that looks up `app` may reach the other
+  app's service; only the `<slug>-<service>` aliases are checked for
+  collisions (`assertAliasesFree`). Options: keep app-internal traffic on the
+  app's own network and put only the `<slug>-<service>` alias on the shared
+  network, which needs control over the aliases there (the override can only
+  add aliases, so the agent would attach the proxy network itself, for
+  example with `docker network connect --alias <slug>-<service>` after `up`);
+  or refuse, when a route, proxy service or forward-auth target is created,
+  a service name that another app already attaches to the proxy network.
 
 ## Nodes and edge
 

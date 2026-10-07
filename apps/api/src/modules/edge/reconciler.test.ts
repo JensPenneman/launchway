@@ -154,6 +154,36 @@ describe('edge reconciler', () => {
   });
 });
 
+describe('edge reconciler retries', () => {
+  it('retries a failed scheduled load with backoff and announces the load state', async () => {
+    vi.useFakeTimers();
+    const caddy = fakeCaddy();
+    caddy.fail = new CaddyError('connect ECONNREFUSED', true);
+    const deps = createTestDeps();
+    const edgeEvents: string[] = [];
+    deps.events.subscribe((event) => {
+      if (event.topic === 'edge') edgeEvents.push(event.action);
+    });
+    const reconciler = createEdgeReconciler(deps, {
+      caddy,
+      debounceMs: 10,
+      loadInput: () => Promise.resolve(input('verified')),
+    });
+    reconciler.start();
+    await vi.advanceTimersByTimeAsync(20);
+    expect(caddy.loaded).toHaveLength(0);
+    expect(edgeEvents).toHaveLength(1);
+
+    // Caddy is back (e.g. after an upgrade): the retry loads without any other change.
+    caddy.fail = null;
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(caddy.loaded).toHaveLength(1);
+    expect((await reconciler.config()).lastError).toBeNull();
+    expect(edgeEvents).toHaveLength(2);
+    deps.lifecycle.beginShutdown();
+  });
+});
+
 describe('caddy admin client', () => {
   it('adapts, then loads the adapted JSON', async () => {
     const calls: { url: string; type: string; body: string }[] = [];

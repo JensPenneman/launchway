@@ -54,5 +54,7 @@ export function keysForTopic(topic: EventTopic): QueryKey[] {
       return [keys.invitations];
     case 'tokens':
       return [keys.tokens];
+    case 'edge':
+      return [keys.edge];
   }
 }

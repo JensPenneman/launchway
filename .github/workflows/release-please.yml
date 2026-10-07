@@ -22,6 +22,9 @@ jobs:
     outputs:
       release_created: ${{ steps.release.outputs.release_created }}
       tag_name: ${{ steps.release.outputs.tag_name }}
+      # A release created with RELEASE_PLEASE_TOKEN starts the Images workflow
+      # through its release event.
+      release_event: ${{ secrets.RELEASE_PLEASE_TOKEN != '' }}
     steps:
       - name: Run release-please
         id: release
@@ -36,10 +39,13 @@ jobs:
 
   # A release created with GITHUB_TOKEN does not trigger other workflows, so
   # the release images are published from here instead of from a release event.
+  # Releases are normally published with scripts/release.sh, whose release
+  # event starts the Images workflow; this covers a release pull request that
+  # was merged on GitHub.
   images:
     name: Images
     needs: release-please
-    if: needs.release-please.outputs.release_created == 'true'
+    if: needs.release-please.outputs.release_created == 'true' && needs.release-please.outputs.release_event != 'true'
     permissions:
       contents: read
       packages: write

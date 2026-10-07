@@ -5,11 +5,17 @@ name: Images
 # own and is pushed by digest; the publish job then merges the digests into
 # one tagged multi-arch image and signs and scans that.
 #   push to main             -> :edge and :sha-<short>
-#   release (workflow_call)  -> :X.Y.Z, :X.Y, :X (from 1.0.0 on) and :latest
+#   published release        -> :X.Y.Z, :X.Y, :X (from 1.0.0 on) and :latest
+#   release (workflow_call)  -> the same, for a release created by release-please
 #   manual run               -> as a release when `version` is set, else as a push
 on:
   push:
     branches: [main]
+  # Releases published by a person (scripts/release.sh) or with a token other
+  # than GITHUB_TOKEN. A release created with GITHUB_TOKEN starts no workflows;
+  # release-please.yml calls this workflow for those instead.
+  release:
+    types: [published]
   workflow_call:
     inputs:
       version:
@@ -29,11 +35,18 @@ on:
 
 permissions: {}
 
-# Releases get a group of their own, so edge builds can never delay or
-# replace a release build. Nothing is cancelled half-way through publishing.
+# Every release version gets a group of its own, shared by a published
+# release, release-please's call and a manual rebuild, so edge builds can
+# never delay or replace a release build and two builds of one version run
+# one after the other. Nothing is cancelled half-way through publishing.
 concurrency:
-  group: images-${{ inputs.version || github.ref }}
+  group: images-${{ inputs.version || github.event.release.tag_name || github.ref }}
   cancel-in-progress: false
+
+env:
+  # Release tag to publish (vX.Y.Z): the `version` input, or the tag of the
+  # published release. Empty for edge images.
+  RELEASE_TAG: ${{ inputs.version || github.event.release.tag_name }}
 
 jobs:
   build:
@@ -68,12 +81,10 @@ jobs:
       IMAGE: ghcr.io/jenspenneman/${{ matrix.image }}
     steps:
       - name: Validate version
-        if: inputs.version != ''
-        env:
-          VERSION: ${{ inputs.version }}
+        if: env.RELEASE_TAG != ''
         run: |
-          if [[ ! "$VERSION" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "::error title=Invalid version::Expected a release tag such as v1.2.3, got '${VERSION}'."
+          if [[ ! "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error title=Invalid version::Expected a release tag such as v1.2.3, got '${RELEASE_TAG}'."
             exit 1
           fi
 
@@ -83,7 +94,7 @@ jobs:
         id: checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.version }}
+          ref: ${{ env.RELEASE_TAG }}
           persist-credentials: false
 
       # Only the version matters here, as build argument and label; the
@@ -96,9 +107,9 @@ jobs:
           images: ${{ env.IMAGE }}
           flavor: latest=false
           tags: |
-            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=edge,branch=main,enable=${{ inputs.version == '' }}
-            type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }},enable=${{ env.RELEASE_TAG != '' }}
+            type=edge,branch=main,enable=${{ env.RELEASE_TAG == '' }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE_TAG == '' }}
           labels: |
             org.opencontainers.image.title=${{ matrix.title }}
             org.opencontainers.image.description=${{ matrix.description }}
@@ -175,25 +186,23 @@ jobs:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          ref: ${{ inputs.version }}
+          ref: ${{ env.RELEASE_TAG }}
           # Releases need every tag to tell whether they are the newest one.
-          fetch-depth: ${{ inputs.version == '' && 1 || 0 }}
+          fetch-depth: ${{ env.RELEASE_TAG == '' && 1 || 0 }}
           persist-credentials: false
 
       # A rebuild of an older release (for example for a base image fix) must
       # not move latest, X.Y or X back to it.
       - name: Check whether this is the newest release
         id: newest
-        if: inputs.version != ''
-        env:
-          VERSION: ${{ inputs.version }}
+        if: env.RELEASE_TAG != ''
         run: |
           newest() { git tag --list "$1" --sort=-v:refname | head -n 1; }
-          is() { if [ "$VERSION" = "$1" ]; then echo true; else echo false; fi; }
+          is() { if [ "$RELEASE_TAG" = "$1" ]; then echo true; else echo false; fi; }
           {
             echo "latest=$(is "$(newest 'v[0-9]*.[0-9]*.[0-9]*')")"
-            echo "minor=$(is "$(newest "${VERSION%.*}.*")")"
-            echo "major=$(is "$(newest "${VERSION%%.*}.*")")"
+            echo "minor=$(is "$(newest "${RELEASE_TAG%.*}.*")")"
+            echo "major=$(is "$(newest "${RELEASE_TAG%%.*}.*")")"
           } >> "$GITHUB_OUTPUT"
 
       - name: Compute tags
@@ -204,12 +213,12 @@ jobs:
           flavor: latest=false
           # The bare major tag is skipped while the major version is 0.
           tags: |
-            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ inputs.version }},enable=${{ inputs.version != '' && steps.newest.outputs.minor == 'true' }}
-            type=semver,pattern={{major}},value=${{ inputs.version }},enable=${{ inputs.version != '' && !startsWith(inputs.version, 'v0.') && steps.newest.outputs.major == 'true' }}
-            type=raw,value=latest,enable=${{ inputs.version != '' && steps.newest.outputs.latest == 'true' }}
-            type=edge,branch=main,enable=${{ inputs.version == '' }}
-            type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
+            type=semver,pattern={{version}},value=${{ env.RELEASE_TAG }},enable=${{ env.RELEASE_TAG != '' }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.RELEASE_TAG }},enable=${{ env.RELEASE_TAG != '' && steps.newest.outputs.minor == 'true' }}
+            type=semver,pattern={{major}},value=${{ env.RELEASE_TAG }},enable=${{ env.RELEASE_TAG != '' && !startsWith(env.RELEASE_TAG, 'v0.') && steps.newest.outputs.major == 'true' }}
+            type=raw,value=latest,enable=${{ env.RELEASE_TAG != '' && steps.newest.outputs.latest == 'true' }}
+            type=edge,branch=main,enable=${{ env.RELEASE_TAG == '' }}
+            type=sha,prefix=sha-,format=short,enable=${{ env.RELEASE_TAG == '' }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
@@ -257,7 +266,45 @@ jobs:
           DIGEST: ${{ steps.image.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
+      # Trivy now and then stops with "FATAL ... analyze error: pipeline error"
+      # while it reads the layers from the registry. A failed scan runs again
+      # after a short pause, up to three attempts; the third failure fails the
+      # job. The attempts use the same inputs.
       - name: Scan image
+        id: scan1
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+
+      - name: Wait before the second scan attempt
+        if: steps.scan1.outcome == 'failure'
+        run: sleep 30
+
+      - name: Scan image (second attempt)
+        id: scan2
+        if: steps.scan1.outcome == 'failure'
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
+          format: sarif
+          output: trivy-${{ matrix.image }}.sarif
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          limit-severities-for-sarif: true
+
+      - name: Wait before the third scan attempt
+        if: steps.scan2.outcome == 'failure'
+        run: sleep 60
+
+      - name: Scan image (third attempt)
+        if: steps.scan2.outcome == 'failure'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}

@@ -292,7 +292,12 @@ describe('accounts and authentication against PostgreSQL', () => {
     expect(future.items).toEqual([]);
   });
 
-  it('changes the password, ends other sessions and signs out', async () => {
+  it('changes the password, ends other sessions, revokes API tokens and signs out', async () => {
+    const { secret } = await json<CreatedApiToken>(
+      await admin.request('POST', '/tokens', { name: 'before-change', scopes: ['read'] }),
+    );
+    const bearer = new Client(app, { authorization: `Bearer ${secret}` });
+    expect((await bearer.request('GET', '/me')).status).toBe(200);
     const other = new Client(app);
     await other.request('POST', '/auth/login', { email: adminEmail, password: PASSWORD });
     const sessionsList = await json<SessionList>(await admin.request('GET', '/me/sessions'));
@@ -309,6 +314,7 @@ describe('accounts and authentication against PostgreSQL', () => {
     });
     expect(changed.status).toBe(204);
     expect((await other.request('GET', '/me')).status).toBe(401);
+    expect((await bearer.request('GET', '/me')).status).toBe(401);
     expect((await admin.request('GET', '/me')).status).toBe(200);
 
     expect((await admin.request('POST', '/auth/logout')).status).toBe(204);

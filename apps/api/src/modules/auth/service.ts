@@ -20,6 +20,7 @@ import type { Principal, RequestActor } from '../../lib/auth-context.js';
 import { hashToken, safeEqual } from '../../lib/crypto.js';
 import { conflict, invalidField, notFound, unauthorized } from '../../lib/problem.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
+import { apiTokens } from '../tokens/schema.js';
 import { users } from '../users/schema.js';
 import { insertUser, loadUser } from '../users/service.js';
 import { hashPassword, verifyPassword } from './password.js';
@@ -236,20 +237,33 @@ export function createAuthService(
         }
       }
       const passwordHash = await hashPassword(input.newPassword);
-      await deps.db.transaction(async (tx) => {
+      const revokedTokens = await deps.db.transaction(async (tx) => {
         await tx.update(users).set({ passwordHash }).where(eq(users.id, id));
         // Other sessions may belong to whoever knew the old password.
         const ended = await tx
           .delete(sessions)
           .where(and(eq(sessions.userId, id), ne(sessions.id, principal.sessionId)))
           .returning({ id: sessions.id });
+        // So are API tokens minted with a stolen session or password.
+        const revoked = await tx
+          .delete(apiTokens)
+          .where(eq(apiTokens.userId, id))
+          .returning({ id: apiTokens.id });
         await recordAudit(tx, actor, {
           action: 'user.change-password',
           target: { type: 'user', id },
-          summary: { hadPassword: row.passwordHash !== null, endedSessions: ended.length },
+          summary: {
+            hadPassword: row.passwordHash !== null,
+            endedSessions: ended.length,
+            revokedTokens: revoked.length,
+          },
         });
+        return revoked;
       });
       deps.events.publish({ topic: 'users', action: 'updated', resourceId: id });
+      for (const token of revokedTokens) {
+        deps.events.publish({ topic: 'tokens', action: 'deleted', resourceId: token.id });
+      }
     },
 
     async listSessions(principal) {

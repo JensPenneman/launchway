@@ -135,8 +135,8 @@ const changePassword = createRoute({
   tags: ['Auth'],
   summary: 'Set or change your password',
   description:
-    '`currentPassword` is required when a password is set. Ends all other sessions. Requires a ' +
-    'signed-in session. Audited.',
+    '`currentPassword` is required when a password is set. Ends all other sessions and revokes ' +
+    'all of your API tokens. Requires a signed-in session. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('viewer')],
   request: { body: jsonBody(ChangePasswordInput) },

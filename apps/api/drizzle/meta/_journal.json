@@ -15,6 +15,13 @@
       "when": 1791328648978,
       "tag": "0001_domain_status_active",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1791357514769,
+      "tag": "0002_trusted_mounts_proxy_attach",
+      "breakpoints": true
     }
   ]
 }

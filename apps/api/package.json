@@ -1,6 +1,6 @@
 {
   "name": "@launchway/api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Launchway control plane: REST API, OpenAPI document and host of the web UI.",
   "license": "Apache-2.0",

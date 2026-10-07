@@ -1,5 +1,6 @@
 import {
   type HelloPayload,
+  isLocalOnlyHost,
   NODE_CREDENTIAL_PATTERN,
   NODE_CREDENTIAL_PREFIX,
   NODE_JOIN_TOKEN_PATTERN,
@@ -61,7 +62,9 @@ function helloColumns(hello: HelloPayload, now: Date) {
     arch: hello.platform.arch,
     agentVersion: hello.agentVersion,
     protocolVersion: hello.protocolVersion,
-    lanIp: hello.lanIp,
+    // The edge proxies off-edge apps to <lanIp>:<port>; a loopback or link-local address would
+    // point it at Caddy's own container instead.
+    lanIp: hello.lanIp && !isLocalOnlyHost(hello.lanIp) ? hello.lanIp : null,
     dockerInfo: hello.docker,
     lastSeenAt: now,
     joinedAt: sql`coalesce(${nodes.joinedAt}, ${now.toISOString()}::timestamptz)`,

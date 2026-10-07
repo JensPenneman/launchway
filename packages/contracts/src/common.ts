@@ -45,7 +45,32 @@ export const DnsName = z
 
 export const IpAddress = z.union([z.ipv4(), z.ipv6()]).openapi({ example: '192.168.1.20' });
 
-/** Upstream host: an IP literal, a container/host alias or a fully-qualified name. */
+/**
+ * True for hosts that name the machine itself rather than a peer: `localhost`, loopback,
+ * unspecified and link-local addresses (also IPv4-mapped). Seen from the edge, such an upstream
+ * would be Caddy's own container.
+ */
+export function isLocalOnlyHost(host: string): boolean {
+  let value = host
+    .trim()
+    .toLowerCase()
+    .replace(/^\[|\]$/g, '');
+  if (value === 'localhost' || value.endsWith('.localhost')) return true;
+  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(value);
+  if (mapped?.[1]) value = mapped[1];
+  const v4 = /^(\d+)\.(\d+)\.\d+\.\d+$/.exec(value);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 127 || a === 0 || (a === 169 && b === 254);
+  }
+  if (!value.includes(':')) return false;
+  return /^(0*:)*:?0*1?$/.test(value) || /^fe[89ab][0-9a-f]?:/.test(value);
+}
+
+/**
+ * Upstream host: an IP literal, a container/host alias or a fully-qualified name. Hosts of the
+ * edge itself and the platform's container names are refused.
+ */
 export const UpstreamHost = z
   .union([
     z.ipv4(),
@@ -56,6 +81,11 @@ export const UpstreamHost = z
       .toLowerCase()
       .regex(SINGLE_OR_MULTI_LABEL_HOST, 'Must be a host name or IP address'),
   ])
+  .refine((host) => !isLocalOnlyHost(host), 'Must not be a loopback or link-local address')
+  .refine(
+    (host) => !RESERVED_SERVICE_NAMES.includes(host),
+    'Must not name a Slipway platform container',
+  )
   .openapi({ example: 'host.docker.internal' });
 
 export const Port = z.number().int().min(1).max(65_535).openapi({ example: 8080 });

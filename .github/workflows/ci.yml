@@ -140,7 +140,7 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
-      # Reads the per-image cache that the Images workflow writes on main.
+      # Reads the amd64 cache that the Images workflow writes on main.
       # This job only checks that the Dockerfile builds, so it writes no
       # cache and cannot evict the cache used by the published builds.
       - name: Build image
@@ -150,4 +150,4 @@ jobs:
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           push: false
-          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-from: type=gha,scope=${{ matrix.image }}-amd64

@@ -1,7 +1,9 @@
 name: Images
 
 # Publishes the multi-arch images to GHCR, signs them with cosign (keyless)
-# and scans them with Trivy.
+# and scans them with Trivy. Every platform builds natively on a runner of its
+# own and is pushed by digest; the publish job then merges the digests into
+# one tagged multi-arch image and signs and scans that.
 #   push to main             -> :edge and :sha-<short>
 #   release (workflow_call)  -> :X.Y.Z, :X.Y, :X (from 1.0.0 on) and :latest
 #   manual run               -> as a release when `version` is set, else as a push
@@ -34,18 +36,18 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  publish:
-    name: ${{ matrix.image }}
-    runs-on: ubuntu-24.04
-    timeout-minutes: 60
+  build:
+    name: Build ${{ matrix.image }} (${{ matrix.arch }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     permissions:
       contents: read
-      packages: write # push to ghcr.io
-      id-token: write # keyless cosign signing
-      security-events: write # upload Trivy results to code scanning
+      packages: write # push the platform image by digest to ghcr.io
     strategy:
       fail-fast: false
       matrix:
+        image: [slipway, slipway-agent]
+        platform: [linux/amd64, linux/arm64]
         include:
           - image: slipway
             dockerfile: apps/api/Dockerfile
@@ -55,6 +57,13 @@ jobs:
             dockerfile: apps/agent/Dockerfile
             title: Slipway agent
             description: Slipway node agent that builds and runs deployments with Docker Compose.
+          # Native runners: building arm64 under QEMU took over an hour.
+          - platform: linux/amd64
+            arch: amd64
+            runner: ubuntu-24.04
+          - platform: linux/arm64
+            arch: arm64
+            runner: ubuntu-24.04-arm
     env:
       IMAGE: ghcr.io/jenspenneman/${{ matrix.image }}
     steps:
@@ -72,6 +81,98 @@ jobs:
       # release uses that release's code.
       - name: Check out
         id: checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.version }}
+          persist-credentials: false
+
+      # Only the version matters here, as build argument and label; the
+      # publish job sets the tags. These rules must yield the same version as
+      # the tags there: X.Y.Z for a release and "edge" for main.
+      - name: Compute version and labels
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ${{ env.IMAGE }}
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}},value=${{ inputs.version }},enable=${{ inputs.version != '' }}
+            type=edge,branch=main,enable=${{ inputs.version == '' }}
+            type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
+          labels: |
+            org.opencontainers.image.title=${{ matrix.title }}
+            org.opencontainers.image.description=${{ matrix.description }}
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.revision=${{ steps.checkout.outputs.commit }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Pushed without a tag; the publish job tags the merged image. Each
+      # platform has a cache scope of its own, so the parallel builds do not
+      # overwrite each other's cache.
+      - name: Build and push by digest
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: ${{ matrix.platform }}
+          tags: ${{ env.IMAGE }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: SLIPWAY_VERSION=${{ steps.meta.outputs.version }}
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha,scope=${{ matrix.image }}-${{ matrix.arch }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}-${{ matrix.arch }}
+
+      - name: Export digest
+        env:
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          mkdir -p "${RUNNER_TEMP}/digests"
+          touch "${RUNNER_TEMP}/digests/${DIGEST#sha256:}"
+
+      # Named <image>-digest-<arch>: a digests-<image>-* pattern for slipway
+      # would also match the slipway-agent artifacts.
+      - name: Upload digest
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.image }}-digest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/*
+          if-no-files-found: error
+          retention-days: 1
+
+  # Runs only when every platform of both images built, so a release never
+  # publishes one image without the other.
+  merge:
+    name: Publish ${{ matrix.image }}
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      packages: write # push the multi-arch image to ghcr.io
+      id-token: write # keyless cosign signing
+      security-events: write # upload Trivy results to code scanning
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [slipway, slipway-agent]
+    env:
+      IMAGE: ghcr.io/jenspenneman/${{ matrix.image }}
+    steps:
+      # The same ref as the build: the tag for a release.
+      - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ inputs.version }}
@@ -95,22 +196,7 @@ jobs:
             echo "major=$(is "$(newest "${VERSION%%.*}.*")")"
           } >> "$GITHUB_OUTPUT"
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
-        with:
-          platforms: arm64
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
-
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Compute tags and labels
+      - name: Compute tags
         id: meta
         uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
         with:
@@ -124,42 +210,57 @@ jobs:
             type=raw,value=latest,enable=${{ inputs.version != '' && steps.newest.outputs.latest == 'true' }}
             type=edge,branch=main,enable=${{ inputs.version == '' }}
             type=sha,prefix=sha-,format=short,enable=${{ inputs.version == '' }}
-          labels: |
-            org.opencontainers.image.title=${{ matrix.title }}
-            org.opencontainers.image.description=${{ matrix.description }}
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.licenses=Apache-2.0
-            org.opencontainers.image.revision=${{ steps.checkout.outputs.commit }}
 
-      # steps.meta.outputs.version is X.Y.Z for a release and "edge" for main.
-      - name: Build and push
-        id: build
-        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
         with:
-          context: .
-          file: ${{ matrix.dockerfile }}
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          build-args: SLIPWAY_VERSION=${{ steps.meta.outputs.version }}
-          provenance: mode=max
-          sbom: true
-          cache-from: type=gha,scope=${{ matrix.image }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download digests
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: ${{ runner.temp }}/digests
+          pattern: ${{ matrix.image }}-digest-*
+          merge-multiple: true
+
+      - name: Create manifest list and push
+        working-directory: ${{ runner.temp }}/digests
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+        run: |
+          args=()
+          for tag in $TAGS; do args+=(--tag "$tag"); done
+          for digest in *; do args+=("${IMAGE}@sha256:${digest}"); done
+          docker buildx imagetools create "${args[@]}"
+
+      # Logs both platforms and resolves the digest of the multi-arch image,
+      # which is what gets signed and scanned.
+      - name: Inspect image
+        id: image
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          docker buildx imagetools inspect "${IMAGE}:${VERSION}"
+          digest="$(docker buildx imagetools inspect "${IMAGE}:${VERSION}" --format '{{json .Manifest}}' | jq -r .digest)"
+          echo "digest=${digest}" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
 
       - name: Sign image
         env:
-          DIGEST: ${{ steps.build.outputs.digest }}
+          DIGEST: ${{ steps.image.outputs.digest }}
         run: cosign sign --yes "${IMAGE}@${DIGEST}"
 
       - name: Scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: ${{ env.IMAGE }}@${{ steps.build.outputs.digest }}
+          image-ref: ${{ env.IMAGE }}@${{ steps.image.outputs.digest }}
           format: sarif
           output: trivy-${{ matrix.image }}.sarif
           severity: CRITICAL,HIGH

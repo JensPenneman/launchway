@@ -44,6 +44,8 @@ services:
       SLIPWAY_TRUSTED_PROXIES: 10.210.0.2/32
       SLIPWAY_ACME_EMAIL: ${SLIPWAY_ACME_EMAIL:-}
       SLIPWAY_LOCAL_JOIN_TOKEN: ${SLIPWAY_LOCAL_JOIN_TOKEN:-}
+      # Required by the first-run setup (generated and printed by the installer).
+      SLIPWAY_SETUP_TOKEN: ${SLIPWAY_SETUP_TOKEN:-}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       # Direct access, so the first-run setup works before any domain exists.

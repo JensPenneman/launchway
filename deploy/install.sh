@@ -206,6 +206,7 @@ resolve_secrets() {
   secret_key=$(env_get SLIPWAY_SECRET_KEY)
   db_password=$(env_get POSTGRES_PASSWORD)
   join_token=$(env_get SLIPWAY_LOCAL_JOIN_TOKEN)
+  setup_token=$(env_get SLIPWAY_SETUP_TOKEN)
 
   if { [ -z "$secret_key" ] || [ -z "$db_password" ]; } && docker volume inspect "$DB_VOLUME" >/dev/null 2>&1; then
     die "The Docker volume $DB_VOLUME holds an existing Slipway database, but $env_file does not have its secrets. Restore .env from your backup into $dir, or point --dir at the existing installation. To start over and delete all Slipway data instead, remove the old containers and run: docker volume rm $DB_VOLUME"
@@ -224,6 +225,11 @@ resolve_secrets() {
   if [ -z "$join_token" ]; then
     join_token=slpn_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
     [ "${#join_token}" -eq 48 ] || die "Could not generate SLIPWAY_LOCAL_JOIN_TOKEN (needs /dev/urandom, tr and head)."
+  fi
+  # Required by the first-run setup, so that only the operator can create the owner.
+  if [ -z "$setup_token" ]; then
+    setup_token=slps_$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom 2>/dev/null | head -c 43)
+    [ "${#setup_token}" -eq 48 ] || die "Could not generate SLIPWAY_SETUP_TOKEN (needs /dev/urandom, tr and head)."
   fi
 }
 
@@ -296,6 +302,7 @@ write_env() {
     env_set SLIPWAY_ACME_EMAIL "$email"
     env_set SLIPWAY_SECRET_KEY "$secret_key"
     env_set SLIPWAY_LOCAL_JOIN_TOKEN "$join_token"
+    env_set SLIPWAY_SETUP_TOKEN "$setup_token"
     env_set POSTGRES_PASSWORD "$db_password"
     env_set LOG_LEVEL "$log_level"
   else
@@ -313,6 +320,7 @@ SLIPWAY_PUBLIC_URL=$public_url
 SLIPWAY_ACME_EMAIL=$email
 SLIPWAY_SECRET_KEY=$secret_key
 SLIPWAY_LOCAL_JOIN_TOKEN=$join_token
+SLIPWAY_SETUP_TOKEN=$setup_token
 POSTGRES_PASSWORD=$db_password
 LOG_LEVEL=$log_level
 ENV
@@ -331,7 +339,7 @@ compose() {
 start_stack() {
   # Compose prefers variables from the environment over .env: let .env decide.
   unset SLIPWAY_VERSION SLIPWAY_PORT SLIPWAY_PUBLIC_URL SLIPWAY_ACME_EMAIL \
-    SLIPWAY_SECRET_KEY SLIPWAY_LOCAL_JOIN_TOKEN POSTGRES_PASSWORD LOG_LEVEL
+    SLIPWAY_SECRET_KEY SLIPWAY_LOCAL_JOIN_TOKEN SLIPWAY_SETUP_TOKEN POSTGRES_PASSWORD LOG_LEVEL
   step "Pulling images (SLIPWAY_VERSION=$version)"
   compose pull || die "Pulling the images failed. Check the network connection and that the tag '$version' exists."
   step "Starting Slipway"
@@ -366,8 +374,9 @@ print_summary() {
   if [ "$fresh_install" = yes ]; then
     cat <<NEXT
 Next steps:
-  1. Open the web UI now and create the owner account. Until an owner exists,
-     anyone who can reach this address can claim the instance.
+  1. Create the owner account now with this one-time link (it carries the
+     setup token, SLIPWAY_SETUP_TOKEN in $env_file):
+     ${url}setup#token=$setup_token
   2. Forward TCP ports 80 and 443 (and UDP 443 for HTTP/3) from your router to
      this machine, then add your domain in the web UI.
   3. Back up $env_file. Losing SLIPWAY_SECRET_KEY makes the stored secrets

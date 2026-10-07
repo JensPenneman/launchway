@@ -1,5 +1,5 @@
 import { Email, Password, PublicUrl, SetupInput, z } from '@slipway/contracts';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute, Link, redirect } from '@tanstack/react-router';
 import { CheckCircle2, FolderGit2, Loader2, Server } from 'lucide-react';
 import { useState } from 'react';
@@ -82,20 +82,32 @@ function Setup() {
   );
 }
 
+/** The installer prints the setup link as `/setup#token=<token>`; the fragment never reaches logs. */
+function tokenFromFragment(): string {
+  return new URLSearchParams(window.location.hash.slice(1)).get('token') ?? '';
+}
+
 function OwnerStep({ onDone }: { onDone: (email: string) => void }) {
   const queryClient = useQueryClient();
+  const { data: status } = useQuery(setupStatusQuery);
   const [error, setError] = useState<string | null>(null);
   const form = useForm({
     resolver: zodResolver(OwnerForm),
-    defaultValues: { name: '', email: '', password: '', confirmPassword: '' },
+    defaultValues: {
+      name: '',
+      email: '',
+      password: '',
+      confirmPassword: '',
+      setupToken: tokenFromFragment(),
+    },
   });
   const errors = form.formState.errors;
 
-  const onSubmit = form.handleSubmit(async ({ name, email, password }) => {
+  const onSubmit = form.handleSubmit(async ({ name, email, password, setupToken }) => {
     setError(null);
     try {
-      await createOwner({ name, email, password });
-      queryClient.setQueryData(keys.setup, { setupRequired: false });
+      await createOwner({ name, email, password, ...(setupToken ? { setupToken } : {}) });
+      queryClient.setQueryData(keys.setup, { setupRequired: false, setupTokenRequired: false });
       // Setup normally signs the owner in; sign in explicitly if it did not.
       try {
         await queryClient.fetchQuery({ ...meQuery, staleTime: 0 });
@@ -108,7 +120,12 @@ function OwnerStep({ onDone }: { onDone: (email: string) => void }) {
     } catch (cause) {
       const fields = isApiError(cause) ? cause.fieldErrors() : {};
       for (const [field, message] of Object.entries(fields)) {
-        if (field === 'name' || field === 'email' || field === 'password') {
+        if (
+          field === 'name' ||
+          field === 'email' ||
+          field === 'password' ||
+          field === 'setupToken'
+        ) {
           form.setError(field, { message });
         }
       }
@@ -122,6 +139,15 @@ function OwnerStep({ onDone }: { onDone: (email: string) => void }) {
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
+      )}
+      {status?.setupTokenRequired && (
+        <Field
+          label="Setup token"
+          error={errors.setupToken?.message}
+          description="Printed by the installer; also SLIPWAY_SETUP_TOKEN in the installation's .env."
+        >
+          <Input autoComplete="off" spellCheck={false} {...form.register('setupToken')} />
+        </Field>
       )}
       <Field label="Name" error={errors.name?.message}>
         <Input autoComplete="name" {...form.register('name')} />

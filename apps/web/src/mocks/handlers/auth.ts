@@ -60,7 +60,9 @@ export const authHandlers = [
   http.get('/api/health/ready', () => HttpResponse.json({ status: 'ok', version: 'mock' })),
 
   // --- Setup -------------------------------------------------------------------------------------
-  http.get(`${API}/setup`, () => HttpResponse.json({ setupRequired: db.users.length === 0 })),
+  http.get(`${API}/setup`, () =>
+    HttpResponse.json({ setupRequired: db.users.length === 0, setupTokenRequired: false }),
+  ),
   http.post(`${API}/setup`, async ({ request }) => {
     if (db.users.length > 0) return problem('conflict', 'Slipway is already set up.');
     const { data, error } = await parseBody(request, SetupInput);

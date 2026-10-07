@@ -17,7 +17,7 @@ import type { Executor } from '../../db/client.js';
 import { isUniqueViolation } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';
 import type { Principal, RequestActor } from '../../lib/auth-context.js';
-import { hashToken } from '../../lib/crypto.js';
+import { hashToken, safeEqual } from '../../lib/crypto.js';
 import { conflict, invalidField, notFound, unauthorized } from '../../lib/problem.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
 import { users } from '../users/schema.js';
@@ -93,7 +93,9 @@ export interface AuthService {
   revokeSession(principal: SessionPrincipal, id: SessionId, actor: RequestActor): Promise<void>;
 }
 
-export function createAuthService(deps: Pick<Deps, 'db' | 'events' | 'logger'>): AuthService {
+export function createAuthService(
+  deps: Pick<Deps, 'db' | 'events' | 'logger' | 'config'>,
+): AuthService {
   async function me(principal: Principal): Promise<Me> {
     const user = await requireUser(deps.db, principal.user.id);
     return principal.kind === 'session'
@@ -110,10 +112,19 @@ export function createAuthService(deps: Pick<Deps, 'db' | 'events' | 'logger'>):
   return {
     async setupStatus() {
       const [row] = await deps.db.select({ id: users.id }).from(users).limit(1);
-      return { setupRequired: row === undefined };
+      const setupRequired = row === undefined;
+      return {
+        setupRequired,
+        setupTokenRequired: setupRequired && deps.config.setupToken !== null,
+      };
     },
 
     async setup(input, actor) {
+      // The installer's one-time token keeps whoever reaches the port first from claiming it.
+      const expected = deps.config.setupToken;
+      if (expected !== null && !safeEqual(input.setupToken ?? '', expected)) {
+        throw invalidField('setupToken', 'The setup token is missing or wrong');
+      }
       const passwordHash = await hashPassword(input.password);
       const result = await deps.db.transaction(async (tx) => {
         // Serializes concurrent setup attempts; the single-owner index is the final guard.

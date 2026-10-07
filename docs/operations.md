@@ -74,10 +74,12 @@ in for the flags. The installer:
    from a checkout) or downloads them from GitHub (`SLIPWAY_REF`, default
    `main`);
 4. writes `.env` (mode `0600`) and generates `SLIPWAY_SECRET_KEY`,
-   `POSTGRES_PASSWORD` and `SLIPWAY_LOCAL_JOIN_TOKEN`; values already in `.env`
-   are kept;
+   `POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN` and `SLIPWAY_SETUP_TOKEN`;
+   values already in `.env` are kept;
 5. pulls the images and runs `docker compose up -d --wait`;
-6. prints the web UI address on the chosen port.
+6. prints the web UI address on the chosen port and, on a fresh install, the
+   one-time setup link (`/setup#token=...`). The first-run setup refuses to
+   create the owner without that token.
 
 Running the installer again is safe: it keeps the secrets and upgrades the
 images. It refuses to continue when a Slipway database volume exists but
@@ -135,14 +137,24 @@ sh deploy/install.sh --dir ~/slipway --email you@example.com
 
 Port 3000 serves plain HTTP so that the first setup works before any domain
 exists. Do not forward it on your router; once the platform domain works, use
-its HTTPS URL.
+its HTTPS URL. To stop serving the API on the LAN over plain HTTP afterwards,
+bind the port to the loopback interface in `compose.override.yaml` (reach it
+through an SSH tunnel when you need it):
+
+```yaml
+services:
+  slipway:
+    ports: !override
+      - "127.0.0.1:3000:3000"
+```
 
 ### In the browser
 
-1. Open `http://<host>:3000` right away and create the owner account in the
-   setup wizard (name, e-mail, password), then enter the platform URL and the
-   ACME e-mail. Until an owner exists, anyone who can reach the port can claim
-   the instance.
+1. Open the setup link the installer printed (`http://<host>:3000/setup#token=…`)
+   and create the owner account in the setup wizard (name, e-mail, password),
+   then enter the platform URL and the ACME e-mail. Setup requires the token
+   in that link (`SLIPWAY_SETUP_TOKEN` in `.env`), so nobody else who reaches
+   the port can claim the instance.
 2. **Account:** add a passkey (Settings → Account). Passkeys are bound to the
    platform URL, so register them on the URL you will keep using.
 3. **GitHub** (Settings → GitHub): connect with a fine-grained personal access
@@ -171,8 +183,8 @@ interactive reference at `/api/docs`):
 
 ```sh
 API=http://localhost:3000/api/v1
-curl -fsS "$API/setup"                                      # {"setupRequired":true}
-curl -fsS -H 'content-type: application/json' -d '{"email":"you@example.com","name":"You","password":"…"}' "$API/setup"
+curl -fsS "$API/setup"                                      # {"setupRequired":true,"setupTokenRequired":true}
+curl -fsS -H 'content-type: application/json' -d '{"email":"you@example.com","name":"You","password":"…","setupToken":"slps_…"}' "$API/setup"
 # Sign in; cookie-authenticated changes must carry the platform Origin (CSRF protection).
 curl -fsS -c cookies -H 'content-type: application/json' -d '{"email":"you@example.com","password":"…"}' "$API/auth/login"
 curl -fsS -b cookies -H 'origin: http://localhost:3000' -H 'content-type: application/json' \
@@ -210,6 +222,7 @@ Docker Compose reads `.env` from the install directory:
 | `SLIPWAY_ACME_EMAIL` | Required. Default ACME e-mail address; also used by Caddy's bootstrap configuration. |
 | `SLIPWAY_SECRET_KEY` | Generated. 32 random bytes, base64. All encryption and cookie-signing keys are derived from it. Never change it, never lose it. |
 | `SLIPWAY_LOCAL_JOIN_TOKEN` | Generated. Lets the bundled agent join, and rejoin, as the local node. Keep it secret. |
+| `SLIPWAY_SETUP_TOKEN` | Generated. Required to create the owner account in the first-run setup; unused afterwards. |
 | `POSTGRES_PASSWORD` | Generated. The database only accepts the password it was created with. |
 | `LOG_LEVEL` | `fatal`, `error`, `warn`, `info` (default), `debug` or `trace`. |
 

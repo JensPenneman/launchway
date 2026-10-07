@@ -12,12 +12,24 @@ export const SESSION_TTL_SECONDS = 30 * 24 * 60 * 60;
 // --- First run -------------------------------------------------------------------------------
 
 export const SetupStatus = z
-  .object({ setupRequired: z.boolean().openapi({ description: 'True while no owner exists' }) })
+  .object({
+    setupRequired: z.boolean().openapi({ description: 'True while no owner exists' }),
+    setupTokenRequired: z.boolean().openapi({
+      description: 'True when setup needs the setup token the installer printed',
+    }),
+  })
   .openapi('SetupStatus');
 export type SetupStatus = z.infer<typeof SetupStatus>;
 
 export const SetupInput = z
-  .strictObject({ email: Email, name: DisplayName, password: Password })
+  .strictObject({
+    email: Email,
+    name: DisplayName,
+    password: Password,
+    setupToken: z.string().trim().max(200).optional().openapi({
+      description: 'Required when SLIPWAY_SETUP_TOKEN is set (the installer prints it)',
+    }),
+  })
   .openapi('SetupInput');
 export type SetupInput = z.infer<typeof SetupInput>;
 

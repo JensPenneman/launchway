@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.2.0](https://github.com/JensPenneman/launchway/compare/v0.1.1...v0.2.0) (2026-10-07)
+
+
+### Features
+
+* **api:** wire previews, push events and the GitHub mirror together ([7273f6c](https://github.com/JensPenneman/launchway/commit/7273f6ced59ff1945567e9c53783a8c6b1f48ec5))
+* deploy pull requests as preview environments ([89e8a61](https://github.com/JensPenneman/launchway/commit/89e8a619ccb49b8e8af4f6f3e9e31b7dcf8bea06))
+* mirror deployments to GitHub's Deployments API ([8205dea](https://github.com/JensPenneman/launchway/commit/8205dea7b50a960e32a4fcb814598cd72d878ccc))
+* retry automatic deployments until the image exists ([33148c4](https://github.com/JensPenneman/launchway/commit/33148c4f29e616459170db733ea27742ab76e804))
+
+
+### Documentation
+
+* ADR 0019, operations section "Automatic deployments", architecture sections 2, 4, 8 and 9. ([33148c4](https://github.com/JensPenneman/launchway/commit/33148c4f29e616459170db733ea27742ab76e804))
+* architecture section 8, operations "Deployments on GitHub", ADR 0017. ([8205dea](https://github.com/JensPenneman/launchway/commit/8205dea7b50a960e32a4fcb814598cd72d878ccc))
+* architecture sections 4 and 5, operations "Pull request previews", ADR 0018. ([89e8a61](https://github.com/JensPenneman/launchway/commit/89e8a619ccb49b8e8af4f6f3e9e31b7dcf8bea06))
+* describe previews, image retries and GitHub deployments ([4991941](https://github.com/JensPenneman/launchway/commit/49919410d5cd25a04c49a54b5b44704c6e17aabe))
+
 ## [0.1.1](https://github.com/JensPenneman/launchway/compare/v0.1.0...v0.1.1) (2026-10-07)
 
 

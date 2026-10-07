@@ -1,6 +1,6 @@
 {
   "name": "launchway",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Self-hosted deployment platform: GitHub releases to running Compose apps with domains, TLS and DNS.",
   "license": "Apache-2.0",

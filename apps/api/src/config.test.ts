@@ -14,7 +14,7 @@ describe('loadConfig', () => {
       caddyAdminUrl: 'unix:///run/caddy-admin/admin.sock',
       caddyAdminListen: 'unix//run/caddy-admin/admin.sock|0222',
       proxyNetwork: 'slipway-proxy',
-      trustedProxies: ['10.210.0.0/24'],
+      trustedProxies: ['10.210.0.2/32'],
       logLevel: 'info',
     });
     expect(config.secretKey).toHaveLength(32);

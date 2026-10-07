@@ -82,15 +82,27 @@ describe('pull request previews against PostgreSQL', () => {
     action: string,
     number: number,
     head: string,
-    options: { fork?: boolean; merged?: boolean } = {},
+    options: {
+      fork?: boolean;
+      merged?: boolean;
+      bot?: boolean;
+      labels?: string[];
+      label?: string;
+    } = {},
   ) {
     const fullName = `octo/${repoName}`;
     return {
       action,
       number,
+      ...(options.label ? { label: { name: options.label } } : {}),
       pull_request: {
         title: `Change ${number}`,
+        state: action === 'closed' ? 'closed' : 'open',
         merged: options.merged ?? false,
+        user: options.bot
+          ? { login: 'dependabot[bot]', type: 'Bot' }
+          : { login: 'octocat', type: 'User' },
+        labels: (options.labels ?? []).map((name) => ({ name })),
         head: {
           ref: `feature/${number}`,
           sha: head,
@@ -419,6 +431,54 @@ describe('pull request previews against PostgreSQL', () => {
     expect(
       await db.select({ id: routes.id }).from(routes).where(eq(routes.appId, appId)),
     ).toHaveLength(1);
+  });
+
+  it('skips bot pull requests and follows a required label', async () => {
+    const hook = async (payload: unknown) =>
+      (await api.request('/api/v1/webhooks/github', webhook('pull_request', payload))).status;
+    expect(await hook(pullRequest('opened', 11, sha('prv-11'), { bot: true }))).toBe(204);
+    expect(await previewOf(11)).toBeUndefined();
+
+    const patched = await api.request(
+      `/api/v1/apps/${appId}`,
+      json('PATCH', { previews: { requireLabel: ' preview ' } }),
+    );
+    expect(await patched.json()).toMatchObject({
+      previews: { skipBots: true, requireLabel: 'preview' },
+    });
+    const head = sha('prv-12');
+    expect(await hook(pullRequest('opened', 12, head, { labels: ['bug'] }))).toBe(204);
+    expect(await previewOf(12)).toBeUndefined();
+
+    // Gaining the label opens the preview; a repeated event for the same head deploys nothing new.
+    const labeled = pullRequest('labeled', 12, head, {
+      labels: ['bug', 'Preview'],
+      label: 'Preview',
+    });
+    expect(await hook(labeled)).toBe(204);
+    expect(await hook(labeled)).toBe(204);
+    const row = await previewOf(12);
+    expect(row?.status).toBe('deploying');
+    const deployed = await db
+      .select()
+      .from(deployments)
+      .where(eq(deployments.previewId, row?.id as never));
+    expect(deployed).toHaveLength(1);
+    await vi.waitFor(() => {
+      expect(agents.deployed.map((d) => d.payload.deploymentId)).toContain(deployed[0]?.id);
+    });
+
+    // Losing the label closes the preview like closing the pull request does.
+    expect(
+      await hook(pullRequest('unlabeled', 12, head, { labels: ['bug'], label: 'Preview' })),
+    ).toBe(204);
+    expect(await previewOf(12)).toMatchObject({ status: 'closed', routeId: null, domainId: null });
+    // What the agent would report for the stopped deployment; frees the app's dispatch lane.
+    await db
+      .update(deployments)
+      .set({ status: 'cancelled', finishedAt: new Date() })
+      .where(and(eq(deployments.previewId, row?.id as never), eq(deployments.status, 'queued')));
+    await api.request(`/api/v1/apps/${appId}`, json('PATCH', { previews: { requireLabel: null } }));
   });
 
   it('opens, lists, limits and closes previews through the API', async () => {

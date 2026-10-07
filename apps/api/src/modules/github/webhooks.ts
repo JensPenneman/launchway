@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
-import { CommitSha, GitRef } from '@launchway/contracts';
+import {
+  type AppPreviewSettings,
+  CommitSha,
+  DEFAULT_APP_PREVIEW_SETTINGS,
+  GitRef,
+} from '@launchway/contracts';
 import { and, eq, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';
@@ -45,6 +50,8 @@ export interface WebhookHeaders {
 export type WebhookOutcome = 'processed' | 'duplicate' | 'ignored';
 
 const Account = z.object({ login: z.string(), type: z.string() });
+
+const Label = z.object({ name: z.string() });
 
 const Repository = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
 
@@ -106,9 +113,14 @@ export function pushedBranch(event: z.infer<typeof PushEvent>): {
 const PullRequestEvent = z.object({
   action: z.string(),
   number: z.number().int().positive(),
+  /** `labeled` / `unlabeled`: the label added or removed. */
+  label: Label.nullish(),
   pull_request: z.object({
     title: z.string(),
+    state: z.string().optional(),
     merged: z.boolean().nullish(),
+    user: Account.nullish(),
+    labels: z.array(Label).nullish(),
     head: z.object({
       ref: z.string(),
       sha: z.string().regex(/^[0-9a-f]{40}$/),
@@ -119,8 +131,65 @@ const PullRequestEvent = z.object({
   repository: Repository,
 });
 
+type PullRequestEvent = z.infer<typeof PullRequestEvent>;
+
 /** `pull_request` actions that open or update a preview; `closed` removes it. */
 const PREVIEW_UPDATE_ACTIONS: ReadonlySet<string> = new Set(['opened', 'reopened', 'synchronize']);
+
+/** Actions that can change a preview; `labeled` / `unlabeled` only with a required label. */
+const PULL_REQUEST_ACTIONS: ReadonlySet<string> = new Set([
+  ...PREVIEW_UPDATE_ACTIONS,
+  'closed',
+  'labeled',
+  'unlabeled',
+]);
+
+/** What a `pull_request` event does to the preview of one app; `reason` explains a skip. */
+type PreviewAction =
+  | { readonly kind: 'open' | 'close' }
+  | { readonly kind: 'ignore'; readonly reason?: string };
+
+/** Bots: GitHub's account type, or the `[bot]` login suffix of GitHub Apps (`dependabot[bot]`). */
+function isBot(account: z.infer<typeof Account> | null | undefined): boolean {
+  return account?.type === 'Bot' || account?.login.endsWith('[bot]') === true;
+}
+
+/**
+ * What a `pull_request` event means for the preview of an app with these settings. `opened`,
+ * `reopened`, `synchronize` and gaining the required label open or update it, unless previews
+ * are off, the author is a bot (`skipBots`) or the pull request lacks the required label (any
+ * case, like GitHub). `closed` and losing the required label close it. Other actions and labels
+ * change nothing. The manual `POST /apps/{id}/previews` applies no filters.
+ */
+export function pullRequestPreviewAction(
+  event: PullRequestEvent,
+  settings: Pick<AppPreviewSettings, 'enabled' | 'skipBots' | 'requireLabel'>,
+): PreviewAction {
+  const required = settings.requireLabel?.toLowerCase() ?? null;
+  const isRequired = (label: { name: string } | null | undefined) =>
+    required !== null && label?.name.toLowerCase() === required;
+  const pr = event.pull_request;
+  const labeled = event.action === 'labeled';
+  if (event.action === 'closed') return { kind: 'close' };
+  if (event.action === 'unlabeled') {
+    return isRequired(event.label) ? { kind: 'close' } : { kind: 'ignore' };
+  }
+  if (
+    labeled
+      ? !isRequired(event.label) || pr.state === 'closed'
+      : !PREVIEW_UPDATE_ACTIONS.has(event.action)
+  ) {
+    return { kind: 'ignore' };
+  }
+  if (!settings.enabled) return { kind: 'ignore', reason: 'previews are off for the app' };
+  if (settings.skipBots && isBot(pr.user)) {
+    return { kind: 'ignore', reason: `opened by the bot ${pr.user?.login}` };
+  }
+  if (required !== null && !labeled && !(pr.labels ?? []).some(isRequired)) {
+    return { kind: 'ignore', reason: `lacks the label ${settings.requireLabel}` };
+  }
+  return { kind: 'open' };
+}
 
 const InstallationEvent = z.object({
   action: z.string(),
@@ -136,16 +205,16 @@ export function createWebhookHandler(deps: Deps) {
   const previews = createPreviewsService(deps, { deployments });
 
   /**
-   * Pull requests from branches of the repository open, update and close previews. Pull requests
-   * from forks are ignored: their code is not trusted with the app's environment.
+   * Pull requests from branches of the repository open, update and close previews as far as each
+   * app's filters let them (`pullRequestPreviewAction`). Pull requests from forks are ignored:
+   * their code is not trusted with the app's environment.
    */
   async function onPullRequest(
     connection: ConnectionRow,
     payload: unknown,
   ): Promise<WebhookOutcome> {
     const event = PullRequestEvent.parse(payload);
-    const closing = event.action === 'closed';
-    if (!closing && !PREVIEW_UPDATE_ACTIONS.has(event.action)) return 'ignored';
+    if (!PULL_REQUEST_ACTIONS.has(event.action)) return 'ignored';
     const pr = event.pull_request;
     const head = pr.head.repo?.full_name.toLowerCase() ?? null;
     if (head !== pr.base.repo.full_name.toLowerCase()) {
@@ -159,6 +228,20 @@ export function createWebhookHandler(deps: Deps) {
     let retry = false;
     let handled = false;
     for (const app of targets) {
+      const action = pullRequestPreviewAction(event, {
+        ...DEFAULT_APP_PREVIEW_SETTINGS,
+        ...app.previews,
+      });
+      if (action.kind === 'ignore') {
+        if (action.reason) {
+          logger.info(
+            { appId: app.id, prNumber: event.number, action: event.action, reason: action.reason },
+            'pull request ignored for previews',
+          );
+        }
+        continue;
+      }
+      const closing = action.kind === 'close';
       try {
         const preview = closing
           ? await previews.closeForPullRequest(app, event.number, actor)

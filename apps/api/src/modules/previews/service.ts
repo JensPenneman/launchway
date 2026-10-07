@@ -84,8 +84,9 @@ export interface PreviewsService {
   /** Removes the preview's containers, route and domain; the row stays for history. */
   close(id: PreviewId, actor: RequestActor): Promise<Preview>;
   /**
-   * Webhook `opened` / `reopened` / `synchronize`: upserts the preview and deploys the head.
-   * Returns null when the app has previews turned off.
+   * Webhook `opened` / `reopened` / `synchronize` / `labeled`: upserts the preview and deploys the
+   * head. Returns null when the app has previews turned off or the preview deploys that head
+   * already.
    */
   openFromPullRequest(
     app: AppRow,
@@ -104,6 +105,13 @@ export interface PreviewsService {
   /** Worker pass: finish closing previews, re-sync open ones, purge old closed ones. */
   reconcile(now?: Date): Promise<void>;
 }
+
+/** Preview statuses in which a repeated event for the same head changes nothing. */
+const DEPLOYING_PREVIEW_STATUSES: ReadonlySet<PreviewStatus> = new Set([
+  'pending',
+  'deploying',
+  'running',
+]);
 
 function previewUrl(hostname: string): string {
   return `https://${hostname}`;
@@ -736,6 +744,19 @@ export function createPreviewsService(
     async openFromPullRequest(app, pr, actor) {
       if (!app.previews.enabled) {
         logger.info({ appId: app.id, prNumber: pr.number }, 'previews are off for the app');
+        return null;
+      }
+      // GitHub sends `labeled` right after `opened` for a pull request opened with labels; a
+      // second deployment of the same commit would only cancel the first.
+      const [current] = await deps.db
+        .select({ status: previews.status, headSha: previews.headSha })
+        .from(previews)
+        .where(and(eq(previews.appId, app.id), eq(previews.prNumber, pr.number)));
+      if (current?.headSha === pr.headSha && DEPLOYING_PREVIEW_STATUSES.has(current.status)) {
+        logger.info(
+          { appId: app.id, prNumber: pr.number },
+          'the preview deploys this head already',
+        );
         return null;
       }
       try {

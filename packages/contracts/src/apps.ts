@@ -236,11 +236,28 @@ export const PreviewEnvOverrides = z
     example: { BASE_URL: '{{previewUrl}}', DATABASE_NAME: 'trail_pr_{{prNumber}}' },
   });
 
+/** A label pull requests need for a preview; matched case-insensitively, like GitHub does. */
+export const PreviewLabel = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .regex(/^[^\p{Cc}]+$/u, 'Must not contain control characters')
+  .openapi({ example: 'preview' });
+
 /** Per-app preview settings. */
 export const AppPreviewSettings = z
   .object({
     enabled: z.boolean().openapi({
       description: 'Pull requests from branches of the repository get a preview environment',
+    }),
+    skipBots: z.boolean().openapi({
+      description:
+        'Pull requests opened by bots (such as Dependabot) get no preview from the webhook; the API can still open one',
+    }),
+    requireLabel: PreviewLabel.nullable().openapi({
+      description:
+        'Only pull requests with this label get a preview from the webhook, and removing the label closes it; null previews every pull request',
     }),
     hostTemplate: PreviewHostTemplate,
     envOverrides: PreviewEnvOverrides,
@@ -254,6 +271,8 @@ export type AppPreviewSettings = z.infer<typeof AppPreviewSettings>;
 
 export const DEFAULT_APP_PREVIEW_SETTINGS: AppPreviewSettings = {
   enabled: false,
+  skipBots: true,
+  requireLabel: null,
   hostTemplate: DEFAULT_PREVIEW_HOST_TEMPLATE,
   envOverrides: {},
   composeFiles: null,
@@ -263,6 +282,8 @@ export const DEFAULT_APP_PREVIEW_SETTINGS: AppPreviewSettings = {
 export const UpdateAppPreviewSettings = z
   .strictObject({
     enabled: z.boolean().optional(),
+    skipBots: z.boolean().optional(),
+    requireLabel: PreviewLabel.nullable().optional(),
     hostTemplate: PreviewHostTemplate.optional(),
     envOverrides: PreviewEnvOverrides.optional(),
     composeFiles: ComposeFiles.nullable().optional(),

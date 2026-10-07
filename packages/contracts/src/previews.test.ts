@@ -134,4 +134,14 @@ describe('preview environment overrides', () => {
     expect(UpdateAppInput.safeParse({ previews: { unknown: 1 } }).success).toBe(false);
     expect(AppPreviewSettings.safeParse(DEFAULT_APP_PREVIEW_SETTINGS).success).toBe(true);
   });
+
+  it('trims the required label and accepts null to drop it', () => {
+    const update = (requireLabel: unknown) =>
+      UpdateAppInput.safeParse({ previews: { skipBots: false, requireLabel } });
+    expect(update(' preview ').data?.previews?.requireLabel).toBe('preview');
+    expect(update(null).success).toBe(true);
+    expect(update('  ').success).toBe(false);
+    expect(update('pre\nview').success).toBe(false);
+    expect(update('x'.repeat(101)).success).toBe(false);
+  });
 });

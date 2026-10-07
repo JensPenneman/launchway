@@ -43,12 +43,12 @@ export const apps = pgTable(
     trustedMounts: boolean('trusted_mounts').notNull().default(false),
     /** Services attached to the proxy network without a route (sorted, unique). */
     proxyServices: text('proxy_services').array().notNull().default(sql`'{}'::text[]`),
-    /** `AppPreviewSettings` (enabled, host template, env overrides, compose files). */
+    /** `AppPreviewSettings` (enabled, filters, host template, env overrides, compose files). */
     previews: jsonb('previews')
       .$type<AppPreviewSettings>()
       .notNull()
       .default(
-        sql`'{"enabled":false,"hostTemplate":"{slug}-pr-{number}.{base}","envOverrides":{},"composeFiles":null}'::jsonb`,
+        sql`'{"enabled":false,"skipBots":true,"requireLabel":null,"hostTemplate":"{slug}-pr-{number}.{base}","envOverrides":{},"composeFiles":null}'::jsonb`,
       ),
     ...timestamps(),
   },

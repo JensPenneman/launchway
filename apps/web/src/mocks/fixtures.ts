@@ -354,6 +354,8 @@ export function createApps(): App[] {
     proxyServices: [] as string[],
     previews: {
       enabled: false,
+      skipBots: true,
+      requireLabel: null as string | null,
       hostTemplate: '{slug}-pr-{number}.{base}',
       envOverrides: {} as Record<string, string>,
       composeFiles: null,
@@ -374,6 +376,8 @@ export function createApps(): App[] {
       trustedMounts: true,
       previews: {
         enabled: true,
+        skipBots: true,
+        requireLabel: null,
         hostTemplate: '{slug}-pr-{number}.{base}',
         envOverrides: { BASE_URL: '{{previewUrl}}' },
         composeFiles: ['compose.preview.yaml'],

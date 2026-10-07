@@ -144,6 +144,8 @@ test('saves the preview settings of an app', async ({ page }) => {
   await expect(page.getByText(/Unknown placeholder \{\{previewURL\}\}/)).toBeVisible();
   await overrides.fill('BASE_URL={{previewUrl}}\nDB_NAME=trail_{{prNumber}}');
   await expect(page.getByText('trail-pr-42.preview.example.com')).toBeVisible();
+  await expect(page.getByLabel('Skip pull requests from bots')).toBeChecked();
+  await page.getByLabel('Only pull requests with label').fill('preview');
   await page.getByRole('button', { name: 'Save preview settings' }).click();
   await expect(page.getByText('Preview settings saved')).toBeVisible();
 });

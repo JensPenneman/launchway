@@ -5,6 +5,7 @@ import {
   PREVIEW_ENV_PLACEHOLDERS,
   PreviewEnvOverrides,
   PreviewHostTemplate,
+  PreviewLabel,
 } from '@launchway/contracts';
 import { useQuery } from '@tanstack/react-query';
 import { Loader2 } from 'lucide-react';
@@ -27,6 +28,8 @@ import { formatDotenv } from './previews-env';
 export function PreviewsCard({ app }: { app: App }) {
   const platform = useQuery(settingsQuery);
   const [enabled, setEnabled] = useState(app.previews.enabled);
+  const [skipBots, setSkipBots] = useState(app.previews.skipBots);
+  const [requireLabel, setRequireLabel] = useState(app.previews.requireLabel ?? '');
   const [hostTemplate, setHostTemplate] = useState(app.previews.hostTemplate);
   const [overridesText, setOverridesText] = useState(formatDotenv(app.previews.envOverrides));
   const [composeFiles, setComposeFiles] = useState((app.previews.composeFiles ?? []).join('\n'));
@@ -45,7 +48,10 @@ export function PreviewsCard({ app }: { app: App }) {
     .filter(Boolean);
   const compose = composeList.length === 0 ? null : ComposeFiles.safeParse(composeList);
   const composeError = compose && !compose.success ? compose.error.issues[0]?.message : undefined;
-  const valid = template.success && overrides.success && !overridesError && !composeError;
+  const label = requireLabel.trim() === '' ? null : PreviewLabel.safeParse(requireLabel);
+  const labelError = label && !label.success ? label.error.issues[0]?.message : undefined;
+  const valid =
+    template.success && overrides.success && !overridesError && !composeError && !labelError;
 
   const base = platform.data?.previewBaseDomain ?? null;
   const example = template.success
@@ -60,6 +66,8 @@ export function PreviewsCard({ app }: { app: App }) {
       updateApp(app.id, {
         previews: {
           enabled,
+          skipBots,
+          requireLabel: label?.success ? label.data : null,
           hostTemplate: template.success ? template.data : hostTemplate,
           envOverrides: overrides.success ? overrides.data : {},
           composeFiles: compose?.success ? compose.data : null,
@@ -96,6 +104,31 @@ export function PreviewsCard({ app }: { app: App }) {
             </div>
             <Switch id="settings-previews-enabled" checked={enabled} onCheckedChange={setEnabled} />
           </div>
+          <div className="flex items-center justify-between gap-4 rounded-lg border p-3">
+            <div>
+              <Label htmlFor="settings-previews-skip-bots">Skip pull requests from bots</Label>
+              <p className="text-xs text-muted-foreground">
+                Pull requests by Dependabot and other bots get no preview; the Previews tab can
+                still open one.
+              </p>
+            </div>
+            <Switch
+              id="settings-previews-skip-bots"
+              checked={skipBots}
+              onCheckedChange={setSkipBots}
+            />
+          </div>
+          <Field
+            label="Only pull requests with label"
+            error={labelError}
+            description="Optional. Adding the label opens the preview, removing it closes it. Leave empty to preview every pull request."
+          >
+            <Input
+              placeholder="preview"
+              value={requireLabel}
+              onChange={(event) => setRequireLabel(event.target.value)}
+            />
+          </Field>
           <Field
             label="Host name template"
             error={template.success ? undefined : template.error.issues[0]?.message}

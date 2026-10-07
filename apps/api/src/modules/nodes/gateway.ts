@@ -54,6 +54,11 @@ export interface GatewayTimeouts {
   helloMs: number;
   /** A node without heartbeat for this long is offline. */
   offlineAfterMs: number;
+  /**
+   * How long a disconnected node may take to reconnect before its in-progress deployments are
+   * failed. The agent keeps running them while its socket is down and replays their reports.
+   */
+  offlineGraceMs: number;
   /** How often the offline sweep runs. */
   sweepIntervalMs: number;
 }
@@ -65,8 +70,11 @@ const DEFAULT_TIMEOUTS: GatewayTimeouts = {
   cancelMs: 30_000,
   helloMs: 10_000,
   offlineAfterMs: NODE_OFFLINE_AFTER_MS,
+  offlineGraceMs: NODE_OFFLINE_AFTER_MS,
   sweepIntervalMs: 5_000,
 };
+/** Attempts to hand a deployment result to the sink (transient database errors). */
+const RESULT_DELIVERY_ATTEMPTS = 4;
 
 const DEFAULT_LOG_TAIL = 200;
 /** Standard close code for protocol violations. */
@@ -153,7 +161,10 @@ export class NodeAgentGateway implements AgentGateway {
   readonly #streams = new Map<string, LogStream>();
   /** Serializes status writes per node (handshake vs. offline marking). */
   readonly #nodeQueues = new Map<NodeId, Promise<void>>();
+  /** Nodes that disconnected and have until the timer fires to come back. */
+  readonly #offlineTimers = new Map<NodeId, NodeJS.Timeout>();
   #sweepTimer: NodeJS.Timeout | undefined;
+  #stopped = false;
 
   constructor(options: CreateAgentGatewayOptions) {
     this.#deps = options.deps;
@@ -167,7 +178,8 @@ export class NodeAgentGateway implements AgentGateway {
 
   /**
    * Marks nodes left `online` by a previous process offline (no socket survives a restart) and
-   * starts the heartbeat sweep. Stops with the process lifecycle.
+   * starts the heartbeat sweep. Their agents get the grace period to reconnect before their
+   * deployments are failed. Stops with the process lifecycle.
    */
   async start(): Promise<void> {
     const stale = await this.#store.markAllOffline();
@@ -178,7 +190,7 @@ export class NodeAgentGateway implements AgentGateway {
         resourceId: nodeId,
         data: { status: 'offline' },
       });
-      await this.#deliver(() => this.#sink.onNodeOffline(nodeId), 'onNodeOffline', nodeId);
+      this.#scheduleOffline(nodeId);
     }
     this.#sweepTimer = setInterval(() => this.#sweep(), this.#timeouts.sweepIntervalMs);
     this.#sweepTimer.unref();
@@ -187,12 +199,16 @@ export class NodeAgentGateway implements AgentGateway {
 
   /** Stops the sweep and closes every agent socket (process shutdown). */
   stop(): void {
+    this.#stopped = true;
     clearInterval(this.#sweepTimer);
     this.#sweepTimer = undefined;
     for (const connection of [...this.#connections.values()]) {
       this.#closeSocket(connection, 1001, 'server shutting down');
       this.#disconnected(connection);
     }
+    // Shutting down is not the nodes going away: leave their deployments to the next process.
+    for (const timer of this.#offlineTimers.values()) clearTimeout(timer);
+    this.#offlineTimers.clear();
   }
 
   /** Resolves a bearer token of the upgrade request; null when it is not valid. */
@@ -442,6 +458,8 @@ export class NodeAgentGateway implements AgentGateway {
       connection.state = 'ready';
       connection.lastSeen = Date.now();
       this.#connections.set(nodeId, connection);
+      clearTimeout(this.#offlineTimers.get(nodeId));
+      this.#offlineTimers.delete(nodeId);
       this.#trySend(
         connection,
         this.#helloOk(connection, hello.protocolVersion, outcome.credential ?? undefined),
@@ -467,11 +485,17 @@ export class NodeAgentGateway implements AgentGateway {
       case 'hello':
         this.#log.warn({ nodeId }, 'ignoring repeated hello');
         return;
-      case 'heartbeat':
+      case 'heartbeat': {
         this.#store.touch(nodeId, new Date()).catch((error: unknown) => {
           this.#log.error({ err: error, nodeId }, 'failed to record heartbeat');
         });
+        const onHeartbeat = this.#sink.onHeartbeat?.bind(this.#sink);
+        if (onHeartbeat) {
+          const active = message.payload.activeDeploymentIds;
+          this.#forward(connection, 'onHeartbeat', () => onHeartbeat(nodeId, active));
+        }
         return;
+      }
       case 'deployment.progress':
         this.#settle(connection, message.id, 'deploy', undefined);
         this.#forward(connection, 'onProgress', () =>
@@ -493,7 +517,12 @@ export class NodeAgentGateway implements AgentGateway {
             this.#settle(connection, id, 'cancel', undefined);
           }
         }
-        this.#forward(connection, 'onResult', () => this.#sink.onResult(nodeId, message.payload));
+        this.#forward(
+          connection,
+          'onResult',
+          () => this.#sink.onResult(nodeId, message.payload),
+          RESULT_DELIVERY_ATTEMPTS,
+        );
         return;
       case 'app.status': {
         const kind = this.#pending.get(message.id)?.kind;
@@ -658,18 +687,54 @@ export class NodeAgentGateway implements AgentGateway {
     else stream.resolve();
   }
 
-  #forward(connection: Connection, what: string, call: () => Promise<void>): void {
+  #forward(connection: Connection, what: string, call: () => Promise<void>, attempts = 1): void {
     connection.sinkChain = connection.sinkChain.then(() =>
-      this.#deliver(call, what, connection.nodeId),
+      this.#deliver(call, what, connection.nodeId, attempts),
     );
   }
 
-  async #deliver(call: () => Promise<void>, what: string, nodeId: NodeId): Promise<void> {
-    try {
-      await call();
-    } catch (error) {
-      this.#log.error({ err: error, nodeId, sink: what }, 'deployment sink failed');
+  /** Calls the sink; retries with a short backoff when `attempts` > 1 (results must not drop). */
+  async #deliver(
+    call: () => Promise<void>,
+    what: string,
+    nodeId: NodeId,
+    attempts = 1,
+  ): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await call();
+        return;
+      } catch (error) {
+        if (attempt >= attempts || this.#deps.lifecycle.shuttingDown) {
+          this.#log.error({ err: error, nodeId, sink: what }, 'deployment sink failed');
+          return;
+        }
+        this.#log.warn(
+          { err: error, nodeId, sink: what, attempt },
+          'deployment sink failed; retrying',
+        );
+        await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
+      }
     }
+  }
+
+  /**
+   * Fails the node's in-progress deployments unless it reconnects within the grace period: a
+   * dropped socket does not stop the agent, which replays its reports after the next hello.
+   */
+  #scheduleOffline(nodeId: NodeId): void {
+    if (this.#stopped) return;
+    clearTimeout(this.#offlineTimers.get(nodeId));
+    const timer = setTimeout(() => {
+      if (this.#offlineTimers.get(nodeId) !== timer) return;
+      this.#offlineTimers.delete(nodeId);
+      this.#enqueue(nodeId, async () => {
+        if (this.#connections.has(nodeId)) return;
+        await this.#deliver(() => this.#sink.onNodeOffline(nodeId), 'onNodeOffline', nodeId);
+      });
+    }, this.#timeouts.offlineGraceMs);
+    timer.unref();
+    this.#offlineTimers.set(nodeId, timer);
   }
 
   #enqueue(nodeId: NodeId, task: () => Promise<void>): void {
@@ -724,7 +789,7 @@ export class NodeAgentGateway implements AgentGateway {
         resourceId: nodeId,
         data: { status: 'offline' },
       });
-      await this.#deliver(() => this.#sink.onNodeOffline(nodeId), 'onNodeOffline', nodeId);
+      this.#scheduleOffline(nodeId);
     });
   }
 

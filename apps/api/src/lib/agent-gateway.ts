@@ -67,8 +67,16 @@ export interface DeploymentSink {
   onLog(nodeId: NodeId, payload: DeploymentLogPayload): Promise<void>;
   onResult(nodeId: NodeId, payload: DeploymentResultPayload): Promise<void>;
   onAppStatus(nodeId: NodeId, payload: AppStatusPayload): Promise<void>;
-  /** The node lost its connection: in-flight deployments on it must not stay in progress forever. */
+  /**
+   * The node lost its connection and did not come back within the grace period: in-flight
+   * deployments on it must not stay in progress forever.
+   */
   onNodeOffline(nodeId: NodeId): Promise<void>;
+  /**
+   * Optional: a heartbeat listed the deployments the agent still queues or runs. Lets the sink
+   * settle deployments whose result was lost, and re-send claimed ones the agent never got.
+   */
+  onHeartbeat?(nodeId: NodeId, activeDeploymentIds: readonly DeploymentId[]): Promise<void>;
   /**
    * Optional: an agent completed its handshake (queued deployments for the node can be sent now).
    * Called after the node is marked online.
@@ -104,6 +112,7 @@ export function createDeferredDeploymentSink(): {
       onAppStatus: (nodeId, payload) => target.onAppStatus(nodeId, payload),
       onNodeOffline: (nodeId) => target.onNodeOffline(nodeId),
       onNodeOnline: (nodeId) => target.onNodeOnline?.(nodeId) ?? Promise.resolve(),
+      onHeartbeat: (nodeId, active) => target.onHeartbeat?.(nodeId, active) ?? Promise.resolve(),
     },
     bind(next) {
       target = next;

@@ -29,7 +29,10 @@ import { AgentRequestError } from '../../src/lib/agent-gateway.js';
 import type { Principal } from '../../src/lib/auth-context.js';
 import { basicAuthorization } from '../../src/lib/git-provider.js';
 import { createDispatcher } from '../../src/modules/deployments/dispatcher.js';
-import { createDeploymentSink } from '../../src/modules/deployments/sink.js';
+import {
+  createDeploymentSink,
+  LOST_DEPLOYMENT_MESSAGE,
+} from '../../src/modules/deployments/sink.js';
 import { createTestDeps, fixedAuth, testPrincipal } from '../support/deps.js';
 import { FakeAgentGateway } from '../support/fake-agent-gateway.js';
 import { FakeGitHub, sha } from '../support/fake-github.js';
@@ -365,6 +368,38 @@ describe('apps and deployments against PostgreSQL', () => {
       .from(auditEvents)
       .where(and(eq(auditEvents.targetId, a.id), eq(auditEvents.action, 'deployment.fail')));
     expect(failedAudit).toBeDefined();
+  });
+
+  it('keeps queued work on online nodes and settles deployments the agent stops reporting', async () => {
+    const node = await insertNode('192.168.1.43');
+    gateway.connect(node);
+    const app = await createTestApp(node);
+    const sink = createDeploymentSink(deps);
+    const a = await deploy(app.id, 'v1.0.0');
+    const b = await deploy(app.id, 'v1.1.0');
+    await sink.onProgress(node, { deploymentId: a.id, status: 'cloning' });
+
+    // Waiting behind a long build on an online node is not a dispatch timeout.
+    await createDispatcher(deps).tick(new Date(Date.now() + QUEUED_DEPLOYMENT_TIMEOUT_MS + 1000));
+    expect((await getDeployment(b.id)).status).toBe('queued');
+
+    // Listed by the agent: kept. Left out of two heartbeats once old enough: its result was lost.
+    await db
+      .update(deployments)
+      .set({ startedAt: new Date(Date.now() - 60_000) })
+      .where(eq(deployments.id, a.id));
+    await sink.onHeartbeat?.(node, [a.id]);
+    await sink.onHeartbeat?.(node, []);
+    expect((await getDeployment(a.id)).status).toBe('cloning');
+    await sink.onHeartbeat?.(node, []);
+    expect(await getDeployment(a.id)).toMatchObject({
+      status: 'failed',
+      statusMessage: LOST_DEPLOYMENT_MESSAGE,
+    });
+    // The app is free again: the next queued deployment goes out.
+    await vi.waitFor(() =>
+      expect(gateway.deployed.some((d) => d.payload.deploymentId === b.id)).toBe(true),
+    );
   });
 
   it('cancels locally when the agent does not know the deployment, 502 when it does not answer', async () => {

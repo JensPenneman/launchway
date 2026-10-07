@@ -1,4 +1,5 @@
 import {
+  type AppId,
   type AppStatusPayload,
   canTransition,
   type DeploymentId,
@@ -10,7 +11,7 @@ import {
   type LogLine,
   type NodeId,
 } from '@slipway/contracts';
-import { and, eq, inArray, isNotNull, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import type { DeploymentSink } from '../../lib/agent-gateway.js';
 import { apps } from '../apps/schema.js';
@@ -21,6 +22,12 @@ import { ACTIVE_STATUSES, agentActor, announceStatus, type DeploymentRow } from 
 import { deploymentLogLines, deployments } from './schema.js';
 
 export const NODE_OFFLINE_MESSAGE = 'node went offline';
+export const LOST_DEPLOYMENT_MESSAGE =
+  'The node no longer reports this deployment; its result was lost';
+/** Heartbeats in a row that must leave out a deployment before it is settled. */
+const RECONCILE_AFTER_HEARTBEATS = 2;
+/** Deployments claimed more recently than this are left alone (the deploy may be in flight). */
+const RECONCILE_MIN_AGE_MS = 30_000;
 
 /**
  * Receives what agents report (called by the nodes module for every matching message) and turns
@@ -33,6 +40,31 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
   /** Per-deployment queue so log batches get gap-free, ordered sequence numbers. */
   const chains = new Map<DeploymentId, Promise<void>>();
   const nextSeq = new Map<DeploymentId, number>();
+  /** In-progress deployments the node's last heartbeats did not list, with the count. */
+  const unreported = new Map<DeploymentId, { nodeId: NodeId; count: number }>();
+
+  /** Fails a deployment the agent no longer has (its result never reached the database). */
+  async function failLost(nodeId: NodeId, row: DeploymentRow): Promise<void> {
+    const failed = await deps.db.transaction(async (tx) => {
+      const [updated] = await tx
+        .update(deployments)
+        .set({ status: 'failed', statusMessage: LOST_DEPLOYMENT_MESSAGE, finishedAt: new Date() })
+        .where(and(eq(deployments.id, row.id), eq(deployments.status, row.status)))
+        .returning();
+      if (updated) {
+        await recordAudit(tx, agentActor(nodeId), {
+          action: 'deployment.fail',
+          target: { type: 'deployment', id: row.id },
+          summary: { appId: row.appId, reason: LOST_DEPLOYMENT_MESSAGE },
+        });
+      }
+      return updated;
+    });
+    if (!failed) return;
+    nextSeq.delete(row.id);
+    logger.warn({ nodeId, deploymentId: row.id }, 'failed a deployment the node no longer reports');
+    announceStatus(deps, failed, true);
+  }
 
   function serialize(id: DeploymentId, work: () => Promise<void>): Promise<void> {
     const run = (chains.get(id) ?? Promise.resolve()).then(work);
@@ -216,6 +248,53 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
           data: { appId: payload.appId, services: true },
         });
       }
+    },
+
+    async onHeartbeat(nodeId, activeDeploymentIds) {
+      const active = new Set(activeDeploymentIds);
+      const rows = await deps.db
+        .select()
+        .from(deployments)
+        .where(
+          and(
+            eq(deployments.nodeId, nodeId),
+            or(
+              inArray(deployments.status, ACTIVE_STATUSES),
+              and(eq(deployments.status, 'queued'), isNotNull(deployments.startedAt)),
+            ),
+          ),
+        );
+      const inProgress = new Set(rows.map((row) => row.id));
+      for (const [id, entry] of unreported) {
+        if (entry.nodeId === nodeId && !inProgress.has(id)) unreported.delete(id);
+      }
+      const cutoff = Date.now() - RECONCILE_MIN_AGE_MS;
+      const freed = new Set<AppId>();
+      for (const row of rows) {
+        if (active.has(row.id)) {
+          unreported.delete(row.id);
+          continue;
+        }
+        const count = (unreported.get(row.id)?.count ?? 0) + 1;
+        unreported.set(row.id, { nodeId, count });
+        if (count < RECONCILE_AFTER_HEARTBEATS || (row.startedAt?.getTime() ?? 0) > cutoff) {
+          continue;
+        }
+        unreported.delete(row.id);
+        if (row.status === 'queued') {
+          // Claimed and sent, but the agent never queued it: release it for a new dispatch.
+          await deps.db
+            .update(deployments)
+            .set({ startedAt: null })
+            .where(and(eq(deployments.id, row.id), eq(deployments.status, 'queued')));
+          logger.warn({ nodeId, deploymentId: row.id }, 're-sending a deployment the node lacks');
+        } else {
+          await failLost(nodeId, row);
+        }
+        freed.add(row.appId);
+      }
+      // Not awaited: dispatching waits for the agent's acknowledgement on this same connection.
+      for (const appId of freed) void dispatcher.dispatchApp(appId);
     },
 
     onNodeOnline(nodeId) {

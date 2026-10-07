@@ -115,6 +115,7 @@ function recordingSink() {
     onAppStatus: record('onAppStatus'),
     onNodeOffline: record('onNodeOffline'),
     onNodeOnline: record('onNodeOnline'),
+    onHeartbeat: record('onHeartbeat'),
   };
   return { sink, calls };
 }
@@ -266,8 +267,19 @@ describe('agent gateway over a real WebSocket', () => {
     await setup();
     const { node, agent } = await joined();
     agent.send('future.thing', { anything: true });
-    agent.send('heartbeat', { sentAt: new Date().toISOString(), activeDeploymentIds: [] });
+    const deploymentId = generateId('dep');
+    agent.send('heartbeat', {
+      sentAt: new Date().toISOString(),
+      activeDeploymentIds: [deploymentId],
+    });
     await eventually(() => expect(memory.touches).toContain(node.id));
+    await eventually(() =>
+      expect(recorded.calls).toContainEqual({
+        method: 'onHeartbeat',
+        nodeId: node.id,
+        payload: [deploymentId],
+      }),
+    );
     expect(gateway.isOnline(node.id)).toBe(true);
   });
 
@@ -411,7 +423,7 @@ describe('agent gateway over a real WebSocket', () => {
   });
 
   it('marks the node offline when the socket closes and fails pending requests', async () => {
-    await setup();
+    await setup({ offlineGraceMs: 50 });
     const { node, agent } = await joined();
     const pending = gateway.appStatus(node.id, app);
     await agent.next('status');
@@ -429,6 +441,18 @@ describe('agent gateway over a real WebSocket', () => {
     expect(events).toContainEqual(
       expect.objectContaining({ resourceId: node.id, data: { status: 'offline' } }),
     );
+  });
+
+  it('leaves deployments alone when the agent reconnects within the grace period', async () => {
+    await setup({ offlineGraceMs: 300 });
+    const { node, agent, credential } = await joined();
+    agent.close();
+    await eventually(() => expect(memory.nodes.get(node.id)?.status).toBe('offline'));
+    const again = await connect(credential ?? '');
+    await again.handshake();
+    expect(gateway.isOnline(node.id)).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(recorded.calls.some((c) => c.method === 'onNodeOffline')).toBe(false);
   });
 
   it('marks nodes offline after missing heartbeats', async () => {
@@ -471,13 +495,22 @@ describe('agent gateway over a real WebSocket', () => {
     if (node) node.status = 'online';
     const { sink, calls } = recordingSink();
     const deps = createTestDeps();
-    const fresh = createAgentGateway({ deps, sink, store: store.store });
+    const fresh = createAgentGateway({
+      deps,
+      sink,
+      store: store.store,
+      timeouts: { offlineGraceMs: 20 },
+    });
     const onPublish = vi.fn();
     deps.events.subscribe(onPublish);
     await fresh.start();
-    fresh.stop();
     expect(store.nodes.get(id)?.status).toBe('offline');
-    expect(calls).toEqual([{ method: 'onNodeOffline', nodeId: id, payload: undefined }]);
+    // The agent gets the grace period to reconnect before its deployments are failed.
+    expect(calls).toEqual([]);
+    await eventually(() =>
+      expect(calls).toEqual([{ method: 'onNodeOffline', nodeId: id, payload: undefined }]),
+    );
+    fresh.stop();
     expect(onPublish).toHaveBeenCalledOnce();
     // Not part of this test's server lifecycle.
     memory = store;

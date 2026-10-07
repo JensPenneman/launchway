@@ -171,9 +171,10 @@ builds the multi-arch, signed images `ghcr.io/jenspenneman/launchway` and
 `edge` images. Rebuilding an older release (Images workflow, `version` input)
 moves `latest`, `X.Y` and `X` only when no newer release has them.
 
-`release-please-config.json` pins the first release with `"release-as":
-"0.1.0"`; remove that line in the first commit after `v0.1.0` is tagged, or
-every later release pull request will propose 0.1.0 again.
+The first release, `v0.1.0`, was pinned with `"release-as"` in
+`release-please-config.json`; that line was removed right after the tag, so
+release-please now derives every version from the Conventional Commits since
+the last release.
 
 One-time repository settings, checked before a release is announced:
 

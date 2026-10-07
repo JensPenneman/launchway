@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { type AgentToServerMessage, type DeployPayload, generateId } from '@slipway/contracts';
 import { pino } from 'pino';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { DeploymentManager } from './deployments.js';
+import { DeploymentManager, Semaphore } from './deployments.js';
 import type { Runner, RunOptions, RunResult } from './exec.js';
 import { Workspace } from './workspace.js';
 
@@ -411,5 +411,21 @@ describe('DeploymentManager', () => {
         .map((job) => job.deploymentId)
         .sort(),
     );
+  });
+});
+
+describe('Semaphore', () => {
+  it('lets a waiter leave the queue when its signal aborts', async () => {
+    const slots = new Semaphore(1);
+    let release = () => {};
+    const holder = slots.use(() => new Promise<void>((resolve) => (release = resolve)));
+    const controller = new AbortController();
+    const waiting = slots.use(() => Promise.resolve('never'), controller.signal);
+    controller.abort('cancel');
+    await expect(waiting).rejects.toBe('cancel');
+    release();
+    await holder;
+    // The aborted waiter did not take the freed slot.
+    await expect(slots.use(() => Promise.resolve('next'))).resolves.toBe('next');
   });
 });

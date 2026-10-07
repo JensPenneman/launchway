@@ -77,15 +77,31 @@ class StepError extends Error {
   }
 }
 
-class Semaphore {
+export class Semaphore {
   #free: number;
   readonly #waiters: (() => void)[] = [];
   constructor(slots: number) {
     this.#free = slots;
   }
-  async use<T>(fn: () => Promise<T>): Promise<T> {
+  /** Runs `fn` in a slot; an abort while waiting leaves the queue and rejects at once. */
+  async use<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     if (this.#free > 0) this.#free -= 1;
-    else await new Promise<void>((resolve) => this.#waiters.push(resolve));
+    else {
+      await new Promise<void>((resolve, reject) => {
+        const waiter = () => {
+          signal?.removeEventListener('abort', onAbort);
+          resolve();
+        };
+        const onAbort = () => {
+          const index = this.#waiters.indexOf(waiter);
+          if (index >= 0) this.#waiters.splice(index, 1);
+          reject(signal?.reason);
+        };
+        signal?.addEventListener('abort', onAbort, { once: true });
+        this.#waiters.push(waiter);
+      });
+    }
     try {
       return await fn();
     } finally {
@@ -521,7 +537,7 @@ class DeploymentRun {
         env,
         timeoutMs: TIMEOUTS.pull,
       });
-    });
+    }, this.#signal);
 
     this.#progress('starting', 'Starting containers');
     await this.#exec(

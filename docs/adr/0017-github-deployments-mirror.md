@@ -31,8 +31,9 @@ approval on every installation.
    `deployments` change events. When a deployment is created (or first seen in
    progress) it creates a GitHub deployment of the resolved commit SHA with
    `auto_merge: false` and `required_contexts: []`, in environment
-   `production`, or `preview/<previewKey>` when the deployment carries an
-   `environmentName` (transient, not production). The GitHub id is stored in
+   `deployments.environmentName`: `production`, or `preview/pr-<n>` for a
+   pull request preview (transient, not production; its `environment_url` is
+   the preview's host). The GitHub id is stored in
    `deployments.github_deployment_id`; only the first id sticks.
 3. **Status mapping.** `cloning`/`building`/`starting` -> `in_progress`,
    `running` -> `success` (with `environment_url` = `https://<first route host>`

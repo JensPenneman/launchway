@@ -52,10 +52,26 @@ features that are deliberately out of scope for v0.1 are listed in
 - Creating or updating an app does not check that the repository is reachable
   through the connection; a wrong repository only shows when a deployment
   resolves its ref.
-- Auto-deploy skips prereleases and drafts, and the release poller (token
-  connections) only looks at `/releases/latest`. Make both per-app options.
-- Release-driven deployments use the trigger `auto`; add `release` to
-  `DEPLOYMENT_TRIGGERS` (with a migration) if the distinction matters.
+- The release poller (token connections) only looks at `/releases/latest`, so
+  it ignores `autoDeployPrereleases` and cannot follow branch pushes.
+- Release- and push-driven deployments use the trigger `auto`; add `release`
+  and `push` to `DEPLOYMENT_TRIGGERS` (with a migration) if the distinction
+  matters.
+- Previews and production deployments of one app share a dispatch lane
+  ([ADR 0018](adr/0018-pull-request-previews.md)): a long preview build delays
+  a production deployment of the same app. Split lanes per environment.
+- Preview routes appear in the app's *Domains & routes* tab and in
+  `GET /routes?appId=` like other routes; hide them or mark them.
+- Every preview gets its own certificate. Many previews can hit Let's
+  Encrypt's per-domain limits; a wildcard certificate (DNS-01) for the
+  preview base domain would avoid that.
+- The `pull_request` `edited` action (title change) is ignored; the title
+  refreshes on the next push.
+- The GitHub deployment id is stored but not part of the `Deployment`
+  contract, so the UI cannot link to it yet. The new-app wizard has no
+  "Show deployments on GitHub" switch (the default is on).
+- Mirror refusals and the capability cache live in process memory and reset
+  on restart.
 - Webhook deliveries of apps whose installation was removed still pass the
   signature check; their release events fail to resolve the ref (logged).
 - Members can still change the source of a trusted app (connection,

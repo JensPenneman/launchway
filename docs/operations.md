@@ -361,7 +361,9 @@ deployment page. It needs the `deployments: write` permission; nothing fails
 without it. Turn it off per app under **Settings -> Show deployments on
 GitHub**.
 
-GitHub Apps created by Launchway 0.1 lack that permission. The GitHub
+GitHub Apps created by Launchway 0.1 lack that permission (and the *Pull
+requests* permission and *Pull request* / *Push* events that previews and
+branch deploys use). The GitHub
 connection card in **Settings -> GitHub** then shows *Grant in GitHub* with
 the missing items. To grant them:
 
@@ -369,7 +371,8 @@ the missing items. To grant them:
    -> GitHub Apps -> your Launchway app -> *Permissions & events*).
 2. Under *Repository permissions* set **Deployments** to *Read and write* and
    **Pull requests** to *Read-only*. Under *Subscribe to events* tick
-   **Pull request**. Save; GitHub asks for a reason, any text will do.
+   **Pull request** and **Push** (branch auto-deploys, see *Automatic
+   deployments*). Save; GitHub asks for a reason, any text will do.
 3. Click **Approve on the installation** (or GitHub -> Settings ->
    Applications -> *Installed GitHub Apps* -> the app -> *Configure*) and
    accept the new permissions. For an organization, an owner has to do this.

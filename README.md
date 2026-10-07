@@ -43,8 +43,18 @@ reachable through a REST API; the web UI is only a client of that API.
   fine-grained personal access token. Deploy a release, a branch or a commit;
   every deployment is pinned to a commit SHA, one deployment per app runs at a
   time, and queued or running deployments can be cancelled. Published
-  releases can be deployed automatically (webhooks, or polling for token
-  connections).
+  releases (prereleases optionally) and pushes to a chosen branch can be
+  deployed automatically (webhooks, or release polling for token
+  connections); an automatic deployment whose image CI has not pushed yet
+  retries with backoff for up to an hour.
+- **Pull request previews.** Every pull request from a branch of the
+  repository runs as its own copy of the app at its own host name (for
+  example `trail-pr-42.preview.example.com`), with its own DNS record, route,
+  Compose project and environment overrides. Each push redeploys it; closing
+  or merging the pull request removes it.
+- **Deployments on GitHub.** Every deployment, preview or production, shows
+  in the repository's *Environments* and *Deployments* with its status, URL
+  and a link back to Launchway.
 - **Compose runtime.** One or more Compose files, or a single `Dockerfile`.
   Before anything runs, the node's agent checks the configuration against a
   policy: no host bind mounts, no privileged containers, no host network or
@@ -75,15 +85,15 @@ reachable through a REST API; the web UI is only a client of that API.
   every change.
 - **Environment variables** per app, encrypted at rest. Values marked secret
   are never returned by the API. Every deployment also gets `LAUNCHWAY_APP`,
-  `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA` and the other platform variables.
+  `LAUNCHWAY_REF`, `LAUNCHWAY_COMMIT_SHA`, `LAUNCHWAY_ENVIRONMENT`,
+  `LAUNCHWAY_PUBLIC_URL` and the other platform variables.
 - **API first.** REST under `/api/v1`, an OpenAPI 3.1 document and
   interactive API docs. The web UI is a client of that API and validates every
   response against the shared contract schemas.
 - **Signed images** for `amd64` and `arm64`, with SBOM and provenance
   attestations.
 
-Planned for later releases: blue/green deployments, preview deployments from
-pull requests, a CLI, sign-in with an external OIDC provider, metrics and
+Planned for later releases: blue/green deployments, a CLI, sign-in with an external OIDC provider, metrics and
 alerts, scheduled volume backups, TCP/UDP routing at the edge and other Git
 hosts. See
 [section 15 of the architecture](docs/architecture.md#15-deliberately-later).

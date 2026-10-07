@@ -107,7 +107,10 @@ describe('accounts and authentication against PostgreSQL', () => {
       });
       expect(me.user).not.toHaveProperty('passwordHash');
       expect(admin.cookie).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      expect(await json(await admin.request('GET', '/setup'))).toEqual({ setupRequired: false });
+      expect(await json(await admin.request('GET', '/setup'))).toEqual({
+        setupRequired: false,
+        setupTokenRequired: false,
+      });
     } else {
       // Another test file created users first: continue as a freshly seeded owner-level admin.
       await insertUser(db, {

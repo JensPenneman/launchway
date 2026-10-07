@@ -144,9 +144,10 @@ irm https://raw.githubusercontent.com/JensPenneman/slipway/main/deploy/install.p
 The e-mail address is used for the Let's Encrypt account. The installer
 checks Docker, creates the `slipway-proxy` network (`10.210.0.0/24`), writes
 an `.env` file with generated secrets (`SLIPWAY_SECRET_KEY`,
-`POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN`), pulls the images, starts
-the stack with `docker compose up -d --wait` and prints the setup URL on port
-3000. Open it and create the owner account.
+`POSTGRES_PASSWORD`, `SLIPWAY_LOCAL_JOIN_TOKEN`, `SLIPWAY_SETUP_TOKEN`),
+pulls the images, starts the stack with `docker compose up -d --wait` and
+prints a one-time setup link on port 3000. Open it and create the owner
+account; setup refuses to run without the token in that link.
 
 `install.sh` accepts `--dir` (install directory; `/opt/slipway` when run as
 root on Linux, otherwise `~/slipway`), `--email`, `--port` (host port of the

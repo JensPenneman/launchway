@@ -81,7 +81,7 @@ param(
     $DbVolume = 'slipway_db-data'
     $RawBaseUrl = 'https://raw.githubusercontent.com/JensPenneman/slipway'
     $EnvKeys = @('SLIPWAY_VERSION', 'SLIPWAY_PORT', 'SLIPWAY_PUBLIC_URL', 'SLIPWAY_ACME_EMAIL',
-        'SLIPWAY_SECRET_KEY', 'SLIPWAY_LOCAL_JOIN_TOKEN', 'POSTGRES_PASSWORD', 'LOG_LEVEL')
+        'SLIPWAY_SECRET_KEY', 'SLIPWAY_LOCAL_JOIN_TOKEN', 'SLIPWAY_SETUP_TOKEN', 'POSTGRES_PASSWORD', 'LOG_LEVEL')
 
     function Write-Step([string] $Message) {
         Write-Host '==> ' -ForegroundColor Cyan -NoNewline
@@ -125,10 +125,10 @@ param(
         return , $bytes
     }
 
-    # "slpn_" followed by 43 characters from A-Z, a-z and 0-9.
-    function New-JoinToken {
+    # The prefix ("slpn_" by default) followed by 43 characters from A-Z, a-z and 0-9.
+    function New-JoinToken([string] $Prefix = 'slpn_') {
         $alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789'
-        $token = New-Object System.Text.StringBuilder -ArgumentList 'slpn_'
+        $token = New-Object System.Text.StringBuilder -ArgumentList $Prefix
         while ($token.Length -lt 48) {
             foreach ($byte in (Get-RandomByteArray 64)) {
                 # 248 = 4 * 62: dropping larger bytes keeps all characters equally likely.
@@ -281,6 +281,7 @@ param(
         $secretKey = Get-EnvValue $envLines 'SLIPWAY_SECRET_KEY'
         $dbPassword = Get-EnvValue $envLines 'POSTGRES_PASSWORD'
         $joinToken = Get-EnvValue $envLines 'SLIPWAY_LOCAL_JOIN_TOKEN'
+        $setupToken = Get-EnvValue $envLines 'SLIPWAY_SETUP_TOKEN'
         if ((-not $secretKey -or -not $dbPassword) -and (Invoke-DockerCapture @('volume', 'inspect', $DbVolume)).Ok) {
             throw ("The Docker volume $DbVolume holds an existing Slipway database, but $envFile does not have its secrets. " +
                 "Restore .env from your backup into $Dir, or point -Dir at the existing installation. " +
@@ -290,6 +291,8 @@ param(
         if (-not $secretKey) { $secretKey = [Convert]::ToBase64String((Get-RandomByteArray 32)) }
         if (-not $dbPassword) { $dbPassword = [BitConverter]::ToString((Get-RandomByteArray 32)).Replace('-', '').ToLowerInvariant() }
         if (-not $joinToken) { $joinToken = New-JoinToken }
+        # Required by the first-run setup, so that only the operator can create the owner.
+        if (-not $setupToken) { $setupToken = New-JoinToken 'slps_' }
 
         # Network shared by Caddy, the platform and every routed app.
         $network = Invoke-DockerCapture @('network', 'inspect', '--format', '{{range .IPAM.Config}}{{.Subnet}} {{end}}', $ProxyNetwork)
@@ -347,6 +350,7 @@ param(
             SLIPWAY_ACME_EMAIL       = $Email
             SLIPWAY_SECRET_KEY       = $secretKey
             SLIPWAY_LOCAL_JOIN_TOKEN = $joinToken
+            SLIPWAY_SETUP_TOKEN      = $setupToken
             POSTGRES_PASSWORD        = $dbPassword
             LOG_LEVEL                = $logLevel
         }
@@ -412,8 +416,9 @@ param(
         if ($freshInstall) {
             Write-Host (@(
                     'Next steps:'
-                    '  1. Open the web UI now and create the owner account. Until an owner exists,'
-                    '     anyone who can reach this address can claim the instance.'
+                    '  1. Create the owner account now with this one-time link (it carries the'
+                    "     setup token, SLIPWAY_SETUP_TOKEN in $envFile):"
+                    "     ${url}setup#token=$setupToken"
                     '  2. Forward TCP ports 80 and 443 (and UDP 443 for HTTP/3) from your router to'
                     '     this machine and allow them in Windows Defender Firewall, then add your'
                     '     domain in the web UI.'

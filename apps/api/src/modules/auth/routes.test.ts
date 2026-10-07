@@ -73,6 +73,23 @@ describe('auth routes (authorization and validation)', () => {
     }
   });
 
+  it('refuses setup without the installer token when one is configured', async () => {
+    const deps = createTestDeps({ auth: fixedAuth(null) });
+    const app = createApp({
+      ...deps,
+      config: { ...deps.config, setupToken: 'slps_0123456789abcdefghijABCDEFGHIJ' },
+    });
+    const owner = { email: 'owner@example.com', name: 'Owner', password: 'correct horse battery' };
+    for (const body of [owner, { ...owner, setupToken: 'slps_wrong-token-of-some-length' }]) {
+      const res = await app.request('/api/v1/setup', jsonRequest('POST', body));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({
+        type: 'validation-failed',
+        errors: [{ path: 'setupToken' }],
+      });
+    }
+  });
+
   it('signs out idempotently and clears the cookie', async () => {
     const res = await appFor(null).request('/api/v1/auth/logout', { method: 'POST' });
     expect(res.status).toBe(204);

@@ -58,7 +58,12 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
     const failed = await deps.db.transaction(async (tx) => {
       const [updated] = await tx
         .update(deployments)
-        .set({ status: 'failed', statusMessage: LOST_DEPLOYMENT_MESSAGE, finishedAt: new Date() })
+        .set({
+          status: 'failed',
+          statusMessage: LOST_DEPLOYMENT_MESSAGE,
+          failureReason: null,
+          finishedAt: new Date(),
+        })
         .where(and(eq(deployments.id, row.id), eq(deployments.status, row.status)))
         .returning();
       if (updated) {
@@ -421,7 +426,12 @@ export function createDeploymentSink(deps: Deps): DeploymentSink {
       const failed = await deps.db.transaction(async (tx) => {
         const rows = await tx
           .update(deployments)
-          .set({ status: 'failed', statusMessage: NODE_OFFLINE_MESSAGE, finishedAt: new Date() })
+          .set({
+            status: 'failed',
+            statusMessage: NODE_OFFLINE_MESSAGE,
+            failureReason: null,
+            finishedAt: new Date(),
+          })
           .where(and(eq(deployments.nodeId, nodeId), inArray(deployments.status, ACTIVE_STATUSES)))
           .returning();
         // Sent but not yet started: the agent lost it, so dispatch it again once the node is back.

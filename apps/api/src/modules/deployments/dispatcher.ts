@@ -196,6 +196,7 @@ export function createDispatcher(deps: Deps): Dispatcher {
         .set({
           status: 'failed',
           statusMessage: message,
+          failureReason: null,
           nextAttemptAt: null,
           finishedAt: new Date(),
         })

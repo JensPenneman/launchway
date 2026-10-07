@@ -13,6 +13,7 @@ import { createEventBus } from './lib/event-bus.js';
 import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
 import { createAuthResolver } from './modules/auth/resolver.js';
+import { createAuthService } from './modules/auth/service.js';
 import { startDeploymentWorker } from './modules/deployments/dispatcher.js';
 import { createDeploymentSink } from './modules/deployments/sink.js';
 import { createDomainsService } from './modules/domains/service.js';
@@ -20,6 +21,7 @@ import { edgeReconciler } from './modules/edge/reconciler.js';
 import { startReleasePoller } from './modules/github/poller.js';
 import { createAgentGateway } from './modules/nodes/gateway.js';
 import { ensureLocalNode } from './modules/nodes/service.js';
+import { createSettingsService } from './modules/settings/service.js';
 import { APP_VERSION } from './version.js';
 
 const SHUTDOWN_GRACE_MS = 10_000;
@@ -33,6 +35,24 @@ function readConfig(): Config {
       process.exit(1);
     }
     throw error;
+  }
+}
+
+/** Tells the operator which URL serves the platform and whether the owner still has to be set up. */
+async function logStartupState(deps: Deps, port: number): Promise<void> {
+  const [settings, setup] = await Promise.all([
+    createSettingsService(deps).get(),
+    createAuthService(deps).setupStatus(),
+  ]);
+  deps.logger.info(
+    { publicUrl: settings.effectivePublicUrl },
+    settings.effectivePublicUrl ? 'platform URL' : 'no platform URL set yet',
+  );
+  if (setup.setupRequired) {
+    deps.logger.warn(
+      { setupTokenRequired: setup.setupTokenRequired },
+      `setup required: open http://<this host>:${port}/setup to create the owner account`,
+    );
   }
 }
 
@@ -97,6 +117,9 @@ export async function start(): Promise<void> {
         { address: info.address, port: info.port, version: APP_VERSION },
         'Slipway API listening',
       );
+      logStartupState(deps, info.port).catch((error: unknown) => {
+        logger.warn({ err: error }, 'could not read the platform state');
+      });
     },
   ) as Server;
 

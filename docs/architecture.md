@@ -48,7 +48,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
 | **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
-| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route) and `previews` settings (enabled, host template, env overrides, Compose files). |
+| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route) and `previews` settings (enabled, bot and label filters, host template, env overrides, Compose files). |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app in one environment (`production` or a preview's `preview/pr-<n>`). Has a state machine and logs. |
 | **Preview** | The running copy of an app for one pull request: branch, head commit, host name, the domain and route it created, status (section 4). |
@@ -232,7 +232,8 @@ whose head is a branch of its repository (fork pull requests are ignored)
   `reopened` and `synchronize` upsert the `Preview` (one per app and pull
   request number), ensure its domain and route and queue a deployment of the
   head commit (trigger `preview`, `ref` = the commit); queued preview
-  deployments that no node has yet are cancelled by a newer push. `closed`
+  deployments that no node has yet are cancelled by a newer push. An event
+  for the head that an open preview already deploys changes nothing. `closed`
   (merged or not) removes the route, the domain with its DNS record and the
   Compose project with its volumes, and keeps the row as `closed` for seven
   days; then it is purged with its deployments. The API offers the same by
@@ -241,6 +242,16 @@ whose head is a branch of its repository (fork pull requests are ignored)
   `GET /previews/{id}`, `POST /previews/{id}/redeploy`, `DELETE
   /previews/{id}`. At most `Setting.previewMaxPerApp` (10) previews per app
   and `previewMaxTotal` (20) in total are open.
+- **Filters** (per app, webhook only). `previews.skipBots` (default on)
+  ignores pull requests whose author is a bot (`user.type = Bot` or a login
+  ending in `[bot]`, such as Dependabot), whose CI often builds no image.
+  `previews.requireLabel` (default `null`) ignores pull requests without that
+  label (case-insensitive, like GitHub); `labeled` with it opens the preview
+  of an open pull request, `unlabeled` closes it like `closed`. Each app that
+  ignores a pull request logs one info line with the reason. `closed` always
+  closes, and `POST /apps/{id}/previews` applies no filters (an explicit
+  request), so pushes the filters skip do not update a preview opened by
+  hand. Turning a filter on leaves open previews alone.
 - **Status** (`pending → deploying → running`, `failed`, `closing →
   closed`) follows the preview's deployments; a worker re-derives it, retries
   removals that waited for a node or the DNS provider, and purges old rows.

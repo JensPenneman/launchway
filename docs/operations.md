@@ -308,6 +308,13 @@ the pull request removes it. Setting it up once:
 3. **App.** In the app's settings → Previews, turn previews on. The app needs a
    route: a preview serves the service and port of the app's first route, with
    its protection, compression and HSTS options. Optionally:
+   - keep **Skip pull requests from bots** on (the default): pull requests by
+     Dependabot, Renovate and other bot accounts get no preview. Their CI often
+     fails before it builds an image, and the preview would wait for that image
+     until the retries run out;
+   - set **Only pull requests with label**, e.g. `preview`, to preview only
+     pull requests that carry it: adding the label opens the preview, removing
+     it closes it (matched without regard to case);
    - change the **host name template** (`{slug}`, `{number}`, `{base}`; it
      must contain `{number}` and end with `.{base}`);
    - add **environment overrides**, e.g. `BASE_URL={{previewUrl}}` or
@@ -325,7 +332,12 @@ the pull request removes it. Setting it up once:
 
 Only pull requests from branches of the same repository get previews; pull
 requests from forks are ignored, since their code would run with the app's
-environment. A preview runs as Compose project `launchway-<slug>-pr-<n>`, so
+environment. The bot and label filters apply to the webhook only: the
+Previews tab (or `POST /api/v1/apps/{id}/previews`) opens a preview for any
+open pull request, but pushes the filters skip do not update it; open it again
+for the new head. Turning a filter on leaves open previews alone; close them
+on the Previews tab. Every skipped pull request leaves an info line
+`pull request ignored for previews` with the reason in the API log. A preview runs as Compose project `launchway-<slug>-pr-<n>`, so
 `docker compose -p launchway-trail-pr-42 ps` on the node shows it. Its named
 volumes are removed together with the preview. Closed previews stay listed
 for seven days.

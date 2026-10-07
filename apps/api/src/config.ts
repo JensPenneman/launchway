@@ -81,7 +81,8 @@ const secretKey = z.string().transform((value, ctx) => {
 
 const cidrList = z
   .string()
-  .default('10.210.0.0/24')
+  // Caddy's fixed address only: app containers share the proxy subnet and must not set X-Forwarded-*.
+  .default('10.210.0.2/32')
   .transform((value, ctx) => {
     const cidrs = value
       .split(',')

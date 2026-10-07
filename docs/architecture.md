@@ -404,7 +404,7 @@ API (`slipway` container):
 | `SLIPWAY_PUBLIC_URL` | (from settings) | Overrides `Setting.publicUrl` (useful before setup) |
 | `SLIPWAY_CADDY_ADMIN_URL` | `unix:///run/caddy-admin/admin.sock` | Edge admin API (`http://` only for development) |
 | `SLIPWAY_PROXY_NETWORK` | `slipway-proxy` | Shared Docker network name |
-| `SLIPWAY_TRUSTED_PROXIES` | `10.210.0.0/24` | CIDRs whose `X-Forwarded-*` are trusted |
+| `SLIPWAY_TRUSTED_PROXIES` | `10.210.0.2/32` | CIDRs whose `X-Forwarded-*` are trusted (only Caddy; never the app subnet) |
 | `LOG_LEVEL` | `info` | pino level |
 
 Agent (`slipway-agent` container):

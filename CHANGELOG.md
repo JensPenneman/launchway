@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.1](https://github.com/JensPenneman/launchway/compare/v0.1.0...v0.1.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **agent:** stop reporting Docker network addresses as the LAN IP ([dbf2c88](https://github.com/JensPenneman/launchway/commit/dbf2c88def02c1594885d9752e8637d939c7939b))
+
+
+### Documentation
+
+* record service name collisions on the proxy network in the roadmap ([d12b79b](https://github.com/JensPenneman/launchway/commit/d12b79b5d7be343b5f4e4c8c7244cb4df5cff5d3))
+
 ## [0.1.0](https://github.com/JensPenneman/launchway/compare/v0.1.0...v0.1.0) (2026-10-07)
 
 

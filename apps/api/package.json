@@ -21,15 +21,15 @@
     "openapi:export": "tsx --conditions=@launchway/source scripts/export-openapi.ts"
   },
   "dependencies": {
-    "@hono/node-server": "2.1.3",
+    "@hono/node-server": "2.1.4",
     "@hono/zod-openapi": "1.6.3",
     "@launchway/contracts": "workspace:*",
     "@octokit/auth-app": "8.3.1",
     "@octokit/rest": "22.0.1",
-    "@scalar/hono-api-reference": "0.12.10",
+    "@scalar/hono-api-reference": "0.12.11",
     "@simplewebauthn/server": "14.0.3",
     "argon2": "0.45.1",
-    "drizzle-orm": "0.45.3",
+    "drizzle-orm": "0.45.4",
     "hono": "4.13.13",
     "pg": "8.23.1",
     "pino": "catalog:",

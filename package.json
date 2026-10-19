@@ -36,9 +36,9 @@
     "@biomejs/biome": "2.5.15",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
-    "knip": "6.40.0",
-    "lefthook": "2.1.17",
-    "turbo": "2.11.7",
+    "knip": "6.41.0",
+    "lefthook": "2.2.2",
+    "turbo": "2.11.9",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

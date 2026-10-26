@@ -33,12 +33,12 @@
     "openapi:generate": "turbo run openapi:generate"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
-    "@commitlint/cli": "21.2.3",
-    "@commitlint/config-conventional": "21.2.3",
-    "knip": "6.40.0",
-    "lefthook": "2.1.17",
-    "turbo": "2.11.7",
+    "@biomejs/biome": "2.6.2",
+    "@commitlint/cli": "21.2.4",
+    "@commitlint/config-conventional": "21.2.4",
+    "knip": "6.42.1",
+    "lefthook": "2.2.2",
+    "turbo": "2.11.10",
     "typescript": "catalog:",
     "vitest": "catalog:"
   }

@@ -1,28 +1,35 @@
-import type {
-  ApiToken,
-  App,
-  AuditEvent,
-  Deployment,
-  DnsProviderAccount,
-  DnsProviderInfo,
-  DnsRecord,
-  DnsZone,
-  Domain,
-  EnvVar,
-  GitHubConnection,
-  GitHubRelease,
-  GitHubRepo,
-  IdPrefix,
-  Invitation,
-  LogLine,
-  Node,
-  Passkey,
-  Preview,
-  Route,
-  Session,
-  Settings,
-  TypeId,
-  User,
+import {
+  type ApiToken,
+  type App,
+  type AppChecksSettings,
+  type AuditEvent,
+  CHECK_LOG_RETENTION_MS,
+  type CheckRun,
+  DEFAULT_APP_CHECKS_SETTINGS,
+  DEFAULT_CHECK_CPUS,
+  DEFAULT_CHECK_MEMORY_MB,
+  DEFAULT_CHECK_PIDS_LIMIT,
+  type Deployment,
+  type DnsProviderAccount,
+  type DnsProviderInfo,
+  type DnsRecord,
+  type DnsZone,
+  type Domain,
+  type EnvVar,
+  type GitHubConnection,
+  type GitHubRelease,
+  type GitHubRepo,
+  type IdPrefix,
+  type Invitation,
+  type LogLine,
+  type Node,
+  type Passkey,
+  type Preview,
+  type Route,
+  type Session,
+  type Settings,
+  type TypeId,
+  type User,
 } from '@launchway/contracts';
 
 /** Deterministic type IDs for fixtures (`app_01k7000…0001`), so e2e tests can deep-link. */
@@ -342,6 +349,45 @@ export const TRAIL_APP_ID = fixedId('app', 1);
 export const NOTES_APP_ID = fixedId('app', 2);
 export const MAIL_APP_ID = fixedId('app', 3);
 
+function noChecks(): AppChecksSettings {
+  return {
+    ...DEFAULT_APP_CHECKS_SETTINGS,
+    composeFiles: [...DEFAULT_APP_CHECKS_SETTINGS.composeFiles],
+    items: [],
+  };
+}
+
+/** Trail runs its lint, unit and browser tests in its dev container. */
+function trailChecks(): AppChecksSettings {
+  return {
+    enabled: true,
+    composeFiles: ['.devcontainer/compose.yaml'],
+    branches: ['main'],
+    skipBots: true,
+    items: [
+      {
+        name: 'quality',
+        command: 'pnpm install --frozen-lockfile && pnpm lint && pnpm typecheck',
+        service: 'dev',
+        timeoutMinutes: 20,
+      },
+      {
+        name: 'test',
+        command: 'pnpm install --frozen-lockfile && pnpm test',
+        service: 'dev',
+        timeoutMinutes: 30,
+      },
+      {
+        name: 'e2e',
+        command: 'pnpm install --frozen-lockfile && pnpm exec playwright test',
+        service: 'dev',
+        composeFile: '.devcontainer/compose.e2e.yaml',
+        timeoutMinutes: 45,
+      },
+    ],
+  };
+}
+
 export function createApps(): App[] {
   const base = {
     connectionId: APP_CONNECTION_ID,
@@ -360,6 +406,7 @@ export function createApps(): App[] {
       envOverrides: {} as Record<string, string>,
       composeFiles: null,
     },
+    checks: noChecks(),
   };
   return [
     {
@@ -382,6 +429,7 @@ export function createApps(): App[] {
         envOverrides: { BASE_URL: '{{previewUrl}}' },
         composeFiles: ['compose.preview.yaml'],
       },
+      checks: trailChecks(),
       activeDeploymentId: fixedId('dep', 2),
       createdAt: ago(60 * 24 * 30),
       updatedAt: ago(60 * 24),
@@ -725,6 +773,9 @@ export function createSettings(): Settings {
     previewBaseDomain: 'preview.example.com',
     previewMaxPerApp: 10,
     previewMaxTotal: 20,
+    checkMemoryMb: DEFAULT_CHECK_MEMORY_MB,
+    checkCpus: DEFAULT_CHECK_CPUS,
+    checkPidsLimit: DEFAULT_CHECK_PIDS_LIMIT,
     updatedAt: ago(60 * 24),
   };
 }
@@ -828,4 +879,160 @@ export function createPreviews(): { previews: Preview[]; deployments: Deployment
       },
     ],
   };
+}
+
+// --- Check runs --------------------------------------------------------------------------------
+
+/**
+ * Check runs of Trail: pull request #42 in progress, main and older runs done. E2e tests open
+ * `chk 3` (e2e on main, failed) and `chk 4` (quality of #42, running) by id.
+ */
+export function createCheckRuns(): CheckRun[] {
+  const trail = trailChecks();
+  const run = (
+    n: number,
+    name: string,
+    status: CheckRun['status'],
+    minutesAgo: number,
+    extra: Partial<CheckRun> = {},
+  ): CheckRun => {
+    const item = trail.items.find((entry) => entry.name === name) ?? trail.items[0];
+    const finished = status !== 'queued' && status !== 'running';
+    const started = status !== 'queued';
+    return {
+      id: fixedId('chk', n),
+      appId: TRAIL_APP_ID,
+      nodeId: EDGE_NODE_ID,
+      name,
+      command: item?.command ?? 'pnpm test',
+      service: item?.service ?? 'dev',
+      composeFiles: item?.composeFile ? [item.composeFile] : [...trail.composeFiles],
+      timeoutMinutes: item?.timeoutMinutes ?? 30,
+      commitSha: sha(2),
+      ref: 'main',
+      prNumber: null,
+      trigger: 'push',
+      status,
+      reason: status === 'succeeded' || status === 'failed' ? 'exit' : null,
+      exitCode: status === 'succeeded' ? 0 : status === 'failed' ? 1 : null,
+      statusMessage: null,
+      githubState:
+        status === 'succeeded'
+          ? 'success'
+          : status === 'failed'
+            ? 'failure'
+            : finished
+              ? 'error'
+              : 'pending',
+      triggeredBy: null,
+      createdAt: ago(minutesAgo),
+      startedAt: started ? ago(minutesAgo - 0.2) : null,
+      finishedAt: finished ? ago(minutesAgo - 3.4) : null,
+      updatedAt: ago(finished ? minutesAgo - 3.4 : minutesAgo),
+      ...extra,
+    };
+  };
+  const pullRequest = { commitSha: sha(90), ref: 'feature/elevation', prNumber: 42 } as const;
+  const runs: CheckRun[] = [
+    run(4, 'quality', 'running', 2, { ...pullRequest, trigger: 'pull_request' }),
+    run(5, 'test', 'queued', 2, { ...pullRequest, trigger: 'pull_request' }),
+    run(6, 'e2e', 'queued', 2, { ...pullRequest, trigger: 'pull_request' }),
+    run(1, 'quality', 'succeeded', 60 * 3),
+    run(2, 'test', 'succeeded', 60 * 3),
+    run(3, 'e2e', 'failed', 60 * 3),
+    run(7, 'e2e', 'cancelled', 60 * 5, {
+      trigger: 'manual',
+      triggeredBy: OWNER_ID,
+      reason: 'cancelled',
+      startedAt: ago(60 * 5 - 0.2),
+      finishedAt: ago(60 * 5 - 1),
+    }),
+    run(8, 'quality', 'errored', 60 * 20, {
+      commitSha: sha(1),
+      ref: 'v1.4.1',
+      trigger: 'manual',
+      triggeredBy: OWNER_ID,
+      reason: 'build',
+      statusMessage: 'Building service dev failed: the base image node:24-bookworm was not found',
+    }),
+    run(9, 'test', 'failed', 60 * 24, {
+      commitSha: sha(1),
+      reason: 'timeout',
+      exitCode: null,
+      finishedAt: ago(60 * 24 - 30.2),
+      statusMessage: 'The command ran longer than 30 minutes',
+    }),
+  ];
+  // Older pushes to main every three days: their logs are past the 30-day retention after a month.
+  for (let index = 0; index < 12; index += 1) {
+    const minutesAgo = 60 * 24 * (3 * index + 2);
+    for (const [offset, name] of ['quality', 'test'].entries()) {
+      runs.push(
+        run(100 + index * 2 + offset, name, 'succeeded', minutesAgo, {
+          commitSha: sha(200 + index),
+        }),
+      );
+    }
+  }
+  return runs;
+}
+
+const CHECK_OUTPUT: Record<string, [LogLine['stream'], string][]> = {
+  quality: [
+    ['stdout', '> trail@1.4.2 lint /workspaces/trail'],
+    ['stdout', '> biome check .'],
+    ['stdout', 'Checked 214 files in 412ms. No fixes applied.'],
+    ['stdout', '> trail@1.4.2 typecheck /workspaces/trail'],
+    ['stdout', '> tsc -b'],
+  ],
+  test: [
+    ['stdout', '> trail@1.4.2 test /workspaces/trail'],
+    ['stdout', ' ✓ src/routes/planner.test.ts (18 tests) 212ms'],
+    ['stdout', ' ✓ src/lib/gpx.test.ts (31 tests) 96ms'],
+    ['stdout', ' Test Files  2 passed (2)'],
+  ],
+  e2e: [
+    ['stdout', 'Running 24 tests using 4 workers'],
+    ['stdout', '  ✓  1 [chromium] › planner.spec.ts:12:1 › plans a loop (2.1s)'],
+    ['stderr', '  ✘  2 [chromium] › map.spec.ts:40:1 › draws the elevation profile (5.0s)'],
+    ['stderr', '    Error: expect(locator).toBeVisible() failed'],
+    ['stdout', '  1 failed, 23 passed (38.4s)'],
+  ],
+};
+
+/** Log lines of a fixture run; runs older than the log retention have none. */
+export function checkRunLog(run: CheckRun): LogLine[] {
+  if (!run.startedAt || NOW - Date.parse(run.createdAt) > CHECK_LOG_RETENTION_MS) {
+    return [];
+  }
+  const lines: [LogLine['stream'], string][] = [
+    ['system', `Checking out example-org/trail at ${run.commitSha.slice(0, 7)} (${run.ref ?? ''})`],
+    ['system', `Building service ${run.service} (${run.composeFiles.join(', ')})`],
+    ['stdout', '#1 [dev internal] load build definition from Dockerfile'],
+    ['stdout', '#6 [dev 3/4] RUN corepack enable && corepack prepare pnpm@11 --activate'],
+  ];
+  if (run.reason === 'build') {
+    lines.push(['stderr', run.statusMessage ?? 'Build failed']);
+  } else {
+    lines.push(['system', `Running in ${run.service}: ${run.command}`]);
+    const output = CHECK_OUTPUT[run.name] ?? [];
+    if (run.status === 'running') {
+      lines.push(...output.slice(0, 2));
+    } else if (run.status === 'cancelled') {
+      lines.push(...output.slice(0, 1), ['system', 'Cancelled']);
+    } else if (run.reason === 'timeout') {
+      lines.push(...output.slice(0, 2), ['system', run.statusMessage ?? 'Timed out']);
+    } else {
+      const shown =
+        run.status === 'succeeded' ? output.filter(([stream]) => stream !== 'stderr') : output;
+      lines.push(...shown, ['system', `Exited with code ${run.exitCode ?? 0}`]);
+    }
+  }
+  const start = Date.parse(run.startedAt);
+  return lines.map(([stream, line], seq) => ({
+    seq,
+    stream,
+    line,
+    timestamp: new Date(start + seq * 3_000).toISOString(),
+  }));
 }

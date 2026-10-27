@@ -7,6 +7,7 @@ import { Page, PageHeader } from '@/components/page-header';
 import { ErrorAlert, ListSkeleton } from '@/components/query-state';
 import { StatusBadge } from '@/components/status-badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { ChecksTab } from '@/features/apps/checks-tab';
 import { DangerZoneTab } from '@/features/apps/danger-zone-tab';
 import { DeploymentsTab } from '@/features/apps/deployments-tab';
 import { DomainsTab } from '@/features/apps/domains-tab';
@@ -19,6 +20,7 @@ import { useCan } from '@/hooks/use-me';
 const TABS = [
   'overview',
   'deployments',
+  'checks',
   'previews',
   'environment',
   'domains',
@@ -30,6 +32,7 @@ type AppTab = (typeof TABS)[number];
 const TAB_LABELS: Record<AppTab, string> = {
   overview: 'Overview',
   deployments: 'Deployments',
+  checks: 'Checks',
   previews: 'Previews',
   environment: 'Environment',
   domains: 'Domains & routes',
@@ -40,19 +43,22 @@ const TAB_LABELS: Record<AppTab, string> = {
 interface AppSearch {
   tab?: AppTab;
   deployment?: string;
+  /** Check run shown in the drawer of the checks tab. */
+  check?: string;
 }
 
 export const Route = createFileRoute('/_app/apps/$appId')({
   validateSearch: (search: Record<string, unknown>): AppSearch => ({
     ...(TABS.includes(search.tab as AppTab) ? { tab: search.tab as AppTab } : {}),
     ...(typeof search.deployment === 'string' ? { deployment: search.deployment } : {}),
+    ...(typeof search.check === 'string' ? { check: search.check } : {}),
   }),
   component: AppDetail,
 });
 
 function AppDetail() {
   const { appId } = Route.useParams();
-  const { tab = 'overview', deployment } = Route.useSearch();
+  const { tab = 'overview', deployment, check } = Route.useSearch();
   const navigate = useNavigate({ from: Route.fullPath });
   const app = useQuery(appQuery(appId));
   const canManage = useCan('member');
@@ -142,6 +148,18 @@ function AppDetail() {
               void navigate({
                 search: id ? { tab: 'deployments', deployment: id } : { tab: 'deployments' },
               })
+            }
+          />
+        </TabsContent>
+        <TabsContent value="checks" className="mt-4">
+          <ChecksTab
+            app={data}
+            openRunId={check ?? null}
+            onOpenRun={(id) =>
+              void navigate({ search: id ? { tab: 'checks', check: id } : { tab: 'checks' } })
+            }
+            onConfigure={
+              canManage ? () => void navigate({ search: { tab: 'settings' } }) : undefined
             }
           />
         </TabsContent>

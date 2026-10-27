@@ -1,5 +1,6 @@
 import {
   AppLogLine,
+  CheckRunStatus,
   DeploymentStatus,
   type EventTopic,
   LogLine,
@@ -9,6 +10,7 @@ import {
 } from '@launchway/contracts';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
+import { checkLogsUrl } from './checks';
 import { keysForTopic } from './keys';
 import { buildUrl } from './request';
 
@@ -196,6 +198,26 @@ export function useDeploymentLogStream(url: string | null) {
     },
   });
   return { ...stream, status };
+}
+
+const CheckStatusPayload = z.object({ status: CheckRunStatus });
+
+/**
+ * Log of one check run (`GET /checks/{id}/logs?follow=true`), deduplicated by `seq`: the stored
+ * lines, then live lines and `status` events while the run is queued or running. `status` is the
+ * last status the stream reported for this run (null before the first one).
+ */
+export function useCheckLogStream(runId: string | null) {
+  const [reported, setReported] = useState<{ runId: string; status: CheckRunStatus } | null>(null);
+  const stream = useLogStream(runId ? checkLogsUrl(runId) : null, LogLine, {
+    isDuplicate: (line, last) => last !== undefined && line.seq <= last.seq,
+    events: [SSE_EVENTS.status],
+    onEvent: (_name, data) => {
+      const parsed = CheckStatusPayload.safeParse(data);
+      if (parsed.success && runId) setReported({ runId, status: parsed.data.status });
+    },
+  });
+  return { ...stream, status: reported?.runId === runId ? reported.status : null };
 }
 
 /** Live container logs of an app (`GET /apps/{id}/logs?follow=true`). */

@@ -2,6 +2,7 @@ import {
   type App,
   CreateAppInput,
   CreateDeploymentInput,
+  DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_APP_PREVIEW_SETTINGS,
   type Deployment,
   type DeploymentStatus,
@@ -184,6 +185,11 @@ export const appHandlers = [
       trustedMounts: data.trustedMounts,
       proxyServices: [],
       previews: { ...DEFAULT_APP_PREVIEW_SETTINGS },
+      checks: {
+        ...DEFAULT_APP_CHECKS_SETTINGS,
+        composeFiles: [...DEFAULT_APP_CHECKS_SETTINGS.composeFiles],
+        items: [],
+      },
       activeDeploymentId: null,
       createdAt: now(),
       updatedAt: now(),
@@ -211,13 +217,21 @@ export const appHandlers = [
       const trustDenied = guardTrustedMounts();
       if (trustDenied) return trustDenied;
     }
-    const { composeFiles, dockerfile, context, proxyServices, previews, ...rest } = data;
+    const { composeFiles, dockerfile, context, proxyServices, previews, checks, ...rest } = data;
     if (previews) {
       const next = { ...app.previews };
       for (const [key, value] of Object.entries(previews)) {
         if (value !== undefined) Object.assign(next, { [key]: value });
       }
       app.previews = next;
+    }
+    if (checks) {
+      // Partial merge like the API; `items` replaces the whole list.
+      const next = { ...app.checks };
+      for (const [key, value] of Object.entries(checks)) {
+        if (value !== undefined) Object.assign(next, { [key]: value });
+      }
+      app.checks = next;
     }
     if (proxyServices && proxyServices.join(',') !== app.proxyServices.join(',')) {
       const adminOnly = guard('admin');
@@ -237,6 +251,7 @@ export const appHandlers = [
     const app = findApp(params.id);
     if (!app) return problem('not-found');
     db.apps = db.apps.filter((item) => item !== app);
+    db.checkRuns = db.checkRuns.filter((run) => run.appId !== app.id);
     db.routes = db.routes.filter(
       (route) => !(route.target.kind === 'app' && route.target.appId === app.id),
     );

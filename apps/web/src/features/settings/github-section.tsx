@@ -1,9 +1,4 @@
-import {
-  CreatePatConnectionInput,
-  type GitHubConnection,
-  type GitHubConnectionCapabilities,
-  GitHubLogin,
-} from '@launchway/contracts';
+import { CreatePatConnectionInput, type GitHubConnection, GitHubLogin } from '@launchway/contracts';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   ExternalLink,
@@ -47,6 +42,12 @@ import {
 import { Input } from '@/components/ui/input';
 import { fieldError, zodResolver } from '@/lib/form';
 import { formatRelative } from '@/lib/format';
+import {
+  capabilitiesComplete,
+  capabilityHint,
+  capabilitySummary,
+  capabilityTitle,
+} from './github-capabilities';
 
 export function GitHubSection() {
   const connections = useQuery(connectionsQuery);
@@ -165,8 +166,9 @@ export function GitHubSection() {
 }
 
 /**
- * Whether Launchway may record deployments (and read pull requests) on GitHub, with a link to
- * grant what is missing. Apps created before these permissions existed need an update on GitHub.
+ * Whether Launchway may record deployments, read pull requests and report checks as commit
+ * statuses on GitHub, with a link to grant what is missing. Apps created before these permissions
+ * existed need an update on GitHub.
  */
 function ConnectionCapabilities({ connection }: { connection: GitHubConnection }) {
   const capabilities = useQuery(capabilitiesQuery(connection.id));
@@ -185,12 +187,11 @@ function ConnectionCapabilities({ connection }: { connection: GitHubConnection }
     );
   }
   const caps = capabilities.data;
-  if (caps.missing.length === 0 && caps.lastDeniedAt === null) {
+  if (capabilitiesComplete(caps)) {
     return (
       <p className="flex items-center gap-2 text-xs text-muted-foreground">
         <Rocket className="size-3.5" aria-hidden="true" />
-        Deployments show on GitHub
-        {caps.pullRequests ? '; pull requests can be previewed.' : '.'}
+        {capabilitySummary(caps)}
       </p>
     );
   }
@@ -202,7 +203,7 @@ function ConnectionCapabilities({ connection }: { connection: GitHubConnection }
     >
       <p className="flex items-center gap-2 font-medium">
         <TriangleAlert className="size-4 text-amber-600 dark:text-amber-400" aria-hidden="true" />
-        Grant in GitHub to show deployments there
+        {capabilityTitle(caps)}
       </p>
       <p className="text-xs text-muted-foreground">{capabilityHint(caps)}</p>
       {caps.missing.length > 0 && (
@@ -239,21 +240,6 @@ function ConnectionCapabilities({ connection }: { connection: GitHubConnection }
       </div>
     </div>
   );
-}
-
-function capabilityHint(caps: GitHubConnectionCapabilities): string {
-  if (caps.kind === 'pat') {
-    return caps.lastDeniedAt
-      ? `GitHub refused to record a deployment (${formatRelative(caps.lastDeniedAt)}). Give the token Deployments: read and write (and Pull requests: read for previews).`
-      : 'Give the token Deployments: read and write (and Pull requests: read for previews) on the repositories it deploys.';
-  }
-  if (caps.pendingApproval) {
-    return 'The app requests the new permissions; the account it is installed on still has to approve them.';
-  }
-  if (caps.missing.length === 0) {
-    return `GitHub refused to record a deployment (${formatRelative(caps.lastDeniedAt ?? caps.checkedAt)}). Check that the installation includes the repository.`;
-  }
-  return 'This app was created before Launchway reported deployments. In its permissions, set Deployments to read and write and Pull requests to read, subscribe to Pull request events, save, then approve the change on the installation.';
 }
 
 function CreateAppDialog() {

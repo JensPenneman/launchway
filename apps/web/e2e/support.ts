@@ -7,6 +7,9 @@ export const MOCK_PASSWORD = 'correct horse battery staple';
 export const TRAIL_APP_ID = `app_01k7${'1'.padStart(22, '0')}`;
 export const MAIL_APP_ID = `app_01k7${'3'.padStart(22, '0')}`;
 export const EDGE_NODE_ID = `node_01k7${'1'.padStart(22, '0')}`;
+/** Check runs of Trail: `e2e` failed on main, `quality` of pull request #42 still running. */
+export const FAILED_CHECK_RUN_ID = `chk_01k7${'3'.padStart(22, '0')}`;
+export const RUNNING_CHECK_RUN_ID = `chk_01k7${'4'.padStart(22, '0')}`;
 export const INVITATION_TOKEN = `lwyi_${'a'.repeat(43)}`;
 
 type Scenario = 'default' | 'fresh' | 'signed-out' | 'viewer';

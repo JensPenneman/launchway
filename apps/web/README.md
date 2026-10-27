@@ -18,7 +18,7 @@ pnpm --filter @launchway/web test:e2e   # Playwright smoke tests against a mock-
 | `src/api/request.ts` | The one `fetch` wrapper: cookie credentials, RFC 9457 problems → `ApiError`, 401 → sign-in, responses parsed with the `@launchway/contracts` Zod schemas (`ContractDriftError` when the API and UI disagree). |
 | `src/api/<resource>.ts` | Thin resource modules: request functions and TanStack Query `queryOptions`. |
 | `src/api/keys.ts` | Query-key roots and `keysForTopic()`, used by `useLiveEvents` to invalidate on `GET /events`. |
-| `src/api/events.ts` | SSE hooks: the platform change feed and the deployment / container log streams. |
+| `src/api/events.ts` | SSE hooks: the platform change feed and the deployment / check run / container log streams. |
 | `src/features` | Page sections (app tabs, settings sections, domain/zone panels). |
 | `src/components` | Shared building blocks; `ui/` holds the vendored shadcn/ui components. |
 | `src/lib/api` | The `openapi-fetch` client generated from the OpenAPI document (`pnpm openapi:generate`). |
@@ -29,8 +29,8 @@ pnpm --filter @launchway/web test:e2e   # Playwright smoke tests against a mock-
 `VITE_API_MOCK=1` starts MSW before the app renders; the service worker script is served by a
 small Vite plugin (`vite.config.ts`) and is never part of a normal build. The mock behaves like a
 backend: it validates bodies with the contract schemas, enforces roles, writes audit events,
-publishes change events over SSE and walks new deployments through the state machine with live
-logs.
+publishes change events over SSE and walks new deployments and check runs through their state
+machines with live logs.
 
 Scenarios are chosen with `localStorage['launchway-mock-scenario']` before the page loads:
 `default` (signed in as the owner), `fresh` (no owner yet: setup wizard), `signed-out`, `viewer`.

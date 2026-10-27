@@ -1,6 +1,6 @@
 import { Email, Password, z } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
-import { zodResolver } from './form';
+import { fieldError, zodResolver } from './form';
 
 const Schema = z.object({
   email: Email,
@@ -28,5 +28,14 @@ describe('zodResolver', () => {
     expect(result.errors.email?.message).toBe('Enter a valid e-mail address');
     expect(result.errors.password?.message).toBe('Must be at least 12 characters');
     expect(result.errors.name?.message).toBe('Starts with a');
+  });
+});
+
+describe('fieldError', () => {
+  it('words bounds and steps of numbers', () => {
+    const Cpus = z.number().min(0.25).max(128).multipleOf(0.25);
+    expect(fieldError(Cpus, 1.3)).toBe('Must be a multiple of 0.25');
+    expect(fieldError(Cpus, 0)).toBe('Must be at least 0.25');
+    expect(fieldError(Cpus, 1.5)).toBeUndefined();
   });
 });

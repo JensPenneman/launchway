@@ -2,6 +2,8 @@ import {
   type AppManifestStart,
   CreateNodeInput,
   CreatePatConnectionInput,
+  GITHUB_APP_EVENTS,
+  GITHUB_APP_PERMISSIONS,
   type GitHubConnection,
   type GitHubConnectionCapabilities,
   generateId,
@@ -302,13 +304,8 @@ export const platformHandlers = [
         setup_url: `${base}/api/v1/github/connections/installation-callback`,
         description: 'Deploys GitHub releases with Launchway',
         public: false,
-        default_permissions: {
-          contents: 'read',
-          metadata: 'read',
-          deployments: 'write',
-          pull_requests: 'read',
-        },
-        default_events: ['release', 'push', 'pull_request'],
+        default_permissions: { ...GITHUB_APP_PERMISSIONS },
+        default_events: [...GITHUB_APP_EVENTS],
         setup_on_update: true,
         request_oauth_on_install: false,
       },
@@ -320,15 +317,19 @@ export const platformHandlers = [
     if (denied) return denied;
     const connection = db.connections.find((item) => item.id === params.id);
     if (!connection) return problem('not-found');
-    // The demo app connection predates the deployment permissions; the token has them.
+    // The demo app connection predates the deployment and commit status permissions; the token
+    // has them.
     const legacy = connection.kind === 'app';
     const capabilities: GitHubConnectionCapabilities = {
       connectionId: connection.id,
       kind: connection.kind,
       deployments: !legacy,
       pullRequests: !legacy,
+      statuses: !legacy,
       events: legacy ? ['release'] : [],
-      missing: legacy ? ['deployments: write', 'pull_requests: read', 'event: pull_request'] : [],
+      missing: legacy
+        ? ['deployments: write', 'pull_requests: read', 'statuses: write', 'event: pull_request']
+        : [],
       pendingApproval: false,
       settingsUrl: connection.app
         ? `https://github.com/settings/apps/${connection.app.slug}/permissions`
@@ -338,6 +339,7 @@ export const platformHandlers = [
         : null,
       probedRepository: legacy ? null : `${connection.account?.login ?? 'octo'}/notes`,
       lastDeniedAt: null,
+      lastStatusDeniedAt: null,
       checkedAt: now(),
     };
     return HttpResponse.json(capabilities);

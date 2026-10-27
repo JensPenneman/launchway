@@ -16,6 +16,8 @@ export function friendlyMessage(issue: Issue): string | undefined {
       return issue.origin === 'string'
         ? `Must be at most ${issue.maximum} characters`
         : `Must be at most ${issue.maximum}`;
+    case 'not_multiple_of':
+      return `Must be a multiple of ${String(issue.divisor)}`;
     case 'invalid_format':
       if (issue.format === 'email') return 'Enter a valid e-mail address';
       if (issue.format === 'url') return 'Enter a valid URL';

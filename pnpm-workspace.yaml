@@ -10,15 +10,15 @@ preferWorkspacePackages: true
 
 # Versions shared by several workspace packages. Reference them with "catalog:".
 catalog:
-  '@types/node': 24.19.1
-  '@types/ws': 8.18.2
+  "@types/node": 24.19.1
+  "@types/ws": 8.18.2
   pino: 10.4.0
   pino-pretty: 13.2.0
   tsx: 4.23.15
   typescript: 5.9.3
   vitest: 5.0.3
   ws: 8.22.0
-  zod: 4.6.5
+  zod: 4.6.7
 
 # pnpm 11 holds back versions younger than minimumReleaseAge (supply-chain protection).
 # Entries here were deliberately accepted before reaching that age.
@@ -46,4 +46,4 @@ overrides:
   # GHSA-w5hq-g745-h8pq; typeid-js 1.2.0 still asks for uuid 10.
   typeid-js>uuid: 11.1.1
   # GHSA-67mh-4wv8-2f99; drizzle-kit 0.31 still loads configs through @esbuild-kit (esbuild 0.18).
-  '@esbuild-kit/core-utils>esbuild': 0.25.12
+  "@esbuild-kit/core-utils>esbuild": 0.25.12

@@ -33,6 +33,11 @@ LABEL org.opencontainers.image.title="Launchway" \
       org.opencontainers.image.description="Launchway control plane: REST API and web UI" \
       org.opencontainers.image.source="https://github.com/JensPenneman/launchway" \
       org.opencontainers.image.licenses="Apache-2.0"
+# npm, npx, corepack and yarn come with the base image, but nothing in this image runs them: they
+# are removed, and with them the dependencies npm bundles.
+RUN rm -rf /usr/local/lib/node_modules /opt/yarn-v* \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/yarn /usr/local/bin/yarnpkg
 ENV NODE_ENV=production \
     LAUNCHWAY_BUILD_VERSION=${LAUNCHWAY_VERSION} \
     LAUNCHWAY_WEB_ROOT=/app/web

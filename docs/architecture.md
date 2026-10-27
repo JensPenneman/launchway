@@ -555,8 +555,9 @@ connections, DNS provider accounts, platform settings) · audit log.
   Architecture Decision Record per significant decision), `.editorconfig`,
   `.vscode/` recommendations, `devcontainer.json`.
 - **Docker images**: multi-stage, `node:24-alpine`, pnpm deploy with pruned
-  production dependencies, non-root user, `HEALTHCHECK`, `init: true` in
-  compose, read-only root filesystem where possible (not the agent).
+  production dependencies, no package manager in the runtime stage, non-root
+  user, `HEALTHCHECK`, `init: true` in compose, read-only root filesystem
+  where possible (not the agent).
 
 ## 13. Configuration
 

@@ -2,11 +2,9 @@ import { expect, test } from '@playwright/test';
 
 test('lists domains with their DNS status and route', async ({ page }) => {
   await page.goto('/domains');
-  await expect(page.getByRole('row', { name: /trail\.example\.com/ })).toContainText('verified');
-  await expect(page.getByRole('row', { name: /mail\.example\.dev/ })).toContainText(
-    'misconfigured',
-  );
-  await expect(page.getByRole('row', { name: /status\.example\.org/ })).toContainText(
+  await expect(page.getByRole('row', { name: 'trail.example.com' })).toContainText('verified');
+  await expect(page.getByRole('row', { name: 'mail.example.dev' })).toContainText('misconfigured');
+  await expect(page.getByRole('row', { name: 'status.example.org' })).toContainText(
     'http://host.docker.internal:7878',
   );
 
@@ -19,7 +17,7 @@ test('lists domains with their DNS status and route', async ({ page }) => {
 test('manages the records of a zone', async ({ page }) => {
   await page.goto('/domains?tab=zones');
   await page.getByRole('button', { name: 'example.dev' }).click();
-  await expect(page.getByRole('row', { name: /mail\.example\.dev/ })).toBeVisible();
+  await expect(page.getByRole('row', { name: 'mail.example.dev' })).toBeVisible();
 
   await page.getByRole('button', { name: 'Add record' }).click();
   const dialog = page.getByRole('dialog');

@@ -10,11 +10,11 @@ services:
       POSTGRES_PASSWORD: launchway
       POSTGRES_DB: launchway
     ports:
-      - '127.0.0.1:${LAUNCHWAY_DEV_DB_PORT:-5432}:5432'
+      - "127.0.0.1:${LAUNCHWAY_DEV_DB_PORT:-5432}:5432"
     volumes:
       - db-data:/var/lib/postgresql
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U launchway -d launchway']
+      test: ["CMD-SHELL", "pg_isready -U launchway -d launchway"]
       interval: 5s
       timeout: 3s
       retries: 10

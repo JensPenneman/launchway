@@ -16,8 +16,20 @@ updates:
     commit-message:
       prefix: chore(deps)
     groups:
-      # Minor and patch updates of every package in one pull request; each
-      # major update gets a pull request of its own.
+      # Security updates get a pull request of their own, opened when the
+      # advisory is published, instead of riding on the weekly batch.
+      npm-security:
+        applies-to: security-updates
+        patterns: ["*"]
+      # Biome and knip change lint, formatting and analysis results between
+      # releases (which is also why they are pinned exactly), so each gets a
+      # pull request of its own and a new rule cannot hold back the batch.
+      biome:
+        patterns: ["@biomejs/biome"]
+      knip:
+        patterns: ["knip"]
+      # Minor and patch updates of every other package in one pull request;
+      # each major update gets a pull request of its own.
       npm-minor-and-patch:
         patterns: ["*"]
         update-types: [minor, patch]
@@ -47,6 +59,10 @@ updates:
     commit-message:
       prefix: ci(deps)
     groups:
+      # Security updates get a pull request of their own, as for npm.
+      github-actions-security:
+        applies-to: security-updates
+        patterns: ["*"]
       github-actions:
         patterns: ["*"]
 

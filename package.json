@@ -33,7 +33,7 @@
     "openapi:generate": "turbo run openapi:generate"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.5.15",
+    "@biomejs/biome": "2.6.2",
     "@commitlint/cli": "21.2.3",
     "@commitlint/config-conventional": "21.2.3",
     "knip": "6.40.0",

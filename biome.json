@@ -17,7 +17,9 @@
       "!!apps/api/drizzle/meta",
       "!!apps/api/openapi.json",
       "!!apps/web/src/routeTree.gen.ts",
-      "!!apps/web/src/lib/api/schema.gen.ts"
+      "!!apps/web/src/lib/api/schema.gen.ts",
+      "!!CHANGELOG.md",
+      "!!pnpm-lock.yaml"
     ]
   },
   "formatter": {
@@ -44,6 +46,11 @@
   "css": {
     "parser": {
       "tailwindDirectives": true
+    }
+  },
+  "markdown": {
+    "formatter": {
+      "enabled": false
     }
   },
   "linter": {

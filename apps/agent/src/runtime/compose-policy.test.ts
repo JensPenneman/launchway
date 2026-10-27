@@ -470,6 +470,15 @@ describe('evaluateComposePolicy with trusted mounts', () => {
     ['the database', { db: { external: true, name: 'launchway_db-data' } }],
     ['the agent workspace', { a: { external: true, name: 'launchway-agent_agent-data' } }],
     ['the Caddy data', { c: { name: 'launchway_caddy-data' } }],
+    [
+      'a check builder (its BuildKit cache)',
+      {
+        b: {
+          external: true,
+          name: 'buildx_buildkit_launchway-check-build-2048m-2c-0123abcd0_state',
+        },
+      },
+    ],
   ])('refuses the platform volume of %s even when trusted', (_label, volumes) => {
     const config = { ...base(), volumes } as ComposeConfig;
     expect(evaluateComposePolicy(config, context([], TRUSTED)).violations.join()).toMatch(
@@ -611,9 +620,16 @@ describe('evaluateComposePolicy in check mode', () => {
     expect(violations(unprivileged)).toEqual([]);
   });
 
-  it.each<[string, string[], boolean]>([
+  it.each<[string, unknown, boolean]>([
     ['the SSH agent', ['default'], false],
     ['an SSH agent by id', ['github'], false],
+    // How Compose may render a bare id.
+    ['an SSH agent by id with an empty path', ['github='], false],
+    ['an SSH agent with empty paths', ['default= , '], false],
+    ['an SSH agent in the long syntax', [{ id: 'github' }], false],
+    ['an SSH agent with an empty path in the long syntax', [{ id: 'github', path: '' }], false],
+    ['an SSH agent in a mapping', { github: '' }, false],
+    ['a key inside the repository in a mapping', { deploy: './keys/deploy' }, true],
     ['a key inside the repository', ['deploy=./keys/deploy'], true],
     ['a key outside the repository', ['default=/root/.ssh/id_ed25519'], false],
     ['a key in the home directory', ['default=~/.ssh/id_ed25519'], false],

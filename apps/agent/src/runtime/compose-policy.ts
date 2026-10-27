@@ -8,6 +8,7 @@ import {
   RESERVED_SERVICE_NAMES,
 } from '@launchway/contracts';
 import { z } from 'zod';
+import { CHECK_BUILDER_CONTAINER_PREFIX } from './check-builder.js';
 
 /** Capabilities an app may add (`cap_add`); everything else is refused. */
 export const ALLOWED_CAPABILITIES: readonly string[] = [
@@ -39,8 +40,11 @@ export const PROTECTED_HOST_PATHS: readonly string[] = [
 const FORBIDDEN_HOST_PATHS: readonly string[] = ['/var/lib/docker'];
 /** Bind propagation modes that would leak mounts between the container and the host. */
 const PROPAGATION_REFUSED = ['shared', 'rshared', 'slave', 'rslave'];
-/** Compose projects of the platform itself; their volumes are never reused by apps. */
-const PLATFORM_VOLUME_PREFIXES = ['launchway_', 'launchway-agent_'];
+/**
+ * Volumes of the platform itself, never reused by apps: those of its Compose projects and the
+ * state (BuildKit cache) of check builders.
+ */
+const PLATFORM_VOLUME_PREFIXES = ['launchway_', 'launchway-agent_', CHECK_BUILDER_CONTAINER_PREFIX];
 
 /**
  * Largest file a check passes inline (`configs: { content }`); bind-mounted files above it come
@@ -298,17 +302,28 @@ function sshKeyPaths(value: unknown): [string, string][] {
 }
 
 /**
- * Ids of `build.ssh` entries without a key path (`default`, `id`): they forward the SSH agent of
- * the process that builds, which the agent does not have, so such builds could only fail late.
+ * Ids of `build.ssh` entries without a key path (`default`, `github`, and `github=`, as Compose
+ * may render a bare id): they forward the SSH agent of the process that builds, which builds on
+ * Launchway nodes do not have, so such builds could only fail late.
  */
 function sshAgentForwards(value: unknown): string[] {
   const found: string[] = [];
-  for (const entry of Array.isArray(value) ? value : []) {
-    if (typeof entry === 'string' && !entry.includes('=')) found.push(entry);
-    else if (typeof entry === 'object' && entry !== null) {
-      const key = entry as Record<string, unknown>;
-      if (key.path === undefined && key.Path === undefined) found.push(String(key.id ?? key.ID));
+  const add = (id: unknown, paths: unknown) => {
+    const named = typeof paths === 'string' && paths.split(',').some((path) => path.trim());
+    if (!named) found.push(String(id ?? ''));
+  };
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === 'string') {
+        const eq = entry.indexOf('=');
+        add(eq < 0 ? entry : entry.slice(0, eq), eq < 0 ? undefined : entry.slice(eq + 1));
+      } else if (typeof entry === 'object' && entry !== null) {
+        const key = entry as Record<string, unknown>;
+        add(key.id ?? key.ID, key.path ?? key.Path);
+      }
     }
+  } else if (typeof value === 'object' && value !== null) {
+    for (const [id, paths] of Object.entries(value)) add(id, paths);
   }
   return found;
 }
@@ -520,7 +535,7 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
       }
       for (const id of sshAgentForwards(build.ssh)) {
         reject(
-          `${at}: build ssh "${id}" forwards an SSH agent, which Launchway nodes do not offer (use a key file inside the repository)`,
+          `${at}: build ssh "${id}" forwards an SSH agent, which builds on Launchway nodes do not have`,
         );
       }
       if (build.network === 'host') reject(`${at}: build network host is not allowed`);

@@ -139,7 +139,11 @@ const Network = z
   })
   .nullable();
 const FileObject = z
-  .looseObject({ file: z.string().nullish(), external: z.unknown().optional() })
+  .looseObject({
+    file: z.string().nullish(),
+    external: z.unknown().optional(),
+    environment: z.unknown().optional(),
+  })
   .nullable();
 
 /** The parts of `docker compose config --format json --no-env-resolution` the policy reads. */
@@ -414,6 +418,11 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
         }
         continue;
       }
+      // An image mount reads any image of the node, such as another app's.
+      if (volume.type === 'image' && check) {
+        reject(`${at}: image mounts are not allowed in checks (use a volume or tmpfs)`);
+        continue;
+      }
       if (volume.type === 'bind' && trusted) {
         const source = volume.source ?? '';
         const resolved = posix.resolve(ctx.projectDir, source);
@@ -461,7 +470,12 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
         : Object.values(extra ?? {});
       for (const value of extraValues) {
         if (isLocalPath(value)) checkFile(`${at} additional_contexts`, value);
-        else if (/^oci-layout:/i.test(value)) {
+        else if (check) {
+          // docker-image://, service:, target:, URLs: a check builds from the repository only.
+          reject(
+            `${at}: additional_contexts "${value}" is not allowed in checks (only directories of the repository)`,
+          );
+        } else if (/^oci-layout:/i.test(value)) {
           reject(`${at}: additional_contexts "${value}" is not allowed`);
         }
       }
@@ -559,6 +573,10 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
       if (entry && isExternal(entry.external)) reject(`${at}: external ${kind} are not allowed`);
       if (check && key.startsWith(CHECK_KEY_PREFIX)) {
         reject(`${at}: names starting with "${CHECK_KEY_PREFIX}" are reserved for Launchway`);
+      }
+      // The Compose CLI's own environment is no source for a check.
+      if (check && entry && entry.environment !== undefined && entry.environment !== null) {
+        reject(`${at}: ${kind} from the environment are not allowed in checks`);
       }
       // Checks pass the files that services mount inline (bind mounts do not reach the agent).
       if (

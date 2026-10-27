@@ -210,23 +210,25 @@ describe('preflightComposeFiles', () => {
     const extending = (file: string) =>
       `services:\n  x:\n    extends:\n      file: ${file}\n      service: x\n`;
 
-    it('resolves paths of every configured file against the project directory', async () => {
-      // override.yaml sits above the project directory (.devcontainer): Compose reads ../base.yaml
-      // as .devcontainer/../base.yaml, the base.yaml of the repository root.
-      await repo({
-        '.devcontainer/compose.yaml': 'services: {}\n',
-        'override.yaml': extending('../base.yaml'),
-        'base.yaml': '',
-      });
-      await expect(preflight(mode, ['.devcontainer/compose.yaml', 'override.yaml'])).resolves.toBe(
-        undefined,
-      );
-      await repo({ 'override.yaml': extending('../../base.yaml') });
-      await expect(
-        preflight(mode, ['.devcontainer/compose.yaml', 'override.yaml']),
-      ).rejects.toThrow(
-        /^override\.yaml: service "x" extends file "\.\.\/\.\.\/base\.yaml" leaves the repository$/,
-      );
+    it('refuses a path that leaves the repository from any base Compose might use', async () => {
+      // The reviewer's layout: the project directory is a/b/c/d (the first file's), top.yaml sits
+      // at the root. Compose 5.6 resolves top.yaml's paths against a/b/c/d; other versions may use
+      // top.yaml's own directory, from where ../../../../ reaches the agent workspace.
+      const files = ['a/b/c/d/compose.yaml', 'top.yaml'];
+      await repo({ 'a/b/c/d/compose.yaml': 'services: {}\n', 'x.yaml': '', 'a/b/c/d/x.yaml': '' });
+      for (const reference of [
+        extending('../../../../x.yaml'),
+        `services:\n  x:\n    image: alpine:3\n    label_file: [../../../../apps/app_1/dep_1/.env]\n`,
+        `services:\n  x:\n    image: alpine:3\n    env_file: [{path: ../../../../.env}]\n`,
+      ]) {
+        await repo({ 'top.yaml': reference });
+        await expect(preflight(mode, files)).rejects.toThrow(
+          /^top\.yaml: .* leaves the repository$/,
+        );
+      }
+      // Inside from every base: fine.
+      await repo({ 'top.yaml': extending('x.yaml') });
+      await expect(preflight(mode, files)).resolves.toBeUndefined();
     });
 
     it('resolves paths of an extended file against its own directory', async () => {
@@ -240,6 +242,57 @@ describe('preflightComposeFiles', () => {
       await expect(preflight(mode)).rejects.toThrow(
         /^shared\/base\.yaml: .* leaves the repository$/,
       );
+    });
+  });
+
+  describe.each(['check', 'deploy'] as const)('env_file and label_file (%s)', (mode) => {
+    const service = (field: string) => `services:\n  web:\n    image: alpine:3\n    ${field}\n`;
+
+    it('accepts files of the repository, short and long syntax', async () => {
+      await repo({
+        '.devcontainer/compose.yaml': service(
+          'env_file: [.env, {path: ../config/app.env, required: false}, {path: ./more.env, format: raw}]\n    label_file: ../config/labels',
+        ),
+      });
+      await expect(preflight(mode)).resolves.toBeUndefined();
+    });
+
+    it.each<[string, string, RegExp]>([
+      [
+        'an absolute env file',
+        'env_file: [/var/lib/launchway/agent/credentials.json]',
+        /service "web" env_file "\/var\/lib\/launchway\/agent\/credentials\.json" must be a relative path/,
+      ],
+      [
+        'an env file out of the repository',
+        'env_file: ../../outside/secrets.env',
+        /service "web" env_file "\.\.\/\.\.\/outside\/secrets\.env" leaves the repository/,
+      ],
+      [
+        'a label file through a symlink out of the repository',
+        'label_file: escape/secrets.env',
+        /service "web" label_file "escape\/secrets\.env" leaves the repository/,
+      ],
+      [
+        'a label file with a variable',
+        'label_file: ["$HOME/labels"]',
+        /service "web" label_file "\$HOME\/labels" must not use variables/,
+      ],
+      [
+        'an env file in long syntax out of the repository',
+        'env_file: [{path: ../../outside/secrets.env}]',
+        /leaves the repository/,
+      ],
+      [
+        'an unknown key in long syntax',
+        'env_file: [{path: .env, mode: x}]',
+        /env_file entries may only set path, required, format \(not "mode"\)/,
+      ],
+      ['a label file in long syntax', 'label_file: [{path: labels}]', /must be a path or a list/],
+    ])('refuses %s', async (_label, field, pattern) => {
+      await repo({ '.devcontainer/compose.yaml': service(field) });
+      await symlink(outside, join(root, '.devcontainer', 'escape'));
+      await expect(preflight(mode)).rejects.toThrow(pattern);
     });
   });
 

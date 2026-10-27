@@ -486,8 +486,20 @@ describe('evaluateComposePolicy in check mode', () => {
     fileSize: (path) => sizes[path] ?? null,
     ...overrides,
   });
+  /** The fixture's worker builds with a docker-image:// context, which checks refuse (below). */
+  const checkable = (config: ComposeConfig): ComposeConfig => {
+    const copy = structuredClone(config);
+    const build = copy.services.worker?.build as Record<string, unknown> | null | undefined;
+    if (
+      build &&
+      String(Object.values(build.additional_contexts ?? {})).startsWith('docker-image:')
+    ) {
+      delete build.additional_contexts;
+    }
+    return copy;
+  };
   const check = (config: ComposeConfig, overrides: Partial<PolicyContext> = {}) =>
-    evaluateComposePolicy(config, checkContext(overrides));
+    evaluateComposePolicy(checkable(config), checkContext(overrides));
   const bind = (source: string, extra: Record<string, unknown> = {}) =>
     withService('dev', {
       image: 'x',
@@ -613,6 +625,56 @@ describe('evaluateComposePolicy in check mode', () => {
     expect(check(config).violations).toEqual([
       'secret "s": "/var/lib/launchway/agent/credentials.json" is outside the repository',
     ]);
+  });
+
+  it('refuses image mounts in checks, not in deployments', () => {
+    const config = withService('dev', {
+      image: 'x',
+      volumes: [{ type: 'image', source: 'launchway-other-web', target: '/other' }],
+    });
+    expect(check(config).violations).toEqual([
+      'service "dev": image mounts are not allowed in checks (use a volume or tmpfs)',
+    ]);
+    expect(violations(config)).toEqual([]);
+  });
+
+  it.each([
+    ['a local image', 'docker-image://launchway-other-web'],
+    ['another service', 'service:web'],
+    ['a build target', 'target:base'],
+    ['a remote repository', 'https://github.com/acme/base.git'],
+    ['an OCI layout', 'oci-layout:///var/lib/launchway'],
+  ])('refuses %s as an additional build context in checks', (_label, value) => {
+    const config = withService('dev', {
+      build: { context: CHECKOUT, additional_contexts: { extra: value } },
+    });
+    expect(check(config).violations).toEqual([
+      `service "dev": additional_contexts "${value}" is not allowed in checks (only directories of the repository)`,
+    ]);
+    expect(
+      check(
+        withService('dev', {
+          build: { context: CHECKOUT, additional_contexts: [`x=${CHECKOUT}/x`] },
+        }),
+      ).violations,
+    ).toEqual([]);
+  });
+
+  it('keeps docker-image:// build contexts for deployments', () => {
+    expect(violations(base())).toEqual([]);
+  });
+
+  it('refuses configs and secrets from the environment in checks', () => {
+    const config = {
+      ...withService('dev', { image: 'x', configs: [{ source: 'c' }], secrets: [{ source: 's' }] }),
+      configs: { c: { environment: 'HOME' } },
+      secrets: { s: { environment: 'HTTPS_PROXY' } },
+    } as ComposeConfig;
+    expect(check(config).violations).toEqual([
+      'config "c": configs from the environment are not allowed in checks',
+      'secret "s": secrets from the environment are not allowed in checks',
+    ]);
+    expect(violations(config)).toEqual([]);
   });
 
   it('refuses names the check document uses', () => {

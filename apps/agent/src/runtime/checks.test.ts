@@ -434,12 +434,20 @@ describe('CheckManager', () => {
       '--',
       `${project}_source`,
     ]);
+    // Only this app's dangling check images.
     expect(callsOf('docker image prune')[0]?.args).toEqual([
       'image',
       'prune',
       '--force',
       '--filter',
-      'label=launchway.check',
+      'label=launchway.check=trail',
+    ]);
+    // Images the repository names come from their registry, never from the node.
+    expect(callsOf('compose pull')[0]?.args.slice(-4)).toEqual([
+      'pull',
+      '--policy',
+      'always',
+      '--ignore-buildable',
     ]);
 
     const lines = linesOf('req-1');
@@ -955,28 +963,148 @@ describe('CheckManager', () => {
     expect(JSON.stringify(messages)).not.toContain(NODE_CREDENTIAL);
   });
 
+  it('runs docker and compose without the proxy settings; git keeps them', async () => {
+    const env = {
+      PATH: process.env.PATH ?? '',
+      HTTPS_PROXY: 'http://user:proxy-secret@proxy:3128',
+      http_proxy: 'http://user:proxy-secret@proxy:3128',
+      NO_PROXY: 'localhost',
+    };
+    const checks = new CheckManager({
+      logger,
+      send: (message) => messages.push(message),
+      workspace: new Workspace(root),
+      builds: new Semaphore(1),
+      run: fake.run,
+      env,
+    });
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 0 });
+    for (const call of fake.calls) {
+      const values = JSON.stringify(call.options.env);
+      if (call.command === 'git') expect(values).toContain('proxy-secret');
+      else expect(values).not.toMatch(/proxy-secret|NO_PROXY/);
+    }
+  });
+
+  it('caps the log at 16 MiB of text with the same truncation line', async () => {
+    const big = 'x'.repeat(16_000);
+    fake.on['compose run'] = (call) => {
+      for (let i = 0; i < 1_200; i += 1) call.options.onStdoutLine?.(big);
+      return { code: 1 };
+    };
+    fake.exitCode = 1;
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    const lines = linesOf('req-1');
+    const bytes = lines.reduce((sum, l) => sum + Buffer.byteLength(l.line), 0);
+    expect(bytes).toBeLessThanOrEqual(16 * 1024 * 1024 + 100);
+    expect(lines.length).toBeLessThan(1_200);
+    expect(lines.at(-1)).toMatchObject({
+      stream: 'system',
+      line: `… output truncated after ${lines.length - 1} lines`,
+    });
+    expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 1 });
+  });
+
+  it('refuses a project that names more than 256 bind mount sources', async () => {
+    fake.config = (dir, project) => {
+      const config = trailConfig(dir, project);
+      config.services.dev.volumes = Array.from({ length: 300 }, (_, i) => ({
+        type: 'bind',
+        source: `${dir}/d${i}`,
+        target: `/d${i}`,
+        bind: {},
+      }));
+      return config;
+    };
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(resultOf('req-1')).toMatchObject({
+      reason: 'policy',
+      message:
+        'The project names 301 bind mount sources, configs and secrets; checks allow at most 256',
+    });
+  });
+
+  it('refuses more than 1 MiB of small files to read', async () => {
+    fake.on['git checkout'] = async (call) => {
+      const dir = call.options.cwd as string;
+      await writeFile(join(dir, 'compose.yaml'), 'services: {}\n');
+      await mkdir(join(dir, 'config'), { recursive: true });
+      await writeFile(join(dir, 'config', 'init.sql'), 'select 1;\n');
+      for (let i = 0; i < 20; i += 1) await writeFile(join(dir, `f${i}.txt`), 'x'.repeat(60_000));
+      return {};
+    };
+    fake.config = (dir, project) => {
+      const config = trailConfig(dir, project);
+      config.services.dev.volumes = Array.from({ length: 20 }, (_, i) => ({
+        type: 'bind',
+        source: `${dir}/f${i}.txt`,
+        target: `/f${i}.txt`,
+        read_only: true,
+        bind: {},
+      }));
+      return config;
+    };
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(resultOf('req-1')).toMatchObject({
+      reason: 'policy',
+      message: "The project's small files to mount or pass inline exceed 1 MiB in total",
+    });
+  });
+
   it('answers cancel of an unknown run with false', () => {
     expect(manager().cancel(generateId('chk'))).toBe(false);
   });
 });
 
 describe('CheckManager.sweep', () => {
-  it('removes only labelled leftovers of check projects, then the run directories', async () => {
-    await mkdir(join(root, 'checks', APP.id, 'chk_old', 'src'), { recursive: true });
+  const x = checkProjectName('trail', generateId('chk'));
+  const y = checkProjectName('trail', generateId('chk'));
+  const other = checkProjectName('zeus-api', generateId('chk'));
+
+  function leftovers(): void {
     fake.on['docker ps'] = () => ({
       stdout: [
-        'c1\tlaunchway-check_trail_x-check\tlaunchway-check_trail_x',
+        `c1\t${x}-check\t${x}`,
         'c2\tlaunchway-trail-web-1\tlaunchway-trail',
-        'c3\tlaunchway-check_trail_y-source\t',
+        `c3\t${y}-source\t`,
         'c4\tzeus-db-1\tzeus',
+        // An app with the slug `check` (project launchway-check), labelled by its own Compose file.
+        'c5\tlaunchway-check-web-1\tlaunchway-check',
+        'c6\tlaunchway-check_web_1\tlaunchway-check',
+        `c7\t${other}-check\t${other}`,
+        `c8\t${x}x-check\t${x}x`,
       ].join('\n'),
     });
     fake.on['docker volume ls'] = () => ({
-      stdout: 'launchway-check_trail_x_source\ntrail_data\nlaunchway-check_trail_x_db\n',
+      stdout: [
+        `${x}_source`,
+        'trail_data',
+        `${x}_db`,
+        'launchway-check_db',
+        'launchway-check_data_volume',
+        `${other}_source`,
+        `${x}`,
+        '',
+      ].join('\n'),
     });
     fake.on['docker network ls'] = () => ({
-      stdout: 'n1\tlaunchway-check_trail_x_default\nn2\ttrail-feat_default\n',
+      stdout: [`n1\t${x}_default`, 'n2\ttrail-feat_default', 'n3\tlaunchway-check_default'].join(
+        '\n',
+      ),
     });
+  }
+
+  it('removes only leftovers of check runs, then the run directories', async () => {
+    await mkdir(join(root, 'checks', APP.id, 'chk_old', 'src'), { recursive: true });
+    leftovers();
     const checks = manager();
     checks.sweep();
     const run = payload();
@@ -986,6 +1114,7 @@ describe('CheckManager.sweep', () => {
     expect(keys.slice(0, keys.indexOf('git init'))).toEqual([
       'docker ps',
       'docker rm',
+      'compose down',
       'compose down',
       'docker volume ls',
       'docker volume rm',
@@ -1002,21 +1131,45 @@ describe('CheckManager.sweep', () => {
       '--format',
       '{{.ID}}\t{{.Names}}\t{{.Label "com.docker.compose.project"}}',
     ]);
-    expect(args('docker rm')).toEqual(['rm', '--force', '--volumes', '--', 'c1', 'c3']);
-    expect(args('compose down')).toEqual(
-      expect.arrayContaining(['-p', 'launchway-check_trail_x', 'down']),
-    );
+    expect(args('docker rm')).toEqual(['rm', '--force', '--volumes', '--', 'c1', 'c3', 'c7']);
+    const sweepCalls = fake.calls.slice(0, keys.indexOf('git init'));
+    expect(
+      sweepCalls
+        .filter((c) => keyOf(c.command, c.args) === 'compose down')
+        .map((c) => c.args[c.args.indexOf('-p') + 1]),
+    ).toEqual([x, other]);
     expect(args('docker volume rm')).toEqual([
       'volume',
       'rm',
       '--force',
       '--',
-      'launchway-check_trail_x_source',
-      'launchway-check_trail_x_db',
+      `${x}_source`,
+      `${x}_db`,
+      `${other}_source`,
     ]);
     expect(args('docker network rm')).toEqual(['network', 'rm', '--', 'n1']);
+    expect(args('docker image prune')).toEqual([
+      'image',
+      'prune',
+      '--force',
+      '--filter',
+      'label=launchway.check',
+    ]);
     await expect(stat(join(root, 'checks', APP.id, 'chk_old'))).rejects.toThrow();
     expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 0 });
+  });
+
+  it("limits itself to one app's runs when asked", async () => {
+    leftovers();
+    const checks = manager();
+    checks.sweep({ slug: 'zeus-api' });
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    const args = (key: string) => callsOf(key)[0]?.args;
+    expect(args('docker rm')).toEqual(['rm', '--force', '--volumes', '--', 'c7']);
+    expect(args('docker volume rm')).toEqual(['volume', 'rm', '--force', '--', `${other}_source`]);
+    expect(callsOf('docker network rm').filter((c) => c.args.includes('n1'))).toEqual([]);
+    expect(args('docker image prune')).toContain('label=launchway.check=zeus-api');
   });
 
   it('leaves Docker alone when it cannot list the leftovers', async () => {

@@ -48,6 +48,8 @@ const INCLUDE_MARKER = 'victim-database-password-1f3e';
 /** Stands in for the node credential: a file outside the checkout that is no label file. */
 const LEAK_MARKER = `lwya_${'L'.repeat(43)}`;
 const runIds: string[] = [];
+/** A project left by an earlier run of this file's app, for the sweep. */
+const leftover = checkProjectName(slug, generateId('chk'));
 
 async function git(cwd: string, ...args: string[]): Promise<string> {
   const { stdout } = await exec('git', args, {
@@ -268,7 +270,7 @@ async function expectCleanedUp(runId: string): Promise<void> {
       await labelled('ps', filter),
       await labelled('volume', filter),
       await labelled('network', filter),
-      await labelled('image', `label=${CHECK_LABEL}`),
+      await labelled('image', `label=${CHECK_LABEL}=${slug}`),
     ].join('');
     const dir = await stat(join(workspace, 'checks', appId, runId)).then(
       () => true,
@@ -293,26 +295,11 @@ async function cleanupDocker(): Promise<void> {
     const networks = await docker('network', 'ls', '--quiet', '--filter', filter).catch(() => '');
     if (networks) await docker('network', 'rm', ...networks.split('\n')).catch(() => '');
   }
-  for (const name of [`launchway-check_${slug}_leftover_source`]) {
-    await docker('volume', 'rm', '--force', name).catch(() => '');
-  }
-  await docker('rm', '--force', `launchway-check_${slug}_leftover-check`).catch(() => '');
-  await docker('network', 'rm', `launchway-check_${slug}_leftover_default`).catch(() => '');
+  await docker('rm', '--force', `${leftover}-check`).catch(() => '');
+  await docker('volume', 'rm', '--force', `${leftover}_source`).catch(() => '');
+  await docker('network', 'rm', `${leftover}_default`).catch(() => '');
   await docker('image', 'rm', '--force', checkImageName(slug, 'dev')).catch(() => '');
 }
-
-/** True when no labelled resource exists that this file did not create (the sweep is safe). */
-async function nothingForeignLabelled(): Promise<boolean> {
-  const label = `label=${CHECK_LABEL}`;
-  const found = [
-    await docker('ps', '--all', '--quiet', '--filter', label),
-    await docker('volume', 'ls', '--quiet', '--filter', label),
-    await docker('network', 'ls', '--quiet', '--filter', label),
-  ].join('');
-  return found === '';
-}
-
-let swept = false;
 
 beforeAll(async () => {
   await docker('version', '--format', '{{.Server.Version}}');
@@ -331,26 +318,23 @@ beforeAll(async () => {
     ],
     trySend: (message) => connection.connected && connection.send(message),
   });
-  // The sweep removes every check leftover on this Docker; run it only when all of them are ours.
-  if (await nothingForeignLabelled()) {
-    const project = `launchway-check_${slug}_leftover`;
-    const leftover = `${CHECK_LABEL}=chk_leftover_${suffix}`;
-    await docker('volume', 'create', '--label', leftover, `${project}_source`);
-    await docker('network', 'create', '--label', leftover, `${project}_default`);
-    await docker(
-      'container',
-      'create',
-      '--label',
-      leftover,
-      '--label',
-      `com.docker.compose.project=${project}`,
-      '--name',
-      `${project}-check`,
-      'alpine:3',
-    );
-    runtime.sweepChecks();
-    swept = true;
-  }
+  // Leftovers of an earlier run of this app (same shape as a real run's); the sweep is limited to
+  // this file's slug, so it never touches other runs on this Docker.
+  const label = `${CHECK_LABEL}=chk_leftover_${suffix}`;
+  await docker('volume', 'create', '--label', label, `${leftover}_source`);
+  await docker('network', 'create', '--label', label, `${leftover}_default`);
+  await docker(
+    'container',
+    'create',
+    '--label',
+    label,
+    '--label',
+    `com.docker.compose.project=${leftover}`,
+    '--name',
+    `${leftover}-check`,
+    'alpine:3',
+  );
+  runtime.sweepChecks({ slug });
   connection = new AgentConnection({
     url: plane.url,
     logger,
@@ -383,9 +367,8 @@ afterAll(async () => {
 });
 
 describe('check runs against Docker', () => {
-  it('sweeps leftovers of earlier runs at start', async ({ skip }) => {
-    if (!swept) skip('labelled resources of someone else exist; the sweep was not run');
-    const project = `launchway-check_${slug}_leftover`;
+  it('sweeps leftovers of earlier runs at start', async () => {
+    const project = leftover;
     await waitFor(async () => {
       const left = [
         await docker('ps', '--all', '--quiet', '--filter', `name=${project}`),
@@ -511,14 +494,15 @@ describe('check runs against Docker', () => {
     await expectCleanedUp(payload.runId);
   });
 
-  it('never shows file content that docker compose config quotes', async () => {
+  it('refuses a label file outside the repository before Compose reads it', async () => {
+    // Compose reads label files while loading the project and quotes them in parse errors.
     const payload = checkPayload('leak', 'true');
     const result = await runCheck('run-leak', payload);
-    expect(result).toMatchObject({ runId: payload.runId, reason: 'build', exitCode: null });
-    expect(result.message).toMatch(/^Command failed \(exit \d+\): docker compose config/);
-    expect(logLinesOf('run-leak').map((l) => l.line)).toContain(
-      'Quoted text in the output of docker compose config is masked: it may quote files outside the repository',
+    expect(result).toMatchObject({ runId: payload.runId, reason: 'policy', exitCode: null });
+    expect(result.message).toMatch(
+      /^\.devcontainer\/compose\.yaml: service "dev" label_file ".*credentials\.json" must be a relative path inside the repository$/,
     );
+    expect(logLinesOf('run-leak').some((l) => l.line.includes('docker compose'))).toBe(false);
     expect(JSON.stringify(plane.received)).not.toContain(LEAK_MARKER);
     await expectCleanedUp(payload.runId);
   });

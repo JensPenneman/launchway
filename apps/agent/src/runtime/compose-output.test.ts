@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   containerServiceMap,
+  maskQuotedText,
   normalizeTimestamp,
   parseComposeLogLine,
   parseComposePs,
@@ -127,5 +128,27 @@ describe('log lines', () => {
     expect(parseComposeLogLine('no such service: nope', services)).toBeNull();
     expect(parseComposeLogLine('web-1 | not-a-time hello', services)).toBeNull();
     expect(parseComposeLogLine('Web_ | 2026-10-06T22:25:38Z x', new Map())).toBeNull();
+  });
+});
+
+describe('maskQuotedText', () => {
+  it('masks quoted file content and keeps short names and characters', () => {
+    expect(
+      maskQuotedText(
+        `failed to read /x: line 1: unexpected character "{" in variable name "{\\"credential\\":\\"lwya_secret\\"}"`,
+      ),
+    ).toBe('failed to read /x: line 1: unexpected character "{" in variable name "…"');
+    expect(maskQuotedText("additional properties 'credential', 'nodeId' not allowed")).toBe(
+      "additional properties 'credential', 'nodeId' not allowed",
+    );
+    expect(maskQuotedText("invalid value 'lwya_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'")).toBe(
+      "invalid value '…'",
+    );
+    expect(maskQuotedText('cannot unmarshal !!str `{"a": "b"}` into map')).toBe(
+      'cannot unmarshal !!str `…` into map',
+    );
+    expect(maskQuotedText('service "dev" refers to undefined volume "cache"')).toBe(
+      'service "dev" refers to undefined volume "cache"',
+    );
   });
 });

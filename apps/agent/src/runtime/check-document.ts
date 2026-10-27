@@ -100,6 +100,9 @@ const REMOVED_SERVICE_KEYS = [
   'pids_limit',
   'oom_kill_disable',
   'oom_score_adj',
+  // An image the repository names is pulled from its registry (`pull --policy always`), never
+  // taken from the node: a local image may be another app's.
+  'pull_policy',
 ] as const;
 
 /** Check containers are the first ones the kernel kills when the node runs out of memory. */
@@ -110,6 +113,16 @@ const isRecord = (value: unknown): value is Json =>
 
 /** Text for the document: Compose interpolates it when loading, so `$` becomes `$$`. */
 const escapeDollars = (value: string) => value.replaceAll('$', () => '$$');
+
+/**
+ * Entries without a value (`environment: [HTTPS_PROXY]`, `args: {X: null}`) are filled in from
+ * the Compose CLI's environment when the container is created or the image built.
+ */
+function withValues(entries: Json): Json {
+  return Object.fromEntries(
+    Object.entries(entries).filter(([, value]) => value !== null && value !== undefined),
+  );
+}
 
 /** Labels or environment as a map (the output of `config` uses maps; lists are accepted too). */
 function mapping(value: unknown): Json {
@@ -228,6 +241,11 @@ export function buildCheckDocument(
     const at = `service "${name}"`;
     for (const key of REMOVED_SERVICE_KEYS) delete service[key];
     service.labels = { ...mapping(service.labels), [CHECK_LABEL]: input.runId };
+    if (service.environment !== undefined) {
+      const environment = withValues(mapping(service.environment));
+      if (Object.keys(environment).length > 0) service.environment = environment;
+      else delete service.environment;
+    }
     service.mem_limit = input.limits.memoryBytes;
     service.memswap_limit = input.limits.memoryBytes;
     service.cpus = input.limits.cpus;
@@ -251,6 +269,11 @@ export function buildCheckDocument(
         else delete build.cache_from;
       }
       build.labels = { ...mapping(build.labels), [CHECK_LABEL]: input.slug };
+      if (build.args !== undefined) {
+        const args = withValues(mapping(build.args));
+        if (Object.keys(args).length > 0) build.args = args;
+        else delete build.args;
+      }
       for (const entry of Array.isArray(build.secrets) ? build.secrets : []) {
         const source = sourceOf(entry);
         if (source) buildSecrets.add(source);

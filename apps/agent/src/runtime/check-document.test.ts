@@ -25,7 +25,7 @@ function trailConfig(): ComposeConfig {
         build: {
           context: ROOT,
           dockerfile: '.devcontainer/Dockerfile',
-          args: { USER_UID: '1000' },
+          args: { USER_UID: '1000', HTTPS_PROXY: null },
           tags: ['ghcr.io/acme/trail:latest'],
           cache_from: ['type=local,src=/var/lib/launchway', 'ghcr.io/acme/trail:cache'],
           cache_to: ['type=registry,ref=ghcr.io/acme/trail:cache'],
@@ -84,6 +84,8 @@ function trailConfig(): ComposeConfig {
       db: {
         image: 'postgres:18-alpine',
         mem_limit: '1073741824',
+        pull_policy: 'never',
+        environment: { PROXY: null },
         networks: { default: null },
         volumes: [
           { type: 'volume', source: 'db', target: '/var/lib/postgresql', volume: {} },
@@ -419,13 +421,23 @@ describe('buildCheckDocument', () => {
     expect(db).not.toHaveProperty('pull_policy');
   });
 
+  it("pulls every image the repository names and fills in nothing from the CLI's environment", () => {
+    const { dev, db } = build();
+    // Built: never pulled; not built: pull_policy dropped (the run pulls with --policy always).
+    expect(dev.pull_policy).toBe('never');
+    expect(db).not.toHaveProperty('pull_policy');
+    // Valueless entries would be filled in from the Compose CLI's environment.
+    expect(dev.build?.args).toEqual({ USER_UID: '1000' });
+    expect(dev.environment).not.toHaveProperty('EMPTY');
+    expect(db).not.toHaveProperty('environment');
+  });
+
   it('gives the check service the check variables, escaped, over its own', () => {
     const env = { ...input().env, LAUNCHWAY_REF: 'a$b' };
     const { dev, db } = build({ env });
     expect(dev.environment).toEqual({
       DATABASE_URL: 'postgres://db/trail',
       PRICE: '$$5',
-      EMPTY: null,
       CI: 'true',
       COMPOSE_PROJECT_NAME: project,
       LAUNCHWAY_APP: 'trail',

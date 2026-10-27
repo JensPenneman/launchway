@@ -1,6 +1,7 @@
 import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
+  AppSlug,
   CHECK_LABEL,
   CHECK_LOG_LINE_LIMIT,
   CHECK_PROJECT_PREFIX,
@@ -9,6 +10,7 @@ import {
   type CheckRunPayload,
   checkProjectName,
   DEFAULT_PROXY_NETWORK,
+  isTypeId,
   type LogLine,
   type LogStream,
 } from '@launchway/contracts';
@@ -50,6 +52,8 @@ const TIMEOUTS = {
 const CONFIG_OUTPUT_LIMIT = 16 * 1024 * 1024;
 /** Output lines a failure message quotes. */
 const TAIL_LINES = 15;
+/** Text of the log lines one run sends (besides CHECK_LOG_LINE_LIMIT lines). */
+const LOG_BYTE_LIMIT = 16 * 1024 * 1024;
 const MESSAGE_LIMIT = 2000;
 /** Results of finished runs kept for duplicate `check.run` requests. */
 const FINISHED_KEPT = 100;
@@ -110,6 +114,63 @@ function needsChown(owner: string): boolean {
   return !(ROOT_IDS.includes(user) && (group === undefined || ROOT_IDS.includes(group)));
 }
 
+/**
+ * Proxy settings may carry credentials: a project could interpolate them (`${HTTPS_PROXY}`) or
+ * pass them on (`environment: [HTTPS_PROXY]`, `args: {HTTPS_PROXY: null}`). Git keeps them.
+ */
+const PROXY_VARIABLES = [
+  'HTTP_PROXY',
+  'HTTPS_PROXY',
+  'NO_PROXY',
+  'ALL_PROXY',
+  'FTP_PROXY',
+  'http_proxy',
+  'https_proxy',
+  'no_proxy',
+  'all_proxy',
+  'ftp_proxy',
+];
+
+/** Environment of the docker and compose commands of checks: the base without proxy settings. */
+function dockerEnvOf(base: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = { ...base, DOCKER_CLI_HINTS: 'false', BUILDKIT_PROGRESS: 'plain' };
+  for (const key of PROXY_VARIABLES) delete env[key];
+  return env;
+}
+
+/** Length of the run id suffix in `checkProjectName` (a TypeID suffix). */
+const RUN_SUFFIX_LENGTH = 26;
+
+/**
+ * The check-run project (`launchway-check_<slug>_<run id suffix>`) a Docker name belongs to, and
+ * the rest of the name (`_<key>` of a volume or network, `-<name>` of a container); null for
+ * anything else, such as `launchway-check` and `launchway-check_<key>` of an app named `check`.
+ */
+function runProjectOf(name: string): { project: string; slug: string; rest: string } | null {
+  if (!name.startsWith(CHECK_PROJECT_PREFIX)) return null;
+  const tail = name.slice(CHECK_PROJECT_PREFIX.length);
+  const end = tail.indexOf('_');
+  if (end <= 0) return null;
+  const slug = tail.slice(0, end);
+  const suffix = tail.slice(end + 1, end + 1 + RUN_SUFFIX_LENGTH);
+  if (!AppSlug.safeParse(slug).success || !isTypeId('chk', `chk_${suffix}`)) return null;
+  const project = `${CHECK_PROJECT_PREFIX}${slug}_${suffix}`;
+  return { project, slug, rest: name.slice(project.length) };
+}
+
+/** Which leftovers a sweep removes: of every app, or of one app's runs only. */
+interface SweepScope {
+  slug?: string;
+}
+
+/** True for a name of `shape` (the project itself, a volume or network of it, a container). */
+function isRunName(name: string, shape: 'project' | 'resource' | 'container', scope: SweepScope) {
+  const parsed = runProjectOf(name);
+  if (!parsed || (scope.slug !== undefined && parsed.slug !== scope.slug)) return false;
+  if (shape === 'project') return parsed.rest === '';
+  return parsed.rest.length > 1 && parsed.rest.startsWith(shape === 'resource' ? '_' : '-');
+}
+
 const outputLines = (stdout: string) =>
   stdout
     .split('\n')
@@ -126,14 +187,16 @@ const ContainerState = z.looseObject({
 
 /**
  * The log of one run: lines are redacted (the Authorization value and its token), cut to
- * MAX_LINE_LENGTH and batched into `check.log`; after CHECK_LOG_LINE_LIMIT lines one "truncated"
- * line follows and the rest is dropped. The last output lines stay in memory for messages.
+ * MAX_LINE_LENGTH and batched into `check.log`; after CHECK_LOG_LINE_LIMIT lines or
+ * LOG_BYTE_LIMIT bytes of text one "truncated" line follows and the rest is dropped. The last
+ * output lines stay in memory for messages.
  */
 class CheckLog {
   readonly #secrets: readonly string[];
   readonly #batcher: Batcher<LogLine>;
   readonly #tail = new Tail<string>(TAIL_LINES);
   #seq = 0;
+  #bytes = 0;
   #truncated = false;
   #closed = false;
 
@@ -158,14 +221,15 @@ class CheckLog {
     if (this.#closed) return;
     const line = this.redact(raw).slice(0, MAX_LINE_LENGTH);
     if (stream !== 'system') this.#tail.push(line);
-    if (this.#seq < CHECK_LOG_LINE_LIMIT) {
+    if (this.#truncated) return;
+    const bytes = Buffer.byteLength(line, 'utf8');
+    if (this.#seq < CHECK_LOG_LINE_LIMIT && this.#bytes + bytes <= LOG_BYTE_LIMIT) {
+      this.#bytes += bytes;
       this.#batcher.add(this.#next(stream, line));
-    } else if (!this.#truncated) {
-      this.#truncated = true;
-      this.#batcher.add(
-        this.#next('system', `… output truncated after ${CHECK_LOG_LINE_LIMIT} lines`),
-      );
+      return;
     }
+    this.#truncated = true;
+    this.#batcher.add(this.#next('system', `… output truncated after ${this.#seq} lines`));
   }
 
   tail(): string[] {
@@ -235,9 +299,14 @@ const downArgs = (project: string) =>
 /**
  * Removes everything of one run: its containers with their anonymous volumes (a project-only
  * `down` leaves those of the one-off container), the Compose project, the source volume and any
- * other volume or network labelled with the run, then dangling check images.
+ * other volume or network labelled with the run, then the app's dangling check images.
  */
-async function removeRunResources(ctx: DockerContext, project: string, runId: string) {
+async function removeRunResources(
+  ctx: DockerContext,
+  project: string,
+  runId: string,
+  slug: string,
+) {
   const filter = `label=${CHECK_LABEL}=${runId}`;
   const containers = await cleanupDocker(ctx, 'docker ps', [
     'ps',
@@ -283,22 +352,23 @@ async function removeRunResources(ctx: DockerContext, project: string, runId: st
   const networkIds = networks ? outputLines(networks.stdout) : [];
   if (networkIds.length > 0)
     await cleanupDocker(ctx, 'docker network rm', ['network', 'rm', '--', ...networkIds]);
+  // Built images carry `launchway.check=<slug>`: only this app's dangling ones go.
   await cleanupDocker(
     ctx,
     'docker image prune',
-    ['image', 'prune', '--force', '--filter', `label=${CHECK_LABEL}`],
+    ['image', 'prune', '--force', '--filter', `label=${CHECK_LABEL}=${slug}`],
     TIMEOUTS.cleanup,
   );
 }
 
 /**
  * Removes what earlier runs left behind (a crash, a shutdown before cleanup finished): only
- * resources labelled `launchway.check` whose name or Compose project starts with
- * CHECK_PROJECT_PREFIX. Stops at the first listing or removal that fails (false).
+ * resources labelled `launchway.check` whose Compose project or name has the shape of a check
+ * run's (`launchway-check_<slug>_<run id suffix>`, its volumes, networks and containers).
+ * Stops at the first listing or removal that fails (false).
  */
-async function sweepResources(ctx: DockerContext): Promise<boolean> {
+async function sweepResources(ctx: DockerContext, scope: SweepScope): Promise<boolean> {
   const label = `label=${CHECK_LABEL}`;
-  const ours = (name: string) => name.startsWith(CHECK_PROJECT_PREFIX);
   const containers = await cleanupDocker(ctx, 'docker ps', [
     'ps',
     '--all',
@@ -312,8 +382,10 @@ async function sweepResources(ctx: DockerContext): Promise<boolean> {
   const projects = new Set<string>();
   for (const row of outputLines(containers.stdout)) {
     const [id = '', names = '', project = ''] = row.split('\t');
-    if (ours(project)) projects.add(project);
-    if (id && (ours(project) || names.split(',').some(ours))) ids.push(id);
+    const ofRun = isRunName(project, 'project', scope);
+    if (ofRun) projects.add(project);
+    const named = names.split(',').some((name) => isRunName(name, 'container', scope));
+    if (id && (ofRun || named)) ids.push(id);
   }
   if (ids.length > 0) {
     const removed = await cleanupDocker(
@@ -335,7 +407,7 @@ async function sweepResources(ctx: DockerContext): Promise<boolean> {
     '{{.Name}}',
   ]);
   if (!volumes) return false;
-  const names = outputLines(volumes.stdout).filter(ours);
+  const names = outputLines(volumes.stdout).filter((name) => isRunName(name, 'resource', scope));
   if (names.length > 0)
     await cleanupDocker(ctx, 'docker volume rm', ['volume', 'rm', '--force', '--', ...names]);
   const networks = await cleanupDocker(ctx, 'docker network ls', [
@@ -349,14 +421,15 @@ async function sweepResources(ctx: DockerContext): Promise<boolean> {
   if (!networks) return false;
   const networkIds = outputLines(networks.stdout)
     .map((row) => row.split('\t'))
-    .filter(([id, name = '']) => id && ours(name))
+    .filter(([id, name = '']) => id && isRunName(name, 'resource', scope))
     .map(([id = '']) => id);
   if (networkIds.length > 0)
     await cleanupDocker(ctx, 'docker network rm', ['network', 'rm', '--', ...networkIds]);
+  const images = scope.slug === undefined ? label : `${label}=${scope.slug}`;
   await cleanupDocker(
     ctx,
     'docker image prune',
-    ['image', 'prune', '--force', '--filter', label],
+    ['image', 'prune', '--force', '--filter', images],
     TIMEOUTS.cleanup,
   );
   if (ids.length + names.length + networkIds.length > 0) {
@@ -554,7 +627,9 @@ class CheckRun {
         env,
         timeoutMs: TIMEOUTS.build,
       });
-      await this.#exec('docker', composeArgs(target, 'pull', '--ignore-buildable'), {
+      // Always from the registry: an image that only exists on the node may be another app's.
+      const pull = composeArgs(target, 'pull', '--policy', 'always', '--ignore-buildable');
+      await this.#exec('docker', pull, {
         label: 'docker compose pull',
         reason: 'build',
         cwd: runDir,
@@ -575,7 +650,10 @@ class CheckRun {
       throw new CheckFailure('build', (error as Error).message);
     }
     this.#system(`Fetching ${source.ref} (${source.sha.slice(0, 12)})`);
-    const env = { ...this.#env(), ...gitEnv(source.authorization, this.#options.gitConfig) };
+    const env = {
+      ...(this.#options.env ?? childEnv()),
+      ...gitEnv(source.authorization, this.#options.gitConfig),
+    };
     for (const step of fetchCommitPlan(source.cloneUrl, source.sha, srcDir, true).steps) {
       await this.#exec('git', step.args, {
         label: `git ${step.args[0]}`,
@@ -845,7 +923,7 @@ class CheckRun {
           cwd: await workspace.neutralDir(),
           logger: this.#logger,
         };
-        await removeRunResources(ctx, this.#project, runId);
+        await removeRunResources(ctx, this.#project, runId, app.slug);
       }
     } catch (error) {
       this.#logger.warn({ err: error }, 'check cleanup failed');
@@ -903,11 +981,7 @@ class CheckRun {
   }
 
   #env(): NodeJS.ProcessEnv {
-    return {
-      ...(this.#options.env ?? childEnv()),
-      DOCKER_CLI_HINTS: 'false',
-      BUILDKIT_PROGRESS: 'plain',
-    };
+    return dockerEnvOf(this.#options.env ?? childEnv());
   }
 
   #line(stream: LogStream, line: string): void {
@@ -1000,17 +1074,22 @@ export class CheckManager {
     return true;
   }
 
-  /** Removes leftovers of earlier runs; queued before every run, so call it once at start. */
-  sweep(): void {
+  /**
+   * Removes leftovers of earlier runs (Docker resources and this agent's run directories);
+   * queued before every run, so call it once at start. A `slug` limits the Docker part to that
+   * app's runs.
+   */
+  sweep(scope: SweepScope = {}): void {
     this.#enqueue(async () => {
       const workspace = this.#options.workspace;
       try {
-        const swept = await sweepResources({
+        const ctx: DockerContext = {
           run: this.#run,
-          env: { ...(this.#options.env ?? childEnv()), DOCKER_CLI_HINTS: 'false' },
+          env: dockerEnvOf(this.#options.env ?? childEnv()),
           cwd: await workspace.neutralDir(),
           logger: this.#logger,
-        });
+        };
+        const swept = await sweepResources(ctx, scope);
         if (!swept) {
           this.#logger.warn('could not clear leftovers of earlier check runs; left them alone');
         }

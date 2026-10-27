@@ -37,6 +37,8 @@ const ALLOWED_TAGS = new Set([
 ]);
 const INCLUDE_KEYS = ['path', 'env_file', 'project_directory'];
 const EXTENDS_KEYS = ['service', 'file'];
+/** Keys of an `env_file` entry in long syntax. */
+const ENV_FILE_KEYS = ['path', 'required', 'format'];
 const PARSE_OPTIONS = {
   version: '1.2',
   merge: true,
@@ -51,15 +53,11 @@ type Entry = [key: string | typeof MERGE, value: unknown];
 interface Reference {
   /** `include path`, `service "dev" extends file`, ... */
   what: string;
-  /** As written: relative (to the naming file's base directory), without variables. */
+  /** As written: relative, without variables. */
   value: string;
   /** `compose`: parsed and checked in turn; `file`, `directory`: must only stay inside. */
   kind: 'compose' | 'file' | 'directory';
-  /**
-   * For included files: their entry's `project_directory` and first `path`. An included file's
-   * own paths are relative to its project directory: `project_directory`, else the directory of
-   * the entry's first file.
-   */
+  /** For include entries: their `project_directory` and first `path` (more bases to check). */
   include?: { projectDirectory: string | undefined; firstPath: string };
 }
 
@@ -205,14 +203,52 @@ function includeReferences(walker: Walker, value: unknown): Reference[] {
         });
       }
     }
-    for (const file of values.env_file ?? []) {
-      refs.push({ what: 'include env_file', value: file, kind: 'file' });
+    for (const projectDirectory of projectDirectories.length > 0
+      ? projectDirectories
+      : [undefined]) {
+      for (const file of values.env_file ?? []) {
+        refs.push({
+          what: 'include env_file',
+          value: file,
+          kind: 'file',
+          include: { projectDirectory, firstPath: paths[0] ?? file },
+        });
+      }
     }
   }
   return refs;
 }
 
-/** `services.*.extends.file`: Compose files of the repository, checked in turn. */
+/**
+ * `env_file` (a path, a list of paths or of `{ path, required, format }`) and `label_file` (a
+ * path or a list): Compose reads label files while it loads the project, and quotes their content
+ * in parse errors.
+ */
+function fileReferences(walker: Walker, what: string, value: unknown, longSyntax: boolean) {
+  if (walker.isEmpty(value)) return [];
+  const refs: Reference[] = [];
+  for (const item of walker.items(value) ?? [value]) {
+    const text = walker.text(item);
+    if (text !== null) {
+      refs.push({ what, value: localPath(walker, what, text), kind: 'file' });
+      continue;
+    }
+    const entries = longSyntax ? walker.entries(item) : null;
+    if (!entries) return walker.refuse(`${what} must be a path or a list of paths`);
+    for (const [key, entry] of entries) {
+      if (key === MERGE) continue;
+      if (!ENV_FILE_KEYS.includes(key)) {
+        walker.refuse(`${what} entries may only set ${ENV_FILE_KEYS.join(', ')} (not "${key}")`);
+      }
+      if (key === 'path') {
+        refs.push({ what, value: localPath(walker, what, walker.text(entry)), kind: 'file' });
+      }
+    }
+  }
+  return refs;
+}
+
+/** `services.*.extends.file` (checked in turn), `env_file` and `label_file`: the repository's. */
 function extendsReferences(walker: Walker, value: unknown): Reference[] {
   if (walker.isEmpty(value)) return [];
   const services = walker.entries(value);
@@ -221,6 +257,11 @@ function extendsReferences(walker: Walker, value: unknown): Reference[] {
   for (const [name, service] of services) {
     if (name === MERGE || walker.isEmpty(service)) continue;
     for (const [field, spec] of walker.entries(service) ?? []) {
+      if (field === 'env_file' || field === 'label_file') {
+        const what = `service "${String(name)}" ${field}`;
+        refs.push(...fileReferences(walker, what, spec, field === 'env_file'));
+        continue;
+      }
       // `extends: <service>` names a service of the same file.
       if (field !== 'extends' || walker.isEmpty(spec) || walker.text(spec) !== null) continue;
       const what = `service "${String(name)}" extends`;
@@ -280,39 +321,53 @@ function checkTags(doc: Document.Parsed, at: string): void {
 
 const unique = (values: readonly string[]) => [...new Set(values)];
 
-/** A Compose file to check next, with the directories its relative paths resolve against. */
+/** A Compose file to check next, with the directories its relative paths may resolve against. */
 interface Next {
   file: string;
   bases: string[];
 }
 
 /**
- * Where a reference points, resolved like Compose does (lexically, against the base directory of
- * the file naming it): it must stay inside the checkout, symlinks resolved. Returns the Compose
- * file to check next, if it is one.
+ * Where a reference may point. Compose resolves relative paths against the project directory,
+ * the directory of an included project (`project_directory`, else its first file's) or of an
+ * extended file, and versions differ, so every base it might use counts (fail closed): the
+ * directories of the files on the way (`bases`) and the include's own. Every candidate must stay
+ * inside the checkout, symlinks resolved. Returns the Compose files to check next.
  */
 async function resolveReference(
   input: PreflightInput,
   at: string,
   ref: Reference,
-  base: string,
-): Promise<Next | null> {
-  const target = resolve(base, ref.value);
-  if (!isInsideReal(input.root, target)) {
-    throw new PolicyError(`${at}: ${ref.what} "${ref.value}" leaves the repository`);
+  bases: readonly string[],
+): Promise<Next[]> {
+  const include = ref.include;
+  const projectDirs =
+    include?.projectDirectory === undefined
+      ? []
+      : bases.map((base) => resolve(base, include.projectDirectory as string));
+  // An include's env_file may be read relative to its project_directory as well.
+  const from = include && ref.kind === 'file' ? unique([...bases, ...projectDirs]) : bases;
+  const candidates = unique(from.map((base) => resolve(base, ref.value)));
+  for (const candidate of candidates) {
+    if (!isInsideReal(input.root, candidate)) {
+      throw new PolicyError(`${at}: ${ref.what} "${ref.value}" leaves the repository`);
+    }
   }
-  if (ref.kind !== 'compose') return null;
-  const file = await realpath(target).catch(() => null);
-  if (!file) {
+  if (ref.kind !== 'compose') return [];
+  // The included project's directory: project_directory, else the entry's first file's.
+  const firstDirs = include ? bases.map((base) => dirname(resolve(base, include.firstPath))) : [];
+  const next: Next[] = [];
+  for (const candidate of candidates) {
+    const file = await realpath(candidate).catch(() => null);
+    const nested = unique([...bases, dirname(candidate), ...projectDirs, ...firstDirs]);
+    if (file) next.push({ file, bases: nested });
+  }
+  if (next.length === 0) {
     throw new ComposeFileError(
       `${at}: ${ref.what} "${ref.value}" does not exist in the repository at this ref`,
     );
   }
-  if (!ref.include) return { file, bases: [dirname(target)] };
-  const { projectDirectory, firstPath } = ref.include;
-  if (projectDirectory !== undefined) return { file, bases: [resolve(base, projectDirectory)] };
-  // Entries with several paths: the first one's directory, or (to be safe) the file's own.
-  return { file, bases: unique([dirname(resolve(base, firstPath)), dirname(target)]) };
+  return next;
 }
 
 async function checkComposeFile(
@@ -347,9 +402,8 @@ async function checkComposeFile(
     refs.push(...referencesOf(new Walker(doc, at), doc.contents, input.mode));
   }
   for (const ref of refs) {
-    for (const base of bases) {
-      const next = await resolveReference(input, at, ref, base);
-      if (next) await checkComposeFile(input, next.file, next.bases, depth + 1, seen);
+    for (const next of await resolveReference(input, at, ref, bases)) {
+      await checkComposeFile(input, next.file, next.bases, depth + 1, seen);
     }
   }
 }
@@ -360,11 +414,13 @@ async function checkComposeFile(
  * result): every file must parse (fail closed), `extends.file` must name a Compose file of the
  * repository (relative, no variables; checked in turn), and so must every `include` path,
  * `env_file` and `project_directory` in deploy mode; checks allow no `include` and no top-level
- * merge key. Explicit YAML tags other than `!reset` and `!override` are refused. Paths resolve
- * like Compose resolves them: in the configured files against the project directory, in an
- * included file against its project directory, in an extended file against its directory.
+ * merge key. `env_file` and `label_file` of every service must be files of the repository too.
+ * Explicit YAML tags other than `!reset` and `!override` are refused. A path must stay inside
+ * from every directory Compose might resolve it against.
  */
 export async function preflightComposeFiles(input: PreflightInput): Promise<void> {
   const seen = new Set<string>();
-  for (const file of input.files) await checkComposeFile(input, file, [input.projectDir], 0, seen);
+  for (const file of input.files) {
+    await checkComposeFile(input, file, unique([input.projectDir, dirname(file)]), 0, seen);
+  }
 }

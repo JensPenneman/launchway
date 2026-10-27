@@ -39,8 +39,11 @@ export interface AgentRuntime {
   activeDeploymentIds: () => DeploymentId[];
   /** Check runs queued or running (heartbeat `activeCheckRunIds`). */
   activeCheckRunIds: () => CheckRunId[];
-  /** Clears leftovers of earlier check runs; call once at start (check runs wait for it). */
-  sweepChecks: () => void;
+  /**
+   * Clears leftovers of earlier check runs; call once at start (check runs wait for it). A slug
+   * limits it to that app's runs on the shared Docker daemon.
+   */
+  sweepChecks: (scope?: { slug?: string }) => void;
   /**
    * Ends log streams, interrupts check runs, lets deployments finish within `graceMs`, then
    * fails the rest; check cleanup gets the same grace period.
@@ -80,7 +83,7 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
     onConnected: () => outbox.flush(),
     activeDeploymentIds: () => deployments.activeDeploymentIds(),
     activeCheckRunIds: () => checks.activeCheckRunIds(),
-    sweepChecks: () => checks.sweep(),
+    sweepChecks: (scope) => checks.sweep(scope),
     shutdown: async (graceMs) => {
       logStreams.stopAll();
       await Promise.all([deployments.shutdown(graceMs), checks.shutdown(graceMs)]);

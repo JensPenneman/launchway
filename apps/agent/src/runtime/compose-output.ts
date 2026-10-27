@@ -135,8 +135,8 @@ export function parseComposeLogLine(
   return { service: parsed.data, timestamp, stream, line: text.slice(0, 16_384) };
 }
 
-/** Quoted text in a line of output (double quotes with escapes, or backticks). */
-const QUOTED = /"(?:[^"\\]|\\.)*"|`[^`]*`/g;
+/** Quoted text in a line of output (double or single quotes with escapes, or backticks). */
+const QUOTED = /"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*'|`[^`]*`/g;
 /** Quoted text that may stay: a short name (service, volume, variable) or a character. */
 const QUOTED_NAME = /^(?:[A-Za-z0-9._-]{1,32}|.{1,4})$/;
 
@@ -147,5 +147,7 @@ const QUOTED_NAME = /^(?:[A-Za-z0-9._-]{1,32}|.{1,4})$/;
  * credential. Masks quoted text other than short names in a line of its output.
  */
 export function maskQuotedText(line: string): string {
-  return line.replace(QUOTED, (quoted) => (QUOTED_NAME.test(quoted.slice(1, -1)) ? quoted : '"…"'));
+  return line.replace(QUOTED, (quoted) =>
+    QUOTED_NAME.test(quoted.slice(1, -1)) ? quoted : `${quoted[0]}…${quoted[0]}`,
+  );
 }

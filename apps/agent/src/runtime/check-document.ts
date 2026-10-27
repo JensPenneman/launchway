@@ -17,6 +17,19 @@ import { PolicyError } from './workspace.js';
 export const SOURCE_VOLUME_KEY = `${CHECK_KEY_PREFIX}source`;
 
 /**
+ * Build arg every check build gets, over the project's own: the hostname of its RUN steps, which
+ * BuildKit also keys their cache on (Dockerfile frontend 1.2 and later; a Dockerfile `ARG` cannot
+ * change it). One per app, so a step one app's build ran is never reused by another app's build:
+ * a step's cache key leaves out what its cache mounts and secrets held.
+ */
+export const BUILD_HOSTNAME_ARG = 'BUILDKIT_SANDBOX_HOSTNAME';
+
+/** `check-<suffix of the app id>`: the hostname of an app's build steps. */
+export function checkBuildHostname(appId: string): string {
+  return `check-${appId.slice(appId.lastIndexOf('_') + 1)}`;
+}
+
+/**
  * What the agent found at a path inside the checkout, symlinks resolved. `relative` is the real
  * path relative to the checkout (`''` for the checkout itself, `/` separators); `content` is the
  * text of a file of at most MAX_INLINE_FILE_BYTES (absent for bigger and for binary files).
@@ -47,6 +60,7 @@ export function checkEnvironment(
 export interface CheckDocumentInput {
   /** `launchway-check_<slug>_<run id suffix>`. */
   project: string;
+  appId: string;
   slug: string;
   runId: string;
   /** The service the check's command runs in. */
@@ -300,11 +314,10 @@ export function buildCheckDocument(
         else delete build.cache_from;
       }
       build.labels = { ...mapping(build.labels), [CHECK_LABEL]: input.slug };
-      if (build.args !== undefined) {
-        const args = withValues(mapping(build.args));
-        if (Object.keys(args).length > 0) build.args = args;
-        else delete build.args;
-      }
+      build.args = {
+        ...withValues(mapping(build.args)),
+        [BUILD_HOSTNAME_ARG]: checkBuildHostname(input.appId),
+      };
       for (const entry of Array.isArray(build.secrets) ? build.secrets : []) {
         const source = sourceOf(entry);
         if (source) buildSecrets.add(source);

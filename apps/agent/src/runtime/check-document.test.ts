@@ -1,8 +1,10 @@
 import { CHECK_ENV_KEYS, generateId } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
+  BUILD_HOSTNAME_ARG,
   buildCheckDocument,
   type CheckDocumentInput,
+  checkBuildHostname,
   checkEnvironment,
   checkSourcePaths,
   type SourcePath,
@@ -13,6 +15,8 @@ import { PolicyError } from './workspace.js';
 const ROOT = '/ws/checks/app_1/chk_1/src';
 const DEVC = `${ROOT}/.devcontainer`;
 const runId = generateId('chk');
+const appId = generateId('app');
+const HOSTNAME = `check-${appId.slice(4)}`;
 const project = `launchway-check_trail_${runId.slice(4)}`;
 const LIMITS = { memoryBytes: 4 * 1024 ** 3, cpus: 2, pidsLimit: 4096 };
 
@@ -159,13 +163,14 @@ const SOURCES: Record<string, SourcePath> = {
 function input(overrides: Partial<CheckDocumentInput> = {}): CheckDocumentInput {
   return {
     project,
+    appId,
     slug: 'trail',
     runId,
     service: 'dev',
     env: checkEnvironment(
       {
         runId,
-        app: { id: generateId('app'), slug: 'trail' },
+        app: { id: appId, slug: 'trail' },
         source: {
           cloneUrl: 'https://github.com/acme/trail.git',
           ref: 'feature/x',
@@ -458,7 +463,7 @@ describe('buildCheckDocument', () => {
     expect(dev.build).toEqual({
       context: ROOT,
       dockerfile: '.devcontainer/Dockerfile',
-      args: { USER_UID: '1000' },
+      args: { USER_UID: '1000', BUILDKIT_SANDBOX_HOSTNAME: HOSTNAME },
       cache_from: ['ghcr.io/acme/trail:cache'],
       labels: { 'org.example': 'x', 'launchway.check': 'trail' },
       secrets: [{ source: 'npmrc' }],
@@ -467,13 +472,28 @@ describe('buildCheckDocument', () => {
     expect(db).not.toHaveProperty('pull_policy');
   });
 
+  it("keys build steps per app: the hostname of RUN steps is the app's, not the project's", () => {
+    const config = trailConfig();
+    const dev = config.services?.dev as { build: { args: Record<string, unknown> } };
+    dev.build.args = { BUILDKIT_SANDBOX_HOSTNAME: 'check-of-another-app' };
+    const built = build({}, config);
+    expect(built.dev.build?.args).toEqual({ BUILDKIT_SANDBOX_HOSTNAME: HOSTNAME });
+    // Every built service gets it, also one without args of its own.
+    delete (dev.build as { args?: unknown }).args;
+    expect(build({}, config).dev.build?.args).toEqual({ BUILDKIT_SANDBOX_HOSTNAME: HOSTNAME });
+    expect(checkBuildHostname('app_01jz0000000000000000000000')).toBe(
+      'check-01jz0000000000000000000000',
+    );
+    expect(BUILD_HOSTNAME_ARG).toBe('BUILDKIT_SANDBOX_HOSTNAME');
+  });
+
   it("pulls every image the repository names and fills in nothing from the CLI's environment", () => {
     const { dev, db } = build();
     // Built: never pulled; not built: pull_policy dropped (the run pulls with --policy always).
     expect(dev.pull_policy).toBe('never');
     expect(db).not.toHaveProperty('pull_policy');
     // Valueless entries would be filled in from the Compose CLI's environment.
-    expect(dev.build?.args).toEqual({ USER_UID: '1000' });
+    expect(dev.build?.args).toEqual({ USER_UID: '1000', BUILDKIT_SANDBOX_HOSTNAME: HOSTNAME });
     expect(dev.environment).not.toHaveProperty('EMPTY');
     expect(db).not.toHaveProperty('environment');
   });

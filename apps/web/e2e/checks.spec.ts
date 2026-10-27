@@ -171,7 +171,9 @@ test('saves the platform limits of checks', async ({ page }) => {
   const perApp = page.getByLabel('Queued per app');
   await expect(perApp).toHaveValue('30');
   await expect(page.getByLabel('Queued per node')).toHaveValue('100');
-  await perApp.fill('0');
+  // At least 10, the most checks an app may have: a commit queues all its checks or none.
+  await perApp.fill('9');
+  await expect(page.getByText('Must be at least 10')).toBeVisible();
   await expect(page.getByRole('button', { name: 'Save check limits' })).toBeDisabled();
   await perApp.fill('12');
   await page.getByRole('button', { name: 'Save check limits' }).click();

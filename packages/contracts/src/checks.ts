@@ -217,7 +217,11 @@ export const CheckPidsLimit = z.number().int().min(64).max(1_048_576).openapi({
 export const DEFAULT_CHECK_MAX_QUEUED_PER_APP = 30;
 export const DEFAULT_CHECK_MAX_QUEUED_PER_NODE = 100;
 
-export const CheckQueueLimit = z.number().int().min(1).max(1000);
+/**
+ * Bound of the queue of an app or of a node. A commit queues all its checks or none, so the bound
+ * is at least MAX_CHECK_ITEMS: an app with that many checks could never queue below it.
+ */
+export const CheckQueueLimit = z.number().int().min(MAX_CHECK_ITEMS).max(1000);
 
 /** Log lines the agent sends per run; it then sends one "truncated" line and drops the rest. */
 export const CHECK_LOG_LINE_LIMIT = 20_000;

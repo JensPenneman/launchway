@@ -553,33 +553,40 @@ describe('checks against PostgreSQL', () => {
         checkMaxQueuedPerNode: perNode,
       } satisfies Partial<Settings>);
     };
-    await setLimits(2, 3);
+    // A commit queues all its checks or none: a bound below the most checks an app may have
+    // would keep such an app from ever queueing.
+    for (const limit of [{ checkMaxQueuedPerApp: 9 }, { checkMaxQueuedPerNode: 9 }]) {
+      expect((await api.request('/api/v1/settings', json('PATCH', limit))).status).toBe(400);
+    }
+    await setLimits(10, 11);
     try {
       // An offline node: every run stays queued.
       const node = await newNode(false);
-      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality, lint] });
-      await deliver('push', push(repo, 'feature/one', sha(`${repo}-one`)));
-      await deliver('push', push(repo, 'feature/two', sha(`${repo}-two`)));
+      const items = ['a', 'b', 'c', 'd'].map((name) => ({ ...lint, name }));
+      const { app, repo } = await createTestApp(node, { enabled: true, items });
+      for (const label of ['one', 'two', 'three']) {
+        await deliver('push', push(repo, `feature/${label}`, sha(`${repo}-${label}`)));
+      }
       const runs = await runsOf(app.id);
-      const one = runs.filter((r) => r.commitSha === sha(`${repo}-one`));
-      const two = runs.filter((r) => r.commitSha === sha(`${repo}-two`));
-      expect(one.map((r) => r.status)).toEqual(['queued', 'queued']);
-      // Both checks of the second push: all or nothing, ended at once so GitHub shows why.
-      for (const run of two) {
+      const of = (label: string) => runs.filter((r) => r.commitSha === sha(`${repo}-${label}`));
+      expect([...of('one'), ...of('two')].map((r) => r.status)).toEqual(Array(8).fill('queued'));
+      // The checks of the third push: all or nothing, ended at once so GitHub shows why.
+      expect(of('three')).toHaveLength(4);
+      for (const run of of('three')) {
         expect(run).toMatchObject({
           status: 'errored',
           reason: 'queue-full',
           statusMessage:
-            'Not run: the app already has 2 queued checks (at most 2); run it again later',
+            "Not run: 8 queued and 4 new checks would exceed the app's limit of 10; run it again later",
         });
         expect(run.finishedAt).not.toBeNull();
         expect((await auditsOf(run.id)).map((a) => [a.action, a.summary])).toEqual([
           ['check.create', expect.objectContaining({ status: 'errored', reason: 'queue-full' })],
         ]);
       }
-      expect(gateway.checkRuns.filter((r) => two.some((t) => t.id === r.payload.runId))).toEqual(
-        [],
-      );
+      expect(
+        gateway.checkRuns.filter((r) => of('three').some((t) => t.id === r.payload.runId)),
+      ).toEqual([]);
 
       // By hand the request is refused instead.
       const manual = await api.request(
@@ -588,33 +595,28 @@ describe('checks against PostgreSQL', () => {
       );
       expect(manual.status).toBe(409);
       expect(((await manual.json()) as { detail: string }).detail).toBe(
-        'Not queued: the app already has 2 queued checks (at most 2); wait for them or raise the limit',
+        "Not queued: 8 queued and 4 new checks would exceed the app's limit of 10; wait for them or raise the limit",
       );
 
       // The node's bound counts the queued runs of all its apps.
-      const other = await createTestApp(node, { enabled: true, items: [quality, lint] });
+      const other = await createTestApp(node, { enabled: true, items });
       await deliver('push', push(other.repo, 'main', sha(`${other.repo}-x`)));
       const others = await runsOf(other.app.id);
-      expect(others.map((r) => [r.status, r.reason, r.statusMessage])).toEqual([
-        [
+      expect(others.map((r) => [r.status, r.reason, r.statusMessage])).toEqual(
+        Array(4).fill([
           'errored',
           'queue-full',
-          'Not run: its node already has 2 queued checks (at most 3); run it again later',
-        ],
-        [
-          'errored',
-          'queue-full',
-          'Not run: its node already has 2 queued checks (at most 3); run it again later',
-        ],
-      ]);
+          "Not run: 8 queued and 4 new checks would exceed its node's limit of 11; run it again later",
+        ]),
+      );
 
       // Once there is room, pushing the commit again queues it: runs that never ran do not count.
-      await setLimits(4, 10);
-      await deliver('push', push(repo, 'feature/two', sha(`${repo}-two`)));
-      const queuedTwo = (await runsOf(app.id)).filter(
-        (r) => r.commitSha === sha(`${repo}-two`) && r.status === 'queued',
+      await setLimits(20, 30);
+      await deliver('push', push(repo, 'feature/three', sha(`${repo}-three`)));
+      const queuedThree = (await runsOf(app.id)).filter(
+        (r) => r.commitSha === sha(`${repo}-three`) && r.status === 'queued',
       );
-      expect(queuedTwo).toHaveLength(2);
+      expect(queuedThree).toHaveLength(4);
     } finally {
       await setLimits(30, 100);
     }
@@ -1140,6 +1142,42 @@ describe('checks against PostgreSQL', () => {
       reason: 'offline',
       statusMessage: NODE_OFFLINE_MESSAGE,
     });
+  });
+
+  it('queues a pushed commit again when its runs ended before their offline node took them', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const commit = sha(`${repo}-offline`);
+    await deliver('push', push(repo, 'feature/offline', commit));
+    const [first] = await runsOf(app.id);
+    expect(first).toMatchObject({ status: 'queued', commitSha: commit });
+    const old = new Date(Date.now() - 11 * 60_000);
+    await db
+      .update(checkRuns)
+      .set({ createdAt: old })
+      .where(eq(checkRuns.id, first?.id as CheckRunId));
+    await db.update(nodes).set({ lastSeenAt: old }).where(eq(nodes.id, node));
+    await createCheckDispatcher(deps).tick();
+    expect(await runRow(first?.id ?? '')).toMatchObject({
+      status: 'errored',
+      reason: 'offline',
+      startedAt: null,
+    });
+    // Pushed again (or delivered again): it never ran, so it queues once more, and only once.
+    await deliver('push', push(repo, 'feature/offline', commit));
+    await deliver('push', push(repo, 'feature/offline', commit));
+    const runs = await runsOf(app.id);
+    expect(runs.map((r) => [r.status, r.reason])).toEqual([
+      ['errored', 'offline'],
+      ['queued', null],
+    ]);
+    // A run its node took counts, whatever ended it.
+    await db
+      .update(checkRuns)
+      .set({ status: 'errored', reason: 'offline', startedAt: old, finishedAt: new Date() })
+      .where(eq(checkRuns.id, runs[1]?.id as CheckRunId));
+    await deliver('push', push(repo, 'feature/offline', commit));
+    expect(await runsOf(app.id)).toHaveLength(2);
   });
 
   it('errors the runs of a node whose agent does not run checks', async () => {

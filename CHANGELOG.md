@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/JensPenneman/launchway/compare/v0.4.0...v0.5.0) (2026-10-27)
+
+
+### Features
+
+* build checks in a limited builder of their own and bound their queue ([#17](https://github.com/JensPenneman/launchway/issues/17)) ([1231d57](https://github.com/JensPenneman/launchway/commit/1231d57d4283f48a031bcf17ee595c6dce3cb09b))
+
 ## [0.4.0](https://github.com/JensPenneman/launchway/compare/v0.3.0...v0.4.0) (2026-10-27)
 
 

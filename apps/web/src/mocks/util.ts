@@ -125,10 +125,21 @@ export function randomSha(): string {
   return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
+const TOKEN_ALPHABET = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+const TOKEN_LENGTH = 43;
+// Rejection sampling: 256 is not a multiple of 62, so `byte % 62` on every byte would make the
+// first eight characters more likely. Bytes from 248 (4 × 62) up are drawn again instead.
+const UNBIASED_BYTE_LIMIT = 256 - (256 % TOKEN_ALPHABET.length);
+
+/** `<prefix>` and 43 base62 characters like the API's tokens, every character equally likely. */
 export function randomToken(prefix: string): string {
-  const alphabet = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
-  const bytes = crypto.getRandomValues(new Uint8Array(43));
-  return prefix + [...bytes].map((byte) => alphabet[byte % alphabet.length]).join('');
+  let token = '';
+  while (token.length < TOKEN_LENGTH) {
+    for (const byte of crypto.getRandomValues(new Uint8Array(TOKEN_LENGTH - token.length))) {
+      if (byte < UNBIASED_BYTE_LIMIT) token += TOKEN_ALPHABET.charAt(byte % TOKEN_ALPHABET.length);
+    }
+  }
+  return prefix + token;
 }
 
 export function slugify(name: string): string {

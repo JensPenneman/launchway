@@ -456,7 +456,9 @@ images.
      (1-120, default 30) and, optionally, a Compose file of its own.
 3. **Limits** (admins): **Settings → Platform → Checks** sets the memory,
    CPUs and processes every service of a check gets (`checkMemoryMb`,
-   `checkCpus`, `checkPidsLimit`; defaults 4096 MiB, 2 and 4096).
+   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096). The
+   memory limit applies to every service of a check, so a dev container with
+   a database may use twice as much; the card shows the total.
 
 Trail, whose development container has a `dev` service with Node and
 Chromium and a `db` service, runs the jobs of its CI workflow like this:
@@ -504,8 +506,9 @@ dependencies first.
   Builds and Compose of checks do not see the agent's proxy variables; a node
   behind a proxy needs it in Docker's own configuration.
 - **Its own, short-lived project.** Every run is the Compose project
-  `launchway-check_<slug>_<run>`: published ports, fixed container names and
-  restart policies are removed, nothing joins the proxy network, and its
+  `launchway-check_<slug>_<run>`: published ports, fixed container names,
+  restart policies, `ulimits` and network subnets are removed, container logs
+  rotate (at most 30 MB per container), nothing joins the proxy network, and its
   containers, volumes and networks are removed when it ends. Images built for
   checks are kept as `launchway-check/<slug>-<service>`, one per app and
   service, and later builds reuse their layers.
@@ -528,10 +531,11 @@ separately, so a check of Trail (`dev` and `db`) may take up to twice
 `checkMemoryMb`.
 
 - Size the limit so that production plus *services × `checkMemoryMb`* fits:
-  with the default 8 GB and production at about 3 GB, use 2048 MiB for a
-  two-service check; give WSL 12 GB (`%UserProfile%\.wslconfig`: `[wsl2]`
-  and `memory=12GB`, then `wsl --shutdown`, and Docker Desktop restarts) to
-  keep the default of 4096 MiB. Swap is off for checks.
+  the default of 2048 MiB lets a two-service check take 4 GiB, which fits
+  WSL's default 8 GB with production at about 3 GB. For heavier suites give
+  WSL 12 GB (`%UserProfile%\.wslconfig`: `[wsl2]` and `memory=12GB`, then
+  `wsl --shutdown`, and Docker Desktop restarts) and raise the limit to
+  4096 MiB. Swap is off for checks.
 - If memory runs out anyway, the kernel kills check processes first
   (`oom_score_adj` 1000). A check that hits its own limit fails with
   "(out of memory)" in its message.
@@ -566,9 +570,9 @@ is fixed.
 
 ### Troubleshooting checks
 
-- **"The agent of this node did not acknowledge the check".** The node runs
-  an agent from before checks; upgrade the installation (or that node's
-  agent).
+- **"The agent of this node does not run checks".** The node runs an agent
+  from before checks (its heartbeats do not list check runs); upgrade the
+  installation (or that node's agent).
 - **A check errors with reason `policy`.** The log names the rule: bind mounts
   of host paths outside the repository, `include` (list the files under
   Compose files instead), a Compose file, `env_file` or `label_file` outside
@@ -818,6 +822,39 @@ docker compose -f compose.agent.yaml up -d
 
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
+
+### Upgrading to the version with checks
+
+- **Order.** Checks keep the agent protocol at version 1, so the API and the
+  agents work together in either order. Upgrade the agents of the nodes that
+  run checks together with the API, or before turning checks on: check runs
+  for a node whose agent is still older end at once with *error*, reason
+  `unsupported`, because such an agent ignores them.
+- **GitHub permission.** Reporting checks needs *Commit statuses: Read and
+  write* (`statuses: write`) on the GitHub App or token; see *Checks*. Nothing
+  changes for apps without checks.
+- **Retention.** Check log lines are deleted after 30 days; the runs stay
+  listed.
+
+### Changes to deployments
+
+The agent of this version parses Compose files before Compose loads them
+(*Checks*, ADR 0020), for deployments and previews as well. A deployment that
+worked with an earlier agent fails with reason `policy` if its Compose files:
+
+- name an `extends.file`, `env_file` or `label_file` by an absolute path,
+  even one inside the checkout, or use `$` variables in those paths or in
+  `include`;
+- `include` a file, `env_file` or `project_directory` outside the repository,
+  or include a remote (Git, OCI or HTTPS) file;
+- use YAML tags other than `!reset`, `!override` and the standard ones, keys
+  that are not plain scalars, duplicate keys, or exceed 4 MiB per file;
+- run privileged `post_start` or `pre_stop` hooks;
+- use an image in the `launchway-check/` namespace, which belongs to checks.
+
+Compose's error output in deployment logs now masks quoted text, and the node
+credential and the join token are redacted. Use relative paths inside the
+repository instead, and move anything else out of the Compose files.
 
 ## Backup
 

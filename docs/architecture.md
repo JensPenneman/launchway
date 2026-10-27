@@ -288,7 +288,7 @@ reported to GitHub as commit statuses that branch protection can require
   service (default dev), composeFile?, timeoutMinutes (1-120, default 30) }`.
   Members change them with `PATCH /apps/{id}`; the limits every service of a
   check gets are platform settings (`checkMemoryMb`, `checkCpus`,
-  `checkPidsLimit`; defaults 4096, 2, 4096).
+  `checkPidsLimit`; defaults 2048, 2, 4096).
 - **Triggers.** `push` to a branch (no tags, no deletions) and
   `pull_request` `opened` / `reopened` / `synchronize` from the same
   repository queue one run per item for the head commit; fork pull requests
@@ -528,9 +528,12 @@ export interface DnsProvider {
   { runId, reason, exitCode, message? }` ends the run (`reason`: `exit`,
   `timeout`, `policy`, `build`, `infrastructure`, `interrupted`,
   `cancelled`). `check.cancel { runId }` ends a run with `cancelled`.
-  Heartbeats carry `activeCheckRunIds`. Agents without checks ignore
-  `check.run`, and the server marks the run `errored` after 30 seconds
-  without an acknowledgement. The agent runs one check at a time:
+  Agents that run checks carry `activeCheckRunIds` in every heartbeat.
+  Agents without checks ignore `check.run` and send heartbeats without it,
+  and the server marks their node's runs `errored` (`unsupported`). A run
+  not acknowledged within 30 seconds stays claimed until the heartbeats
+  show whether the agent has it; if not, it is sent again. The agent runs
+  one check at a time:
   1. fetch the commit into `/var/lib/launchway/checks/<appId>/<runId>/src`
      (credentials as for deployments);
   2. parse the Compose files (YAML) and refuse `include`, a top-level merge
@@ -545,9 +548,11 @@ export interface DnsProvider {
   3. write one resolved document `compose.json` next to the checkout and use
      only that afterwards: label `launchway.check=<runId>` on every service,
      volume and network; `mem_limit` = `memswap_limit`, `cpus`,
-     `pids_limit`, `oom_score_adj: 1000` and `no-new-privileges` on every
-     service; no `ports`, `container_name`, `restart`, `logging`, `deploy`
-     or resource settings of the project; built services tagged
+     `pids_limit`, `oom_score_adj: 1000`, `no-new-privileges` and `json-file`
+     logging with rotation (3 × 10 MB) on every service; no `ports`,
+     `container_name`, `restart`, `logging`, `deploy`, `ulimits`, `cpuset`,
+     `storage_opt` or other resource settings of the project, and no `ipam`
+     or `enable_ipv6` on its networks (nor fixed addresses on services); built services tagged
      `launchway-check/<slug>-<service>`; directory binds inside the checkout
      turned into mounts of the run's source volume (`volume.subpath`),
      read-only text files of at most 64 KiB into `configs` with inline

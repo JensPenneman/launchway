@@ -55,7 +55,9 @@ This is a summary of the security requirements in section 14 of
   host through `host.docker.internal`), and builds run in BuildKit without the
   service limits and share its cache and cache mounts with deployments; put
   services on the node behind authentication and turn checks on only for
-  repositories whose writers you trust with that (ADR 0020).
+  repositories whose writers you trust with that (ADR 0020). A member can also
+  start a run by hand for any commit GitHub serves for the repository, heads
+  of fork pull requests included, just as members can deploy any commit.
 - **Extra Caddy directives are trusted admin configuration.** A route's
   `extraDirectives` is placed verbatim in the Caddyfile, with the reach of
   any Caddyfile: placeholders such as `{env.*}` resolve in the Caddy

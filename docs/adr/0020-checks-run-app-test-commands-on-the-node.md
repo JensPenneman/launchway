@@ -62,11 +62,14 @@ shape the design:
    last posted to GitHub. A partial unique index allows one `running` run per
    node: checks of all apps of a node run one after another, oldest first.
    The dispatcher claims runs like the deployment dispatcher. The agent
-   acknowledges `check.run` at once; without an acknowledgement within 30
-   seconds the run is `errored` with reason `unsupported` (older agents
-   ignore the unknown message). Heartbeats list the runs an agent holds, so
-   runs whose result was lost become `errored` (`lost`), and runs the
-   database no longer expects are cancelled on the node. Queued runs of a node
+   acknowledges `check.run` at once, and agents that run checks list their
+   runs in every heartbeat (`activeCheckRunIds`). Older agents ignore
+   `check.run` and send heartbeats without that list: their node's runs end
+   with `errored`, reason `unsupported`. A run whose acknowledgement does not
+   arrive within 30 seconds stays claimed until the heartbeats tell: listed,
+   it goes on; missing from a capable agent, it is sent again. Heartbeats
+   also turn runs whose result was lost into `errored` (`lost`), and cancel on
+   the node the runs the database no longer expects. Queued runs of a node
    that stays offline for 10 minutes are `errored`. Log lines
    (`check_log_lines`) are deleted after 30 days; runs are kept. The UI and
    `GET /checks/{id}/logs` stream them like deployment logs, and the change
@@ -97,9 +100,12 @@ shape the design:
    secrets read from the environment. It writes one resolved document and uses
    only that file afterwards: every service gets the label
    `launchway.check=<run id>`, the limits of the platform settings, `no-new-
-   privileges` and `oom_score_adj: 1000`; published ports, container names,
-   restart policies, logging drivers and resource settings of the project are
-   removed; built services are tagged `launchway-check/<slug>-<service>` so a
+   privileges`, `oom_score_adj: 1000` and the `json-file` logging driver with
+   rotation (at most 30 MB of logs per container); published ports, container
+   names, restart policies, logging drivers, `ulimits`, `cpuset`,
+   `storage_opt` and the other resource settings of the project are removed,
+   and so are subnets and fixed addresses of its networks (`ipam`,
+   `enable_ipv6`), which could change routing on the node; built services are tagged `launchway-check/<slug>-<service>` so a
    check can never retag an image of a deployment; every other image is pulled
    from its registry for each run, so a check cannot use an image that only
    exists on the node; environment entries and build arguments without a
@@ -129,7 +135,9 @@ shape the design:
    else of the check. The agent itself still never runs a shell string.
 9. **Resource caps.** Every service of a check gets `mem_limit` =
    `memswap_limit` (no swap), `cpus` and `pids_limit` from the platform
-   settings (defaults 4096 MiB, 2 CPUs, 4096 processes) and the OOM killer
+   settings (defaults 2048 MiB, 2 CPUs, 4096 processes: a check of a dev
+   container and a database fits an 8 GB Docker VM next to production) and the
+   OOM killer
    takes check containers first. Builds share the node's build slots with
    deployments and stop after 60 minutes; the command stops after its
    `timeoutMinutes`; a run sends at most 20 000 log lines or 16 MiB of text,
@@ -154,7 +162,10 @@ shape the design:
 - The Compose file preflight applies to deployments as well: `include`,
   `extends.file`, `env_file` and `label_file` must stay inside the repository
   there too, and remote includes are refused, which closes the same way of
-  reading another app's `.env` for previews.
+  reading another app's `.env` for previews. Deployments may no longer use
+  images in the `launchway-check/` namespace, so a check build can never
+  replace an image a deployment runs. The operations guide lists what
+  deployments that worked before may now meet (*Upgrade*).
 - Risks that remain: checks have outbound network access (installing
   dependencies needs it) and can reach ports the node publishes, the
   Launchway API's port 3000 included; build steps run in BuildKit without the

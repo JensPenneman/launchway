@@ -1,4 +1,5 @@
 import type {
+  CheckRun,
   Deployment,
   DnsRecord,
   EnvVar,
@@ -11,8 +12,10 @@ import type {
   UserRole,
 } from '@launchway/contracts';
 import {
+  checkRunLog,
   createApps,
   createAuditEvents,
+  createCheckRuns,
   createConnections,
   createDeployments,
   createDnsAccounts,
@@ -76,6 +79,8 @@ export class MockDb {
   previews: Preview[] = this.previewFixtures.previews;
   deployments = [...createDeployments(), ...this.previewFixtures.deployments];
   logs = new Map<string, LogLine[]>(this.deployments.map((d) => [d.id, deploymentLog(d)]));
+  checkRuns = createCheckRuns();
+  checkLogs = new Map<string, LogLine[]>(this.checkRuns.map((run) => [run.id, checkRunLog(run)]));
   env = createEnv();
   dnsAccounts = createDnsAccounts();
   zones = createZones();
@@ -100,6 +105,7 @@ export class MockDb {
   private eventSeq = 0;
   private platformListeners = new Set<Listener<PlatformEvent>>();
   private logListeners = new Map<string, Set<Listener<LogLine | Deployment>>>();
+  private checkListeners = new Map<string, Set<Listener<LogLine | CheckRun>>>();
 
   currentUser(): User | undefined {
     return this.users.find((user) => user.id === this.sessionUserId);
@@ -110,7 +116,12 @@ export class MockDb {
   }
 
   /** Publishes a change-feed event to every `/events` subscriber. */
-  emit(topic: EventTopic, action: EventAction, resourceId: string | null): void {
+  emit(
+    topic: EventTopic,
+    action: EventAction,
+    resourceId: string | null,
+    data?: Record<string, unknown>,
+  ): void {
     this.eventSeq += 1;
     const event: PlatformEvent = {
       id: String(this.eventSeq),
@@ -118,6 +129,7 @@ export class MockDb {
       action,
       resourceId,
       at: new Date().toISOString(),
+      ...(data ? { data } : {}),
     };
     for (const listener of this.platformListeners) listener(event);
   }
@@ -150,6 +162,32 @@ export class MockDb {
     for (const listener of this.logListeners.get(id) ?? []) listener(deployment);
     this.emit('deployments', 'updated', id);
     return deployment;
+  }
+
+  /** Follows one check run: new log lines and run updates. */
+  onCheckRun(id: string, listener: Listener<LogLine | CheckRun>): () => void {
+    const listeners = this.checkListeners.get(id) ?? new Set();
+    listeners.add(listener);
+    this.checkListeners.set(id, listeners);
+    return () => listeners.delete(listener);
+  }
+
+  appendCheckLog(runId: string, stream: LogLine['stream'], line: string): void {
+    const lines = this.checkLogs.get(runId) ?? [];
+    const entry: LogLine = { seq: lines.length, stream, line, timestamp: new Date().toISOString() };
+    lines.push(entry);
+    this.checkLogs.set(runId, lines);
+    for (const listener of this.checkListeners.get(runId) ?? []) listener(entry);
+  }
+
+  /** Changes a run, tells its log followers and publishes `checks` with `{ appId, status }`. */
+  updateCheckRun(id: string, patch: Partial<CheckRun>): CheckRun | undefined {
+    const run = this.checkRuns.find((item) => item.id === id);
+    if (!run) return undefined;
+    Object.assign(run, patch, { updatedAt: new Date().toISOString() });
+    for (const listener of this.checkListeners.get(id) ?? []) listener(run);
+    this.emit('checks', 'updated', id, { appId: run.appId, status: run.status });
+    return run;
   }
 
   envOf(appId: string): EnvVar[] {

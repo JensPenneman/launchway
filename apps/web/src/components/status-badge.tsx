@@ -1,6 +1,8 @@
 import type {
+  CheckRunStatus,
   DeploymentStatus,
   DomainStatus,
+  GitHubCommitStatusState,
   NodeStatus,
   PreviewStatus,
 } from '@launchway/contracts';
@@ -112,4 +114,34 @@ export function PreviewStatusBadge({ status }: { status: PreviewStatus }) {
       {status}
     </StatusBadge>
   );
+}
+
+// `failed` is a verdict on the code (non-zero exit, timeout); `errored` means there is none.
+const CHECK_RUN_TONES: Record<CheckRunStatus, Tone> = {
+  queued: 'info',
+  running: 'info',
+  succeeded: 'success',
+  failed: 'danger',
+  errored: 'warning',
+  cancelled: 'neutral',
+};
+
+export function CheckRunStatusBadge({ status }: { status: CheckRunStatus }) {
+  return (
+    <StatusBadge tone={CHECK_RUN_TONES[status]} className="capitalize">
+      {status}
+    </StatusBadge>
+  );
+}
+
+const GITHUB_STATE_TONES: Record<GitHubCommitStatusState, Tone> = {
+  pending: 'info',
+  success: 'success',
+  failure: 'danger',
+  error: 'warning',
+};
+
+/** State of a GitHub commit status, as GitHub shows it on the commit and pull request. */
+export function GitHubStateBadge({ state }: { state: GitHubCommitStatusState }) {
+  return <StatusBadge tone={GITHUB_STATE_TONES[state]}>{state}</StatusBadge>;
 }

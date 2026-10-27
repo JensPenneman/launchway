@@ -5,22 +5,28 @@ import { appCapabilities, missingGrants } from './capabilities.js';
 const id = generateId('gh');
 const at = new Date('2026-10-07T10:00:00Z');
 const legacy = { contents: 'read', metadata: 'read' };
-const full = { ...legacy, deployments: 'write', pull_requests: 'read' };
+const full = { ...legacy, deployments: 'write', pull_requests: 'read', statuses: 'write' };
+const allEvents = ['release', 'push', 'pull_request'];
 
 describe('missingGrants', () => {
   it('lists permissions below the requested level and missing events', () => {
     expect(missingGrants(legacy, ['release'])).toEqual([
       'deployments: write',
       'pull_requests: read',
+      'statuses: write',
       'event: push',
       'event: pull_request',
     ]);
-    expect(
-      missingGrants({ ...full, deployments: 'read' }, ['release', 'push', 'pull_request']),
-    ).toEqual(['deployments: write']);
-    expect(
-      missingGrants({ ...full, contents: 'write' }, ['pull_request', 'push', 'release']),
-    ).toEqual([]);
+    expect(missingGrants({ ...full, deployments: 'read' }, allEvents)).toEqual([
+      'deployments: write',
+    ]);
+    expect(missingGrants({ ...full, contents: 'write' }, allEvents)).toEqual([]);
+  });
+
+  it('asks for statuses: write, the permission commit statuses of checks need', () => {
+    const { statuses: _statuses, ...withoutStatuses } = full;
+    expect(missingGrants(withoutStatuses, allEvents)).toEqual(['statuses: write']);
+    expect(missingGrants({ ...full, statuses: 'read' }, allEvents)).toEqual(['statuses: write']);
   });
 });
 
@@ -49,8 +55,15 @@ describe('appCapabilities', () => {
       kind: 'app',
       deployments: false,
       pullRequests: false,
+      statuses: false,
       events: ['release'],
-      missing: ['deployments: write', 'pull_requests: read', 'event: push', 'event: pull_request'],
+      missing: [
+        'deployments: write',
+        'pull_requests: read',
+        'statuses: write',
+        'event: push',
+        'event: pull_request',
+      ],
       pendingApproval: false,
       settingsUrl: 'https://github.com/settings/apps/launchway-lvj/permissions',
       installationSettingsUrl: 'https://github.com/organizations/acme/settings/installations/99',
@@ -97,10 +110,33 @@ describe('appCapabilities', () => {
     expect(caps).toMatchObject({
       deployments: true,
       pullRequests: true,
+      statuses: true,
       events: ['pull_request', 'push', 'release'],
       missing: [],
       pendingApproval: false,
       installationSettingsUrl: null,
+    });
+  });
+
+  it('reports statuses from what the installation approved', () => {
+    const caps = appCapabilities(
+      id,
+      {
+        app: { slug: 'x', owner: null, permissions: full, events: allEvents },
+        installation: {
+          id: 99,
+          account: null,
+          permissions: { ...full, statuses: 'read' },
+          events: allEvents,
+        },
+      },
+      at,
+    );
+    expect(caps).toMatchObject({
+      deployments: true,
+      statuses: false,
+      missing: ['statuses: write'],
+      pendingApproval: true,
     });
   });
 });

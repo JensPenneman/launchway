@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import {
   AGENT_CLOSE_CODES,
   type AgentToServerMessage,
+  type CheckRunId,
   type DeploymentId,
   type HelloOkPayload,
   type HelloPayload,
@@ -32,6 +33,8 @@ export interface AgentConnectionOptions {
   /** Server requests and errors received after the handshake. */
   onRequest: (message: RequestMessage) => void;
   activeDeployments?: () => DeploymentId[];
+  /** Check runs queued or running; heartbeats always carry the list (this agent runs checks). */
+  activeCheckRuns?: () => CheckRunId[];
   backoff?: BackoffOptions;
   handshakeTimeoutMs?: number;
 }
@@ -224,6 +227,7 @@ export class AgentConnection {
       payload: {
         sentAt: new Date().toISOString(),
         activeDeploymentIds: this.#options.activeDeployments?.() ?? [],
+        activeCheckRunIds: this.#options.activeCheckRuns?.() ?? [],
       },
     });
   }

@@ -78,8 +78,9 @@ const updateApp = createRoute({
   description:
     'Partial update. Changing the source, connection or trustedMounts takes effect with the next ' +
     'deployment (an `apps` change event carries `redeployRequired`). Moving to another node ' +
-    'requires the app to have no running or pending deployment. Setting `trustedMounts` requires ' +
-    'the admin role (403 otherwise). Audited.',
+    'requires the app to have no running or pending deployment and cancels its queued check ' +
+    'runs. `previews` and `checks` are merged field by field (`checks.items` replaces the list). ' +
+    'Setting `trustedMounts` requires the admin role (403 otherwise). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: AppParams, body: jsonBody(UpdateAppInput) },
@@ -96,9 +97,9 @@ const deleteApp = createRoute({
   tags: TAGS,
   summary: 'Delete an app',
   description:
-    'Removes the app from its node (`compose down`, `--volumes` with removeVolumes=true), then ' +
-    'deletes it with its deployments and environment. Refused while the node is offline unless ' +
-    'force=true. Audited.',
+    'Cancels its check runs, removes the app from its node (`compose down`, `--volumes` with ' +
+    'removeVolumes=true), then deletes it with its deployments, check runs and environment. ' +
+    'Refused while the node is offline unless force=true. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: AppParams, query: DeleteAppQuery },

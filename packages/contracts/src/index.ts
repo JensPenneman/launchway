@@ -2,6 +2,7 @@ export * from './agent/index.js';
 export * from './apps.js';
 export * from './audit.js';
 export * from './auth.js';
+export * from './checks.js';
 export * from './common.js';
 export * from './deployments.js';
 export * from './dns.js';

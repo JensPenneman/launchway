@@ -23,6 +23,9 @@ const settings = {
   previewBaseDomain: null,
   previewMaxPerApp: 10,
   previewMaxTotal: 20,
+  checkMemoryMb: 4096,
+  checkCpus: 2,
+  checkPidsLimit: 4096,
   updatedAt: '2026-10-06T12:00:00.000Z',
 };
 

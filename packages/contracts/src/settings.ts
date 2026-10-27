@@ -1,3 +1,4 @@
+import { CheckCpus, CheckMemoryMb, CheckPidsLimit } from './checks.js';
 import {
   Email,
   Hostname,
@@ -73,6 +74,9 @@ export const Settings = z
     }),
     previewMaxPerApp: PreviewLimit.openapi({ description: 'Open previews allowed per app' }),
     previewMaxTotal: PreviewLimit.openapi({ description: 'Open previews allowed in total' }),
+    checkMemoryMb: CheckMemoryMb,
+    checkCpus: CheckCpus,
+    checkPidsLimit: CheckPidsLimit,
     updatedAt: Timestamp,
   })
   .openapi('Settings');
@@ -91,6 +95,9 @@ export const UpdateSettingsInput = z
     previewBaseDomain: Hostname.nullable().optional(),
     previewMaxPerApp: PreviewLimit.optional(),
     previewMaxTotal: PreviewLimit.optional(),
+    checkMemoryMb: CheckMemoryMb.optional(),
+    checkCpus: CheckCpus.optional(),
+    checkPidsLimit: CheckPidsLimit.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one setting')
   .refine((v) => !(v.forwardAuthUrl && v.forwardAuthTarget), {

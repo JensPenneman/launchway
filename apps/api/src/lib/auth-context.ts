@@ -2,6 +2,7 @@ import {
   type ApiTokenId,
   type AuditActor,
   lowerRole,
+  type NodeId,
   roleAtLeast,
   type SessionId,
   scopeCeiling,
@@ -115,6 +116,17 @@ export function systemActor(label: string): RequestActor {
     userAgent: null,
     requestId: `system:${label}`,
     actor: { type: 'system', id: null, label },
+  };
+}
+
+/** Audit actor for state reported by a node agent (deployment and check results). */
+export function agentActor(nodeId: NodeId): RequestActor {
+  return {
+    principal: null,
+    ipAddress: null,
+    userAgent: null,
+    requestId: `agent:${nodeId}`,
+    actor: { type: 'agent', id: nodeId, label: null },
   };
 }
 

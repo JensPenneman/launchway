@@ -7,6 +7,7 @@ describe('type ids', () => {
       [
         'app',
         'aud',
+        'chk',
         'dep',
         'dom',
         'env',

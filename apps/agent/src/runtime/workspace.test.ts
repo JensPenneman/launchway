@@ -6,6 +6,7 @@ import {
   assertRelativePath,
   isInsideReal,
   isWithin,
+  MissingFileError,
   PolicyError,
   Workspace,
   writeFileReplacing,
@@ -78,6 +79,38 @@ describe('Workspace', () => {
     await expect(resolve('missing.yaml')).rejects.toThrow(/does not exist/);
     await expect(resolve('compose.yaml')).rejects.toThrow(/outside the repository/);
     await expect(resolve('folder')).rejects.toThrow(/not a file/);
+    // Missing files are PolicyErrors for deployments; checks report them as build failures.
+    await expect(resolve('missing.yaml')).rejects.toThrow(MissingFileError);
+    await expect(resolve('folder')).rejects.toThrow(MissingFileError);
+    await expect(resolve('compose.yaml')).rejects.toThrow(PolicyError);
+    await expect(resolve('compose.yaml')).rejects.not.toThrow(MissingFileError);
+    await expect(resolve('missing.yaml')).rejects.toThrow(PolicyError);
+  });
+
+  it('resolves the Compose files of a check run', async () => {
+    const dir = join(root, 'run', 'src');
+    await mkdir(join(dir, '.devcontainer'), { recursive: true });
+    await writeFile(join(dir, '.devcontainer', 'compose.yaml'), 'services: {}');
+    const source = await workspace.resolveComposeFiles(dir, ['.devcontainer/compose.yaml']);
+    expect(source.files).toEqual([join(source.root, '.devcontainer', 'compose.yaml')]);
+    expect(source.projectDir).toBe(join(source.root, '.devcontainer'));
+    await expect(workspace.resolveComposeFiles(dir, ['-f'])).rejects.toThrow(PolicyError);
+  });
+
+  it('lays out check run directories and removes them with their app directory', async () => {
+    const dir = await workspace.prepareCheckRunDir('app_1', 'chk_1');
+    expect(dir).toBe(join(root, 'checks', 'app_1', 'chk_1'));
+    expect((await stat(dir)).mode & 0o777).toBe(0o700);
+    await writeFile(join(dir, 'leftover'), 'x');
+    expect(await readdir(await workspace.prepareCheckRunDir('app_1', 'chk_1'))).toEqual([]);
+    await workspace.prepareCheckRunDir('app_1', 'chk_2');
+    await workspace.removeCheckRunDir('app_1', 'chk_1');
+    expect(await readdir(join(root, 'checks', 'app_1'))).toEqual(['chk_2']);
+    await workspace.removeCheckRunDir('app_1', 'chk_2');
+    await expect(stat(join(root, 'checks', 'app_1'))).rejects.toThrow();
+    await workspace.prepareCheckRunDir('app_2', 'chk_3');
+    await workspace.removeChecks();
+    await expect(stat(workspace.checksDir())).rejects.toThrow();
   });
 
   it('resolves Dockerfile sources to the synthesized file', async () => {

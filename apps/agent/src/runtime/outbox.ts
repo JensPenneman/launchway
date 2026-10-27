@@ -5,6 +5,7 @@ export type Send = (message: AgentToServerMessage) => void;
 /** Streaming messages that are worthless after a reconnect; everything else is kept. */
 const DROPPABLE: ReadonlySet<AgentToServerMessage['type']> = new Set([
   'deployment.log',
+  'check.log',
   'logs.chunk',
   'heartbeat',
 ]);

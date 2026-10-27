@@ -37,6 +37,7 @@ import {
 import { Switch } from '@/components/ui/switch';
 import { fieldError } from '@/lib/form';
 import { formatRelative } from '@/lib/format';
+import { CheckLimitsCard } from './checks-section';
 import { PreviewSettingsCard } from './previews-section';
 
 /** Text settings; empty means "not set" (null in the API). */
@@ -113,6 +114,7 @@ export function PlatformSection() {
     <div className="flex flex-col gap-6">
       <PlatformFormCard settings={settings.data} />
       <PreviewSettingsCard settings={settings.data} />
+      <CheckLimitsCard settings={settings.data} />
     </div>
   );
 }

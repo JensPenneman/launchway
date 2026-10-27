@@ -19,8 +19,9 @@ import {
   SYNTHESIZED_FILE,
   synthesizeCompose,
 } from './compose-files.js';
-import { parseComposePs } from './compose-output.js';
+import { maskQuotedText, parseComposePs } from './compose-output.js';
 import { evaluateComposePolicy, parseComposeConfig } from './compose-policy.js';
+import { ComposeFileError, preflightComposeFiles } from './compose-preflight.js';
 import { childEnv, type Runner, type RunResult, runProcess } from './exec.js';
 import { classifyFailure, type FailedStep } from './failure-reason.js';
 import { checkoutPlan, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
@@ -52,7 +53,12 @@ export interface DeploymentManagerOptions {
   env?: NodeJS.ProcessEnv;
   /** Extra git configuration (tests rewrite URLs with `url.<base>.insteadOf`). */
   gitConfig?: GitConfig;
+  /** The node's build/pull slots, shared with check runs; created here when absent. */
+  builds?: Semaphore;
+  /** Slots of the semaphore created when `builds` is absent (default 2). */
   maxConcurrentBuilds?: number;
+  /** Values no deployment log line or message may show (the node credential, the join token). */
+  secrets?: () => readonly (string | null | undefined)[];
   /** Deployment directories kept per app (including the current one). */
   keepCheckouts?: number;
 }
@@ -125,10 +131,19 @@ export class Semaphore {
   }
 }
 
-/** Secrets that must never appear in a log line (the Authorization value and its token). */
-function secretsOf(authorization: string | null): string[] {
-  if (!authorization) return [];
-  const secrets = [authorization];
+/**
+ * Secrets that must never appear in a log line, longest first: the Authorization value and its
+ * token, plus `extra` (the agent's node credential and join token).
+ */
+export function secretsOf(
+  authorization: string | null,
+  extra: readonly (string | null | undefined)[] = [],
+): string[] {
+  const secrets: string[] = [];
+  for (const value of extra)
+    if (typeof value === 'string' && value.length >= 8) secrets.push(value);
+  if (!authorization) return secrets.sort((a, b) => b.length - a.length);
+  secrets.push(authorization);
   const [, credentials] = authorization.split(/\s+/, 2);
   if (credentials && credentials.length >= 8) {
     secrets.push(credentials);
@@ -159,7 +174,7 @@ export class DeploymentManager {
     this.#options = options;
     this.#log = options.logger;
     this.#run = options.run ?? runProcess;
-    this.#builds = new Semaphore(options.maxConcurrentBuilds ?? 2);
+    this.#builds = options.builds ?? new Semaphore(options.maxConcurrentBuilds ?? 2);
   }
 
   /** Deployments queued or running on this node (heartbeat `activeDeploymentIds`). */
@@ -321,6 +336,8 @@ interface ExecOptions {
   timeoutMs: number;
   /** Capture stdout instead of logging it (Compose config output contains interpolated secrets). */
   captureStdout?: boolean;
+  /** Rewrites each stderr line before it is logged. */
+  stderrFilter?: (line: string) => string;
 }
 
 /** One deployment from clone to result. */
@@ -345,7 +362,7 @@ class DeploymentRun {
       deploymentId: job.payload.deploymentId,
       appId: job.payload.app.id,
     });
-    this.#secrets = secretsOf(job.payload.source.authorization);
+    this.#secrets = secretsOf(job.payload.source.authorization, options.secrets?.() ?? []);
     this.#batcher = new Batcher<LogLine>((lines) =>
       options.send({
         id: job.requestId,
@@ -416,7 +433,11 @@ class DeploymentRun {
     }
     let agentError: AgentError;
     let reason: DeploymentFailureReason;
-    if (error instanceof PolicyError) {
+    if (error instanceof ComposeFileError) {
+      // Broken YAML or a missing included file: what a failing `compose config` reported before.
+      agentError = { code: 'internal-error', message: error.message, retryable: false };
+      reason = 'build';
+    } else if (error instanceof PolicyError) {
       agentError = { code: 'policy-violation', message: error.message, retryable: false };
       reason = 'policy';
     } else if (error instanceof StepError) {
@@ -504,6 +525,10 @@ class DeploymentRun {
     this.#progress('building', 'Checking the Compose project');
     const source = await workspace.resolveSource(dir, payload.build, SYNTHESIZED_FILE);
     const root = source.root;
+    // Before Compose reads anything the files name: include and extends only within the checkout.
+    if (payload.build.kind === 'compose') {
+      await preflightComposeFiles({ ...source, mode: 'deploy' });
+    }
     if (payload.build.kind === 'dockerfile') {
       await writeFileReplacing(
         join(root, SYNTHESIZED_FILE),
@@ -519,6 +544,7 @@ class DeploymentRun {
       projectDir: source.projectDir,
     };
 
+    let masked = 0;
     const configResult = await this.#exec(
       'docker',
       composeArgs(appTarget, 'config', '--format', 'json', '--no-env-resolution'),
@@ -529,8 +555,19 @@ class DeploymentRun {
         env,
         timeoutMs: TIMEOUTS.config,
         captureStdout: true,
+        stderrFilter: (line) => {
+          const shown = maskQuotedText(line);
+          if (shown !== line) masked += 1;
+          return shown;
+        },
       },
-    );
+    ).finally(() => {
+      if (masked > 0) {
+        this.#system(
+          'Quoted text in the output of docker compose config is masked: it may quote files outside the repository',
+        );
+      }
+    });
     const config = parseComposeConfig(configResult.stdout);
     if (!config) {
       throw new StepError(
@@ -632,7 +669,8 @@ class DeploymentRun {
       env: options.env,
       signal: this.#signal,
       timeoutMs: options.timeoutMs,
-      onStderrLine: (line) => {
+      onStderrLine: (raw) => {
+        const line = options.stderrFilter ? options.stderrFilter(raw) : raw;
         output.push(line);
         this.#line('stderr', line);
       },

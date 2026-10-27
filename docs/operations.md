@@ -381,10 +381,12 @@ the missing items. To grant them:
 
 1. Click **App permissions** (or open GitHub -> Settings -> Developer settings
    -> GitHub Apps -> your Launchway app -> *Permissions & events*).
-2. Under *Repository permissions* set **Deployments** to *Read and write* and
-   **Pull requests** to *Read-only*. Under *Subscribe to events* tick
-   **Pull request** and **Push** (branch auto-deploys, see *Automatic
-   deployments*). Save; GitHub asks for a reason, any text will do.
+2. Under *Repository permissions* set **Deployments** to *Read and write*,
+   **Pull requests** to *Read-only* and **Commit statuses** to *Read and
+   write* (checks, see *Checks*). Under *Subscribe to events* tick
+   **Pull request** and **Push** (branch auto-deploys and checks, see
+   *Automatic deployments*). Save; GitHub asks for a reason, any text will
+   do.
 3. Click **Approve on the installation** (or GitHub -> Settings ->
    Applications -> *Installed GitHub Apps* -> the app -> *Configure*) and
    accept the new permissions. For an organization, an owner has to do this.
@@ -400,9 +402,194 @@ curl -s -H "Authorization: Bearer $LAUNCHWAY_TOKEN" \
 
 For a fine-grained personal access token, edit the token on GitHub and add
 **Deployments: Read and write** (and **Pull requests: Read-only** for
-previews) for the repositories it deploys. Classic tokens cannot be used for
+previews, **Commit statuses: Read and write** for checks) for the
+repositories it deploys. Classic tokens cannot be used for
 this. Deployments that finished before the permission was granted are not
 added to GitHub afterwards.
+
+## Checks
+
+Checks run an app's test commands on its node, in containers of the app's own
+development container (its Compose project), for every push and every pull
+request from a branch of its repository, and report each one to GitHub as the
+commit status `launchway/<name>`. Branch protection can require them like the
+checks of GitHub Actions
+([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)). They suit
+CI jobs that need nothing but the repository and containers: linting, type
+checks, unit, integration and end-to-end tests. Keep on GitHub what needs
+GitHub itself, such as code scanning, Dependabot and publishing releases or
+images.
+
+### Set up checks
+
+1. **Permission.** Checks report through GitHub's commit statuses, which need
+   the *Commit statuses* permission:
+   - A GitHub App created by an earlier Launchway version: the connection card
+     under **Settings → GitHub** lists `statuses: write` under *Grant in
+     GitHub*. Click **App permissions** (GitHub → Settings → Developer
+     settings → GitHub Apps → your Launchway app → *Permissions & events*),
+     set **Commit statuses** to *Read and write* under *Repository
+     permissions* and save, then click **Approve on the installation** and
+     accept the new permission (for an organization, an owner has to). Back in
+     Launchway, **Check again**. Apps created now request it from the start.
+   - A fine-grained personal access token: add **Commit statuses: Read and
+     write** for the repositories. Token connections get no webhooks, so their
+     checks only run by hand (the app's **Checks** tab → **Run checks**, or
+     `POST /api/v1/apps/{id}/checks` with `{ "ref": "main" }`).
+
+   Without the permission checks still run and show in Launchway; GitHub does
+   not see them, and the API logs `GitHub refused commit statuses for this
+   connection` once an hour.
+2. **The checks of the app.** In the app's **Settings → Checks** (members),
+   or `PATCH /api/v1/apps/{id}` with `checks`:
+   - turn checks on;
+   - **Compose files**: the development container by default
+     (`.devcontainer/compose.yaml`), merged in order;
+   - **Branches**: empty runs the checks for every branch. With names (exact,
+     for example `main`), pushes to those branches and pull requests into them
+     run the checks;
+   - **Skip bots**: off by default. Pull requests of Dependabot need the
+     checks too when branch protection requires them;
+   - the checks themselves, at most ten: a **name** (lowercase letters,
+     digits and dashes; it becomes `launchway/<name>`), the **command**,
+     the **service** it runs in (default `dev`), the **timeout** in minutes
+     (1-120, default 30) and, optionally, a Compose file of its own.
+3. **Limits** (admins): **Settings → Platform → Checks** sets the memory,
+   CPUs and processes every service of a check gets (`checkMemoryMb`,
+   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096). The
+   memory limit applies to every service of a check, so a dev container with
+   a database may use twice as much; the card shows the total.
+
+Trail, whose development container has a `dev` service with Node and
+Chromium and a `db` service, runs the jobs of its CI workflow like this:
+
+```sh
+curl -fsS -X PATCH "https://deploy.example.com/api/v1/apps/<app id>" \
+  -H "Authorization: Bearer $LAUNCHWAY_TOKEN" -H 'Content-Type: application/json' \
+  -d '{
+    "checks": {
+      "enabled": true,
+      "composeFiles": [".devcontainer/compose.yaml"],
+      "branches": ["main"],
+      "skipBots": false,
+      "items": [
+        { "name": "quality", "command": "npm ci --no-audit --no-fund && npm run check", "timeoutMinutes": 20 },
+        { "name": "integration", "command": "npm ci --no-audit --no-fund && npm run test:integration", "timeoutMinutes": 20 },
+        { "name": "e2e", "command": "npm ci --no-audit --no-fund && npm run build && npm run test:e2e", "timeoutMinutes": 30 }
+      ]
+    }
+  }'
+```
+
+Every run starts from empty volumes, so the commands install their
+dependencies first.
+
+### What a check runs with
+
+- **The commit and nothing else.** The agent fetches the exact commit and
+  runs `sh -c <command>` in the check's service with `docker compose run`;
+  services it depends on start first. The exit code decides: `0` passes,
+  anything else fails, and so does a timeout.
+- **No app variables, no secrets.** The environment has only `CI=true`,
+  `COMPOSE_PROJECT_NAME`, `LAUNCHWAY_APP`, `LAUNCHWAY_CHECK=1`,
+  `LAUNCHWAY_CHECK_RUN_ID`, `LAUNCHWAY_COMMIT_SHA` and `LAUNCHWAY_REF`, next
+  to what the Compose file sets itself. Pull requests from forks never run.
+- **The repository as a volume.** The checkout is copied into a volume of
+  the run and handed to the user of the check's image. Bind mounts of paths
+  inside the repository mount that volume (a bind of the repository root
+  mounts all of it); read-only bind mounts of small text files become files
+  in the container. Bind mounts of other host paths, `include` and Compose
+  files outside the repository are refused.
+- **Images from their registry.** Images a check does not build are pulled
+  from their registry for every run, so a check cannot run an image that only
+  exists on the node, such as another app's build, and cannot mount images.
+  Builds and Compose of checks do not see the agent's proxy variables; a node
+  behind a proxy needs it in Docker's own configuration.
+- **Its own, short-lived project.** Every run is the Compose project
+  `launchway-check_<slug>_<run>`: published ports, fixed container names,
+  restart policies, `ulimits` and network subnets are removed, container logs
+  rotate (at most 30 MB per container), nothing joins the proxy network, and its
+  containers, volumes and networks are removed when it ends. Images built for
+  checks are kept as `launchway-check/<slug>-<service>`, one per app and
+  service, and later builds reuse their layers.
+- **One at a time.** A node runs one check at a time, oldest first across
+  its apps. A newer push to a branch cancels the queued checks of older
+  commits of that branch; a push and a pull request of the same commit run
+  once.
+- **Logs** stream to the run's drawer on the **Checks** tab and
+  `GET /api/v1/checks/{id}/logs?follow=true`, at most 20 000 lines or 16 MiB
+  per run, and are deleted after 30 days. The runs stay listed.
+
+### Resources on a 16 GB node
+
+Docker Desktop for Windows runs every container in WSL 2, which gets half of
+the machine's memory by default: about 8 GB of a 16 GB laptop (`docker info`
+shows it as *Total Memory*). Production apps, the platform itself (at most
+2.3 GB: 512 MB each for the API and the agent, 256 MB for Caddy, 1 GB for
+PostgreSQL) and one check share it. Every service of a check is capped
+separately, so a check of Trail (`dev` and `db`) may take up to twice
+`checkMemoryMb`.
+
+- Size the limit so that production plus *services × `checkMemoryMb`* fits:
+  the default of 2048 MiB lets a two-service check take 4 GiB, which fits
+  WSL's default 8 GB with production at about 3 GB. For heavier suites give
+  WSL 12 GB (`%UserProfile%\.wslconfig`: `[wsl2]` and `memory=12GB`, then
+  `wsl --shutdown`, and Docker Desktop restarts) and raise the limit to
+  4096 MiB. Swap is off for checks.
+- If memory runs out anyway, the kernel kills check processes first
+  (`oom_score_adj` 1000). A check that hits its own limit fails with
+  "(out of memory)" in its message.
+- 2 CPUs per service leave most of a 12-thread laptop to production. Trail's
+  end-to-end suite uses one Playwright worker (`E2E_WORKERS: "1"` in its
+  development container), which fits.
+- 4096 processes per service are plenty for Node and Chromium and stop a
+  runaway fork.
+- Disk: runs remove their volumes and checkouts; images and the build cache
+  stay. `docker system df` shows them, `docker image ls 'launchway-check/*'`
+  the images of checks, and `docker builder prune --filter until=168h`
+  removes build cache older than a week (of deployments too).
+
+### Require checks in branch protection
+
+1. Run the checks once (open a pull request, or **Run checks** on the
+   **Checks** tab), so GitHub knows the contexts.
+2. On GitHub, open the repository → **Settings → Rules → Rulesets** (or
+   **Branches**), edit the rule of the default branch and turn on **Require
+   status checks to pass**.
+3. **Add checks**: `launchway/quality`, `launchway/integration`,
+   `launchway/e2e` (the names of your checks). For each, choose your
+   Launchway GitHub App as the source instead of *any source*: then nothing
+   else that may write commit statuses, such as a workflow or a token, can
+   report them. With a token connection the statuses come from the token's
+   user; leave the source open there.
+
+A status stays *pending* while its check waits or runs. A check that could
+not run reports *error* with the reason (policy, build, node offline,
+superseded); run it again from the **Checks** tab (**Re-run**) once the cause
+is fixed.
+
+### Troubleshooting checks
+
+- **"The agent of this node does not run checks".** The node runs an agent
+  from before checks (its heartbeats do not list check runs); upgrade the
+  installation (or that node's agent).
+- **A check errors with reason `policy`.** The log names the rule: bind mounts
+  of host paths outside the repository, `include` (list the files under
+  Compose files instead), a Compose file, `env_file` or `label_file` outside
+  the repository, image mounts, or a service that is not part of the project
+  (services behind a Compose profile are not).
+- **A check errors with reason `build` while pulling.** Images that a check
+  does not build must exist in their registry; build the image in the check's
+  own Compose file instead of using one that only exists on the node.
+- **Checks stay queued.** One check runs per node at a time. Checks of a node
+  that is offline for 10 minutes end with *error*.
+- **No status on GitHub.** Grant the permission (above). Statuses are posted
+  best effort; after a restart the API posts those of the last seven days
+  that GitHub does not show yet.
+- **A check times out.** The timeout counts the command only (building the
+  images may take up to 60 minutes on top); raise it up to 120 minutes.
+- **Leftovers.** `docker ps -a --filter label=launchway.check` is empty when
+  no check runs. The agent removes what a crash left behind when it starts.
 
 ## Add a node
 
@@ -636,6 +823,39 @@ docker compose -f compose.agent.yaml up -d
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
 
+### Upgrading to the version with checks
+
+- **Order.** Checks keep the agent protocol at version 1, so the API and the
+  agents work together in either order. Upgrade the agents of the nodes that
+  run checks together with the API, or before turning checks on: check runs
+  for a node whose agent is still older end at once with *error*, reason
+  `unsupported`, because such an agent ignores them.
+- **GitHub permission.** Reporting checks needs *Commit statuses: Read and
+  write* (`statuses: write`) on the GitHub App or token; see *Checks*. Nothing
+  changes for apps without checks.
+- **Retention.** Check log lines are deleted after 30 days; the runs stay
+  listed.
+
+### Changes to deployments
+
+The agent of this version parses Compose files before Compose loads them
+(*Checks*, ADR 0020), for deployments and previews as well. A deployment that
+worked with an earlier agent fails with reason `policy` if its Compose files:
+
+- name an `extends.file`, `env_file` or `label_file` by an absolute path,
+  even one inside the checkout, or use `$` variables in those paths or in
+  `include`;
+- `include` a file, `env_file` or `project_directory` outside the repository,
+  or include a remote (Git, OCI or HTTPS) file;
+- use YAML tags other than `!reset`, `!override` and the standard ones, keys
+  that are not plain scalars, duplicate keys, or exceed 4 MiB per file;
+- run privileged `post_start` or `pre_stop` hooks;
+- use an image in the `launchway-check/` namespace, which belongs to checks.
+
+Compose's error output in deployment logs now masks quoted text, and the node
+credential and the join token are redacted. Use relative paths inside the
+repository instead, and move anything else out of the Compose files.
+
 ## Backup
 
 Back up three things.
@@ -715,10 +935,11 @@ docker compose logs -f launchway    # or launchway-agent, caddy, db
 The level is set with `LOG_LEVEL`. Container logs are rotated by Docker
 (five files of 10 MB per container).
 
-Deployment and app logs are shown in the UI and are available from the API as
-Server-Sent Events:
+Deployment, check and app logs are shown in the UI and are available from the
+API as Server-Sent Events:
 
 - `GET /api/v1/deployments/{id}/logs?follow=true`
+- `GET /api/v1/checks/{id}/logs?follow=true` (kept 30 days)
 - `GET /api/v1/apps/{id}/logs?service=<service>&tail=200&follow=true`
 
 On a node, the containers of an app belong to the Compose project

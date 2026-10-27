@@ -20,6 +20,7 @@ export const keys = {
   env: ['env'] as const,
   deployments: ['deployments'] as const,
   previews: ['previews'] as const,
+  checks: ['checks'] as const,
   domains: ['domains'] as const,
   routes: ['routes'] as const,
   dns: ['dns'] as const,
@@ -59,5 +60,8 @@ export function keysForTopic(topic: EventTopic): QueryKey[] {
       return [keys.previews, keys.deployments, keys.domains, keys.routes, keys.edge];
     case 'edge':
       return [keys.edge];
+    case 'checks':
+      // Run lists and run details; the app's check settings change with the `apps` topic.
+      return [keys.checks];
   }
 }

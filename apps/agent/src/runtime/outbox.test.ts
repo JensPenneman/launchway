@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Outbox } from './outbox.js';
 
 const deploymentId = generateId('dep');
+const runId = generateId('chk');
 
 describe('Outbox', () => {
   it('keeps results while disconnected, drops log chunks, and flushes in order', () => {
@@ -32,5 +33,32 @@ describe('Outbox', () => {
     expect(sent).toEqual(['deployment.result']);
     outbox.send({ id: '2', type: 'logs.end', payload: { reason: 'completed' } });
     expect(sent).toEqual(['deployment.result', 'logs.end']);
+  });
+
+  it('drops check logs and keeps check results while disconnected', () => {
+    let connected = false;
+    const sent: string[] = [];
+    const outbox = new Outbox((message) => {
+      if (!connected) return false;
+      sent.push(message.type);
+      return true;
+    });
+    outbox.send({
+      id: '1',
+      type: 'check.log',
+      payload: {
+        runId,
+        lines: [{ seq: 0, timestamp: new Date().toISOString(), stream: 'stdout', line: 'x' }],
+      },
+    });
+    outbox.send({
+      id: '1',
+      type: 'check.result',
+      payload: { runId, reason: 'exit', exitCode: 0 },
+    });
+    expect(outbox.pending).toBe(1);
+    connected = true;
+    outbox.flush();
+    expect(sent).toEqual(['check.result']);
   });
 });

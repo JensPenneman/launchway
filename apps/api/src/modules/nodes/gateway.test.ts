@@ -1,6 +1,8 @@
 import {
   AGENT_CLOSE_CODES,
   type AppId,
+  type CheckRunId,
+  type CheckRunPayload,
   type DeploymentId,
   type DeployPayload,
   generateId,
@@ -14,6 +16,7 @@ import { createTestDeps } from '../../../test/support/deps.js';
 import {
   AgentRequestError,
   AgentUnavailableError,
+  type CheckSink,
   type DeploymentSink,
 } from '../../lib/agent-gateway.js';
 import { generateToken, hashToken } from '../../lib/crypto.js';
@@ -120,7 +123,41 @@ function recordingSink() {
   return { sink, calls };
 }
 
+function recordingCheckSink() {
+  const calls: { method: string; nodeId: NodeId; payload?: unknown }[] = [];
+  const record =
+    (method: string) =>
+    (nodeId: NodeId, payload?: unknown): Promise<void> => {
+      calls.push({ method, nodeId, payload });
+      return Promise.resolve();
+    };
+  const sink: CheckSink = {
+    onLog: record('onLog'),
+    onResult: record('onResult'),
+    onHeartbeat: record('onHeartbeat'),
+    onNodeOnline: record('onNodeOnline'),
+    onNodeOffline: record('onNodeOffline'),
+  };
+  return { sink, calls };
+}
+
 const app = { id: generateId('app') as AppId, slug: 'trail' };
+
+function checkPayload(runId: CheckRunId): CheckRunPayload {
+  return {
+    runId,
+    app,
+    source: {
+      cloneUrl: 'https://github.com/example/trail.git',
+      ref: 'main',
+      sha: '3f786850e387550fdab836ed7e6dc881de23001b',
+      authorization: null,
+    },
+    composeFiles: ['.devcontainer/compose.yaml'],
+    check: { name: 'quality', service: 'dev', command: 'npm test', timeoutMs: 60_000 },
+    limits: { memoryBytes: 1024 * 1024 * 1024, cpus: 2, pidsLimit: 4096 },
+  };
+}
 
 function deployPayload(deploymentId: DeploymentId): DeployPayload {
   return {
@@ -156,6 +193,7 @@ async function eventually(check: () => void, timeoutMs = 2000): Promise<void> {
 describe('agent gateway over a real WebSocket', () => {
   let memory: ReturnType<typeof memoryStore>;
   let recorded: ReturnType<typeof recordingSink>;
+  let checks: ReturnType<typeof recordingCheckSink>;
   let gateway: NodeAgentGateway;
   let events: PlatformEvent[];
   let server: Awaited<ReturnType<typeof startTestServer>>;
@@ -164,10 +202,12 @@ describe('agent gateway over a real WebSocket', () => {
   async function setup(timeouts: Partial<GatewayTimeouts> = {}) {
     memory = memoryStore();
     recorded = recordingSink();
+    checks = recordingCheckSink();
     const base = createTestDeps();
     gateway = createAgentGateway({
       deps: base,
       sink: recorded.sink,
+      checks: checks.sink,
       store: memory.store,
       timeouts: { helloMs: 500, ...timeouts },
     });
@@ -384,6 +424,113 @@ describe('agent gateway over a real WebSocket', () => {
     expect(request.payload).toEqual({ deploymentId });
     agent.send('deployment.result', { deploymentId, outcome: 'cancelled' }, 'deploy-request-id');
     await expect(cancelled).resolves.toBeUndefined();
+  });
+
+  it('sends check runs, resolves on the acknowledgement and forwards their logs and results', async () => {
+    await setup();
+    const { node, agent } = await joined();
+    const runId = generateId('chk');
+    const line = (seq: number, text: string) => ({
+      seq,
+      timestamp: new Date().toISOString(),
+      stream: 'system' as const,
+      line: text,
+    });
+    const sent = gateway.runCheck(node.id, checkPayload(runId));
+    const request = await agent.next('check.run');
+    expect(request.payload).toEqual(checkPayload(runId));
+    agent.send('check.log', { runId, lines: [line(0, 'Received by the node')] }, request.id);
+    await expect(sent).resolves.toBeUndefined();
+    agent.send('check.log', { runId, lines: [line(1, 'npm test')] }, request.id);
+    agent.send('check.result', { runId, reason: 'exit', exitCode: 0 }, request.id);
+    await eventually(() =>
+      expect(
+        checks.calls
+          .filter((c) => c.nodeId === node.id && ['onLog', 'onResult'].includes(c.method))
+          .map((c) => c.method),
+      ).toEqual(['onLog', 'onLog', 'onResult']),
+    );
+    expect(checks.calls.at(-1)?.payload).toEqual({ runId, reason: 'exit', exitCode: 0 });
+    // The deployment sink hears nothing of checks.
+    expect(recorded.calls.filter((c) => c.method !== 'onNodeOnline')).toEqual([]);
+  });
+
+  it('rejects check runs nobody acknowledges: agents without checks ignore them', async () => {
+    await setup({ checkAckMs: 100 });
+    await expect(
+      gateway.runCheck(generateId('node'), checkPayload(generateId('chk'))),
+    ).rejects.toBeInstanceOf(AgentUnavailableError);
+    const { node, agent } = await joined();
+    const sent = gateway.runCheck(node.id, checkPayload(generateId('chk')));
+    await agent.next('check.run');
+    await expect(sent).rejects.toMatchObject({ name: 'AgentRequestError', code: 'timeout' });
+  });
+
+  it('settles a check cancel with the run result and rejects unknown runs', async () => {
+    await setup({ checkCancelMs: 150 });
+    const { node, agent } = await joined();
+    const runId = generateId('chk');
+    const cancelled = gateway.cancelCheck(node.id, runId);
+    const request = await agent.next('check.cancel');
+    expect(request.payload).toEqual({ runId });
+    // The result echoes the id of check.run, not of the cancel.
+    agent.send('check.result', { runId, reason: 'cancelled', exitCode: null }, 'check-run-id');
+    await expect(cancelled).resolves.toBeUndefined();
+    await eventually(() =>
+      expect(checks.calls).toContainEqual({
+        method: 'onResult',
+        nodeId: node.id,
+        payload: { runId, reason: 'cancelled', exitCode: null },
+      }),
+    );
+
+    const unknown = gateway.cancelCheck(node.id, generateId('chk'));
+    const refused = await agent.next('check.cancel');
+    agent.send(
+      'error',
+      { code: 'not-found', message: 'No queued or running check run', retryable: false },
+      refused.id,
+    );
+    await expect(unknown).rejects.toMatchObject({ name: 'AgentRequestError', code: 'not-found' });
+
+    const unanswered = gateway.cancelCheck(node.id, generateId('chk'));
+    await agent.next('check.cancel');
+    await expect(unanswered).rejects.toMatchObject({ code: 'timeout' });
+  });
+
+  it('passes the check runs of heartbeats on, and none for agents without checks', async () => {
+    await setup();
+    const { node, agent } = await joined();
+    const runId = generateId('chk');
+    const sentAt = new Date().toISOString();
+    agent.send('heartbeat', { sentAt, activeDeploymentIds: [], activeCheckRunIds: [runId] });
+    agent.send('heartbeat', { sentAt, activeDeploymentIds: [] });
+    await eventually(() =>
+      expect(checks.calls.filter((c) => c.method === 'onHeartbeat')).toEqual([
+        { method: 'onHeartbeat', nodeId: node.id, payload: [runId] },
+        { method: 'onHeartbeat', nodeId: node.id, payload: undefined },
+      ]),
+    );
+  });
+
+  it('tells the check sink when a node comes online and when it is gone', async () => {
+    await setup({ offlineGraceMs: 50 });
+    const { node, agent } = await joined();
+    await eventually(() =>
+      expect(checks.calls).toContainEqual({
+        method: 'onNodeOnline',
+        nodeId: node.id,
+        payload: undefined,
+      }),
+    );
+    agent.close();
+    await eventually(() =>
+      expect(checks.calls).toContainEqual({
+        method: 'onNodeOffline',
+        nodeId: node.id,
+        payload: undefined,
+      }),
+    );
   });
 
   it('streams logs until logs.end and stops streams on abort', async () => {

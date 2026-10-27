@@ -1,5 +1,11 @@
+import { DEFAULT_APP_CHECKS_SETTINGS } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
-import { pullRequestPreviewAction, pushedBranch, releasePublication } from './webhooks.js';
+import {
+  checkTrigger,
+  pullRequestPreviewAction,
+  pushedBranch,
+  releasePublication,
+} from './webhooks.js';
 
 const repository = { name: 'trail', owner: { login: 'octo' } };
 const release = (
@@ -153,5 +159,69 @@ describe('pullRequestPreviewAction', () => {
     expect(
       pullRequestPreviewAction(pr('closed', { user: dependabot }), { ...labelled, enabled: false }),
     ).toEqual({ kind: 'close' });
+  });
+});
+
+describe('checkTrigger', () => {
+  const human = { login: 'octocat', type: 'User' };
+  const dependabot = { login: 'dependabot[bot]', type: 'Bot' };
+  const quality = { name: 'quality', command: 'npm test', service: 'dev', timeoutMinutes: 30 };
+  const on = { ...DEFAULT_APP_CHECKS_SETTINGS, enabled: true, items: [quality] };
+  const push = (branch: string, sender: typeof human | null = human) =>
+    ({ kind: 'push', branch, sender }) as const;
+  const pr = (baseBranch: string | null, author: typeof human | null = human) =>
+    ({ kind: 'pull_request', baseBranch, author }) as const;
+
+  it('runs the checks of every push and pull request by default', () => {
+    expect(checkTrigger(on, push('feature/x'))).toEqual({ run: true });
+    expect(checkTrigger(on, pr('main'))).toEqual({ run: true });
+    expect(checkTrigger(on, push('main', null))).toEqual({ run: true });
+  });
+
+  it('needs checks on and at least one check', () => {
+    expect(checkTrigger({ ...on, enabled: false }, push('main'))).toEqual({
+      run: false,
+      reason: 'checks are off for the app',
+    });
+    expect(checkTrigger({ ...on, items: [] }, pr('main'))).toEqual({
+      run: false,
+      reason: 'the app has no checks',
+    });
+  });
+
+  it('filters pushes on the pushed branch and pull requests on their base branch', () => {
+    const main = { ...on, branches: ['main', 'release/1.x'] };
+    expect(checkTrigger(main, push('main'))).toEqual({ run: true });
+    expect(checkTrigger(main, push('release/1.x'))).toEqual({ run: true });
+    expect(checkTrigger(main, push('feature/x'))).toEqual({
+      run: false,
+      reason: 'pushes to feature/x run no checks',
+    });
+    // Exact names: GitHub branch names are case-sensitive.
+    expect(checkTrigger(main, push('Main')).run).toBe(false);
+    expect(checkTrigger(main, pr('main'))).toEqual({ run: true });
+    expect(checkTrigger(main, pr('develop'))).toEqual({
+      run: false,
+      reason: 'pull requests into develop run no checks',
+    });
+    expect(checkTrigger(main, pr(null))).toEqual({
+      run: false,
+      reason: 'pull requests into an unnamed base branch run no checks',
+    });
+    expect(checkTrigger(on, pr(null))).toEqual({ run: true });
+  });
+
+  it('skips pushes and pull requests of bots with skipBots', () => {
+    const skip = { ...on, skipBots: true };
+    expect(checkTrigger(skip, push('main', dependabot))).toEqual({
+      run: false,
+      reason: 'pushed by the bot dependabot[bot]',
+    });
+    expect(checkTrigger(skip, pr('main', { login: 'renovate[bot]', type: 'User' }))).toEqual({
+      run: false,
+      reason: 'opened by the bot renovate[bot]',
+    });
+    expect(checkTrigger(skip, push('main', human))).toEqual({ run: true });
+    expect(checkTrigger(on, push('main', dependabot))).toEqual({ run: true });
   });
 });

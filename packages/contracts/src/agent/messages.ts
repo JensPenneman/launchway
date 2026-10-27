@@ -1,5 +1,6 @@
 import type { ZodType } from 'zod';
-import { AppSlug, AppSource, EnvKeyName } from '../apps.js';
+import { AppSlug, AppSource, CheckCommand, CheckName, ComposeFiles, EnvKeyName } from '../apps.js';
+import { CheckResultReason } from '../checks.js';
 import {
   CommitSha,
   GitRef,
@@ -10,7 +11,7 @@ import {
   Timestamp,
 } from '../common.js';
 import { AppLogLine, DeploymentFailureReason, LogLine, ServiceStatus } from '../deployments.js';
-import { AppId, DeploymentId, NodeId } from '../ids.js';
+import { AppId, CheckRunId, DeploymentId, NodeId } from '../ids.js';
 import { AllowedBindRoots, DockerInfo, NODE_CREDENTIAL_PATTERN } from '../nodes.js';
 import { z } from '../zod.js';
 import { AgentError, MessageId } from './protocol.js';
@@ -36,6 +37,11 @@ export type HelloPayload = z.infer<typeof HelloPayload>;
 export const HeartbeatPayload = z.object({
   sentAt: Timestamp,
   activeDeploymentIds: z.array(DeploymentId).max(100),
+  activeCheckRunIds: z
+    .array(CheckRunId)
+    .max(100)
+    .optional()
+    .describe('Check runs the agent queues or runs; absent from agents without checks'),
 });
 export type HeartbeatPayload = z.infer<typeof HeartbeatPayload>;
 
@@ -82,6 +88,25 @@ export const LogsEndPayload = z.object({
 });
 export type LogsEndPayload = z.infer<typeof LogsEndPayload>;
 
+/** Output of a check run (ADR 0020); like deployment.log, dropped while disconnected. */
+export const CheckLogPayload = z.object({
+  runId: CheckRunId,
+  lines: z.array(LogLine).min(1).max(500),
+});
+export type CheckLogPayload = z.infer<typeof CheckLogPayload>;
+
+/**
+ * How a check run ended. `exit` carries the command's exit code (0 = succeeded); every other
+ * reason is no verdict on the code except `timeout` (a failure). `message` explains failures.
+ */
+export const CheckResultPayload = z.object({
+  runId: CheckRunId,
+  reason: CheckResultReason,
+  exitCode: z.number().int().nullable(),
+  message: z.string().max(2000).optional(),
+});
+export type CheckResultPayload = z.infer<typeof CheckResultPayload>;
+
 export const HelloMessage = message('hello', HelloPayload);
 export const HeartbeatMessage = message('heartbeat', HeartbeatPayload);
 export const DeploymentProgressMessage = message('deployment.progress', DeploymentProgressPayload);
@@ -90,6 +115,10 @@ export const DeploymentResultMessage = message('deployment.result', DeploymentRe
 export const AppStatusMessage = message('app.status', AppStatusPayload);
 export const LogsChunkMessage = message('logs.chunk', LogsChunkPayload);
 export const LogsEndMessage = message('logs.end', LogsEndPayload);
+/** Replies to check.run (echoing its id); the first one acknowledges the run. */
+export const CheckLogMessage = message('check.log', CheckLogPayload);
+/** Ends a check run (echoing the id of check.run); also the answer to check.cancel. */
+export const CheckResultMessage = message('check.result', CheckResultPayload);
 /** Failure reply to any server request (echoes its id), e.g. `not-implemented`. */
 export const AgentErrorMessage = message('error', AgentError);
 
@@ -102,6 +131,8 @@ export const AgentToServerMessage = z.discriminatedUnion('type', [
   AppStatusMessage,
   LogsChunkMessage,
   LogsEndMessage,
+  CheckLogMessage,
+  CheckResultMessage,
   AgentErrorMessage,
 ]);
 export type AgentToServerMessage = z.infer<typeof AgentToServerMessage>;
@@ -190,6 +221,59 @@ export const DeployPayload = z.object({
 });
 export type DeployPayload = z.infer<typeof DeployPayload>;
 
+/** Caps applied to every service of a check run (platform settings). */
+export const CheckLimits = z.object({
+  memoryBytes: z
+    .number()
+    .int()
+    .min(64 * 1024 * 1024)
+    .describe('mem_limit = memswap_limit (no swap)'),
+  cpus: z.number().positive().max(1024),
+  pidsLimit: z.number().int().min(16).max(4_194_304),
+});
+export type CheckLimits = z.infer<typeof CheckLimits>;
+
+/**
+ * Runs one check (ADR 0020): fetch `source.sha` into `<workspace>/checks/<appId>/<runId>`, read
+ * `composeFiles` with the Compose policy in checks mode, write one resolved Compose document (source
+ * binds turned into a volume, limits and labels, no ports), build, then
+ * `run <check.service> sh -c <check.command>` within `check.timeoutMs`. No app variables or secrets
+ * are passed; `source.authorization` is only used by git.
+ */
+export const CheckRunPayload = z.object({
+  runId: CheckRunId,
+  app: z.object({ id: AppId, slug: AppSlug }),
+  source: z.object({
+    cloneUrl: z.url({ protocol: /^https$/ }),
+    ref: GitRef.describe('LAUNCHWAY_REF: the branch, or the ref of a manual run'),
+    sha: CommitSha,
+    authorization: z
+      .string()
+      .max(4096)
+      .nullable()
+      .describe(
+        'Header value for git http.extraHeader; never logged, written to disk or passed on',
+      ),
+  }),
+  composeFiles: ComposeFiles,
+  check: z.object({
+    name: CheckName,
+    service: ServiceName,
+    command: CheckCommand,
+    timeoutMs: z
+      .number()
+      .int()
+      .min(1000)
+      .max(120 * 60_000)
+      .describe('How long the command may run (the server sends whole minutes)'),
+  }),
+  limits: CheckLimits,
+});
+export type CheckRunPayload = z.infer<typeof CheckRunPayload>;
+
+export const CheckCancelPayload = z.object({ runId: CheckRunId });
+export type CheckCancelPayload = z.infer<typeof CheckCancelPayload>;
+
 export const DeploymentCancelPayload = z.object({ deploymentId: DeploymentId });
 export type DeploymentCancelPayload = z.infer<typeof DeploymentCancelPayload>;
 
@@ -229,6 +313,10 @@ export const StatusMessage = message('status', AppTargetPayload);
 export const LogsStartMessage = message('logs.start', LogsStartPayload);
 /** Ends the stream named in the payload; that stream answers with logs.end. */
 export const LogsStopMessage = message('logs.stop', LogsStopPayload);
+/** Replies: check.log* then check.result, all echoing this id. Old agents ignore it. */
+export const CheckRunMessage = message('check.run', CheckRunPayload);
+/** The run ends with check.result (reason cancelled); unknown id -> error not-found. */
+export const CheckCancelMessage = message('check.cancel', CheckCancelPayload);
 /** Refusal or failure, e.g. `incompatible-protocol` in reply to hello. */
 export const ServerErrorMessage = message('error', AgentError);
 
@@ -241,6 +329,8 @@ export const ServerToAgentMessage = z.discriminatedUnion('type', [
   StatusMessage,
   LogsStartMessage,
   LogsStopMessage,
+  CheckRunMessage,
+  CheckCancelMessage,
   ServerErrorMessage,
 ]);
 export type ServerToAgentMessage = z.infer<typeof ServerToAgentMessage>;

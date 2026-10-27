@@ -13,7 +13,6 @@ import {
   type PreviewId,
   previewEnvironmentName,
   type ServiceStatus,
-  SSE_EVENTS,
 } from '@launchway/contracts';
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, or, type SQL } from 'drizzle-orm';
 import { z } from 'zod';
@@ -22,6 +21,7 @@ import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import type { RequestActor } from '../../lib/auth-context.js';
 import { GitProviderError } from '../../lib/git-provider.js';
+import { logStream } from '../../lib/log-stream.js';
 import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
 import { conflict, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
@@ -29,15 +29,13 @@ import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor, toGitProblem } from '../github/providers.js';
 import { createDispatcher } from './dispatcher.js';
-import { type DeploymentStreamItem, logHubFor } from './log-hub.js';
+import { logHubFor } from './log-hub.js';
 import { announceStatus, type DeploymentRow, toDeployment } from './model.js';
 import { deploymentLogLines, deployments } from './schema.js';
 
 type AppRow = typeof apps.$inferSelect;
 
 const ListCursor = z.object({ t: z.iso.datetime(), i: z.string().min(1).max(64) });
-const HISTORY_BATCH = 1000;
-const MAX_BUFFERED_ITEMS = 10_000;
 
 export interface DeploymentsService {
   create(appId: AppId, input: CreateDeploymentInput, actor: RequestActor): Promise<Deployment>;
@@ -460,80 +458,34 @@ export function createDeploymentsService(deps: Deps): DeploymentsService {
       return toDeployment(changed);
     },
 
-    async *logStream(id, query, signal) {
-      const queue: DeploymentStreamItem[] = [];
-      let wake: (() => void) | undefined;
-      const onAbort = () => wake?.();
-      signal.addEventListener('abort', onAbort);
-      // Subscribe before reading history so nothing falls between the two; seq dedupes.
-      const unsubscribe = query.follow
-        ? hub.subscribe(id, (item) => {
-            queue.push(item);
-            if (queue.length > MAX_BUFFERED_ITEMS) queue.shift();
-            wake?.();
-          })
-        : () => {};
-      let last = query.after ?? -1;
-      async function* history(): AsyncGenerator<SseMessage> {
-        for (;;) {
-          const rows = await deps.db
-            .select()
-            .from(deploymentLogLines)
-            .where(and(eq(deploymentLogLines.deploymentId, id), gt(deploymentLogLines.seq, last)))
-            .orderBy(asc(deploymentLogLines.seq))
-            .limit(HISTORY_BATCH);
-          for (const row of rows) {
-            if (signal.aborted) return;
-            last = row.seq;
-            yield {
-              event: SSE_EVENTS.log,
-              id: String(row.seq),
-              data: {
-                seq: row.seq,
-                timestamp: row.loggedAt.toISOString(),
-                stream: row.stream,
-                line: row.line,
-              },
-            };
-          }
-          if (rows.length < HISTORY_BATCH) break;
-        }
-      }
-      try {
-        yield* history();
-        if (signal.aborted) return;
-        const current = await loadRow(id);
-        if (!query.follow || !isInProgressStatus(current.status)) {
-          // Lines stored between the history read and the status check (the final ones).
-          yield* history();
-          if (signal.aborted) return;
-          yield { event: SSE_EVENTS.end, data: { status: current.status } };
-          return;
-        }
-        while (!signal.aborted) {
-          const item = queue.shift();
-          if (!item) {
-            await new Promise<void>((resolve) => {
-              wake = resolve;
-            });
-            wake = undefined;
-            continue;
-          }
-          if (item.kind === 'log') {
-            if (item.line.seq <= last) continue;
-            last = item.line.seq;
-            yield { event: SSE_EVENTS.log, id: String(item.line.seq), data: item.line };
-          } else if (item.kind === 'status') {
-            yield { event: SSE_EVENTS.status, data: { status: item.status } };
-          } else {
-            yield { event: SSE_EVENTS.end, data: { status: item.status } };
-            return;
-          }
-        }
-      } finally {
-        unsubscribe();
-        signal.removeEventListener('abort', onAbort);
-      }
+    logStream(id, query, signal) {
+      return logStream(
+        {
+          hub,
+          id,
+          follow: query.follow,
+          after: query.after,
+          history: async (after, limit) => {
+            const rows = await deps.db
+              .select()
+              .from(deploymentLogLines)
+              .where(
+                and(eq(deploymentLogLines.deploymentId, id), gt(deploymentLogLines.seq, after)),
+              )
+              .orderBy(asc(deploymentLogLines.seq))
+              .limit(limit);
+            return rows.map((row) => ({
+              seq: row.seq,
+              timestamp: row.loggedAt.toISOString(),
+              stream: row.stream,
+              line: row.line,
+            }));
+          },
+          status: async () => (await loadRow(id)).status,
+          live: isInProgressStatus,
+        },
+        signal,
+      );
     },
   };
 }

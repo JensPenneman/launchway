@@ -289,7 +289,10 @@ function DeploymentDrawer({
 }) {
   return (
     <Sheet open={deploymentId !== null} onOpenChange={(open) => !open && onClose()}>
-      <SheetContent side="right" className="w-full gap-0 sm:max-w-2xl">
+      <SheetContent
+        side="right"
+        className="gap-0 data-[side=right]:w-full data-[side=right]:sm:max-w-2xl"
+      >
         {deploymentId && <DeploymentDetail deploymentId={deploymentId} app={app} />}
       </SheetContent>
     </Sheet>

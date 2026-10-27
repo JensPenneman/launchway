@@ -3,6 +3,10 @@ import type {
   AppId,
   AppLogLine,
   AppStatusPayload,
+  CheckLogPayload,
+  CheckResultPayload,
+  CheckRunId,
+  CheckRunPayload,
   DeploymentId,
   DeploymentLogPayload,
   DeploymentProgressPayload,
@@ -33,13 +37,25 @@ export interface LogsRequest {
  * module (WebSocket gateway); consumed by the deployments, apps and edge modules.
  *
  * Commands resolve when the agent acknowledged them, not when the work finished:
- * progress, logs and results arrive asynchronously through the `DeploymentSink`.
- * Every method rejects with `AgentUnavailableError` when the node is offline.
+ * progress, logs and results arrive asynchronously through the `DeploymentSink` and the
+ * `CheckSink`. Every method rejects with `AgentUnavailableError` when the node is offline.
  */
 export interface AgentGateway {
   isOnline(nodeId: NodeId): boolean;
   deploy(nodeId: NodeId, payload: DeployPayload): Promise<void>;
   cancelDeployment(nodeId: NodeId, deploymentId: DeploymentId): Promise<void>;
+  /**
+   * Sends a check run (ADR 0020); resolves on the agent's acknowledgement, the first `check.log`
+   * or `check.result` echoing the request. Agents older than checks ignore it: the request then
+   * rejects with `AgentRequestError` code `timeout`.
+   */
+  runCheck(nodeId: NodeId, payload: CheckRunPayload): Promise<void>;
+  /**
+   * Cancels a check run; resolves once the run's `check.result` arrived (it reaches the
+   * `CheckSink` too). Rejects with `AgentRequestError` (`not-found` for a run the agent does not
+   * have, `timeout` without an answer).
+   */
+  cancelCheck(nodeId: NodeId, runId: CheckRunId): Promise<void>;
   /** `compose stop`; resolves with the resulting per-service status. */
   stopApp(nodeId: NodeId, app: AppTarget): Promise<ServiceStatus[]>;
   /** `compose down` (`--volumes` when `removeVolumes`); removes the checkouts too. */
@@ -120,6 +136,57 @@ export function createDeferredDeploymentSink(): {
   };
 }
 
+/**
+ * Where the gateway delivers what agents report about check runs (ADR 0020). Implemented by the
+ * checks module; deliveries of one connection arrive in order.
+ * @public
+ */
+export interface CheckSink {
+  onLog(nodeId: NodeId, payload: CheckLogPayload): Promise<void>;
+  onResult(nodeId: NodeId, payload: CheckResultPayload): Promise<void>;
+  /**
+   * A heartbeat listed the check runs the agent queues or runs; `undefined` for agents without
+   * checks (their heartbeats carry no `activeCheckRunIds`).
+   */
+  onHeartbeat(nodeId: NodeId, activeCheckRunIds: readonly CheckRunId[] | undefined): Promise<void>;
+  /** An agent completed its handshake; called after the node is marked online. */
+  onNodeOnline(nodeId: NodeId): Promise<void>;
+  /** The node lost its connection and did not come back within the grace period. */
+  onNodeOffline(nodeId: NodeId): Promise<void>;
+}
+
+/** Check sink that drops every report (tests, and the deferred sink before it is bound). */
+export const noopCheckSink: CheckSink = {
+  onLog: () => Promise.resolve(),
+  onResult: () => Promise.resolve(),
+  onHeartbeat: () => Promise.resolve(),
+  onNodeOnline: () => Promise.resolve(),
+  onNodeOffline: () => Promise.resolve(),
+};
+
+/**
+ * A check sink that forwards every report to a target bound later, for the same reason as
+ * `createDeferredDeploymentSink`: the check sink dispatches through the gateway.
+ */
+export function createDeferredCheckSink(): {
+  readonly sink: CheckSink;
+  bind(target: CheckSink): void;
+} {
+  let target: CheckSink = noopCheckSink;
+  return {
+    sink: {
+      onLog: (nodeId, payload) => target.onLog(nodeId, payload),
+      onResult: (nodeId, payload) => target.onResult(nodeId, payload),
+      onHeartbeat: (nodeId, active) => target.onHeartbeat(nodeId, active),
+      onNodeOnline: (nodeId) => target.onNodeOnline(nodeId),
+      onNodeOffline: (nodeId) => target.onNodeOffline(nodeId),
+    },
+    bind(next) {
+      target = next;
+    },
+  };
+}
+
 /** @public */
 export class AgentUnavailableError extends Error {
   override readonly name = 'AgentUnavailableError';
@@ -158,6 +225,8 @@ export function createUnavailableAgentGateway(): AgentGateway {
     isOnline: () => false,
     deploy: unavailable,
     cancelDeployment: unavailable,
+    runCheck: unavailable,
+    cancelCheck: unavailable,
     stopApp: unavailable,
     removeApp: unavailable,
     appStatus: unavailable,

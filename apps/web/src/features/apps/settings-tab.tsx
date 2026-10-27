@@ -24,6 +24,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
+import { ChecksCard } from './checks-card';
 import { PreviewsCard } from './previews-card';
 
 /** Service names from a textarea: one per line, blanks ignored. */
@@ -285,6 +286,7 @@ export function SettingsTab({ app }: { app: App }) {
       </form>
       <TrustedMountsCard app={app} />
       <PreviewsCard app={app} />
+      <ChecksCard app={app} />
     </div>
   );
 }

@@ -135,6 +135,9 @@ describe('dynamic DNS service', () => {
       previewBaseDomain: null,
       previewMaxPerApp: 10,
       previewMaxTotal: 20,
+      checkMemoryMb: 4096,
+      checkCpus: 2,
+      checkPidsLimit: 4096,
       updatedAt: new Date().toISOString(),
       ...initial,
     };

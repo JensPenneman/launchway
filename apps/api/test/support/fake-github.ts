@@ -53,6 +53,13 @@ export interface FakeDeployment {
   statuses: Record<string, unknown>[];
 }
 
+/** A commit status posted through `POST /repos/{owner}/{repo}/statuses/{sha}`. */
+export interface FakeCommitStatus {
+  repo: string;
+  sha: string;
+  body: Record<string, unknown>;
+}
+
 const LEGACY_PERMISSIONS = { contents: 'read', metadata: 'read' };
 
 let keyPair: { privateKey: string } | undefined;
@@ -101,6 +108,9 @@ export class FakeGitHub {
   /** Deployments API: created deployments, and whether writes are refused (403). */
   readonly deployments: FakeDeployment[] = [];
   denyDeployments = false;
+  /** Commit statuses API: posted statuses, and whether writes are refused (403). */
+  readonly commitStatuses: FakeCommitStatus[] = [];
+  denyStatuses = false;
   /** Lifetime of issued installation tokens. */
   tokenLifetimeMs = 60 * 60 * 1000;
   readonly calls: string[] = [];
@@ -221,6 +231,51 @@ export class FakeGitHub {
     return json(201, { id: deployment.statuses.length, state: body.state });
   }
 
+  /** Every commit the repository knows: listed commits, branch heads and tag targets. */
+  private commitsOf(repo: FakeRepo): string[] {
+    return [
+      ...new Set([
+        ...(repo.commits ?? []),
+        ...Object.values(repo.branches ?? {}),
+        ...Object.values(repo.tags ?? {}),
+        ...Object.values(repo.annotatedTags ?? {}),
+      ]),
+    ];
+  }
+
+  private async statusesApi(request: Request, repo: FakeRepo, rest: string, url: URL) {
+    const fullName = `${repo.owner}/${repo.name}`;
+    const denied = () => json(403, { message: 'Resource not accessible by integration' });
+    if (request.method === 'GET' && rest === 'commits') {
+      const commits = this.commitsOf(repo);
+      if (commits.length === 0) return json(409, { message: 'Git Repository is empty.' });
+      const { slice, headers } = this.page(
+        commits.map((commit) => ({ sha: commit })),
+        url,
+      );
+      return json(200, slice, headers);
+    }
+    const listed = /^commits\/([^/]+)\/statuses$/.exec(rest);
+    if (request.method === 'GET' && listed) {
+      if (this.denyStatuses) return denied();
+      return json(
+        200,
+        this.commitStatuses
+          .filter((status) => status.repo === fullName && status.sha === listed[1])
+          .map((status) => status.body)
+          .reverse(),
+      );
+    }
+    const posted = /^statuses\/([0-9a-f]{40})$/.exec(rest);
+    if (request.method === 'POST' && posted) {
+      if (this.denyStatuses) return denied();
+      const body = (await request.json()) as Record<string, unknown>;
+      this.commitStatuses.push({ repo: fullName, sha: posted[1] ?? '', body });
+      return json(201, { id: this.commitStatuses.length, state: body.state });
+    }
+    return null;
+  }
+
   private async route(request: Request, url: URL): Promise<Response> {
     const path = decodeURIComponent(url.pathname);
     const method = request.method;
@@ -324,6 +379,8 @@ export class FakeGitHub {
     if (rest === 'deployments' || rest.startsWith('deployments/') || rest === 'pulls') {
       return this.deploymentsApi(request, repo, rest);
     }
+    const statuses = await this.statusesApi(request, repo, rest, url);
+    if (statuses) return statuses;
     if (method !== 'GET') return json(404, { message: 'Not Found' });
 
     if (rest === 'releases') {

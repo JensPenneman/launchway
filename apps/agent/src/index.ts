@@ -35,6 +35,10 @@ if (!credentials && !config.joinToken) {
 }
 
 const tokens = createTokenSource(credentials, config.joinToken);
+/** The agent's own secrets: deployment and check logs never show them. */
+const agentSecrets = new Set<string>(
+  [credentials?.credential, config.joinToken].filter((secret) => typeof secret === 'string'),
+);
 const lanIp = createLanIpDetector({ configured: config.lanIp, docker, logger });
 
 /** Running deployments get this long to finish on SIGTERM before they are reported as failed. */
@@ -43,6 +47,7 @@ const SHUTDOWN_GRACE_MS = 20_000;
 const runtime = createAgentRuntime({
   logger,
   workspace: config.workspace,
+  secrets: () => [...agentSecrets],
   trySend: (message) => connection.connected && connection.send(message),
 });
 
@@ -71,6 +76,7 @@ const connection: AgentConnection = new AgentConnection({
       const joined = { nodeId: payload.nodeId, credential: payload.credential };
       await saveCredentials(config.workspace, joined);
       tokens.store(joined);
+      agentSecrets.add(payload.credential);
       logger.info({ nodeId: payload.nodeId }, 'joined; node credential stored');
     }
   },
@@ -82,6 +88,7 @@ const connection: AgentConnection = new AgentConnection({
   onReady: () => runtime.onConnected(),
   onRequest: (message) => runtime.handle(message),
   activeDeployments: () => runtime.activeDeploymentIds(),
+  activeCheckRuns: () => runtime.activeCheckRunIds(),
 });
 
 const reportLiveness = () => {
@@ -95,6 +102,8 @@ reportLiveness();
 const liveness = setInterval(reportLiveness, LIVENESS_INTERVAL_MS);
 
 logger.info({ version: AGENT_VERSION, url: config.socketUrl }, 'Launchway agent starting');
+// In the background: check runs wait for it, nothing else does.
+runtime.sweepChecks();
 connection.start();
 
 process.on('unhandledRejection', (reason) => {

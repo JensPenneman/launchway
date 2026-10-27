@@ -97,6 +97,11 @@ export function openApiObject(version: string) {
         name: 'Previews',
         description: 'Preview environments of pull requests, each at its own host name',
       },
+      {
+        name: 'Checks',
+        description:
+          'Test commands of apps run on their node for pushes, pull requests or by hand, with live logs, reported to GitHub as commit statuses',
+      },
       { name: 'Nodes', description: 'Machines running the agent, join tokens and credentials' },
       { name: 'Domains', description: 'Domains Launchway serves and their DNS verification' },
       {

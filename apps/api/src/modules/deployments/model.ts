@@ -1,8 +1,7 @@
-import type { Deployment, DeploymentId, DeploymentStatus, NodeId } from '@launchway/contracts';
+import type { Deployment, DeploymentId, DeploymentStatus } from '@launchway/contracts';
 import { and, eq, isNull } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
-import type { RequestActor } from '../../lib/auth-context.js';
 import { logHubFor } from './log-hub.js';
 import { deployments } from './schema.js';
 
@@ -29,17 +28,6 @@ export function toDeployment(row: DeploymentRow): Deployment {
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
-  };
-}
-
-/** Audit actor for state reported by a node agent. */
-export function agentActor(nodeId: NodeId): RequestActor {
-  return {
-    principal: null,
-    ipAddress: null,
-    userAgent: null,
-    requestId: `agent:${nodeId}`,
-    actor: { type: 'agent', id: nodeId, label: null },
   };
 }
 

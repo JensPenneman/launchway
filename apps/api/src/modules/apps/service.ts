@@ -7,7 +7,9 @@ import {
   type AppPage,
   type AppRuntimeStatus,
   AppSlug,
+  CheckItem,
   type CreateAppInput,
+  DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_APP_PREVIEW_SETTINGS,
   DEFAULT_COMPOSE_FILES,
   type DeleteAppQuery,
@@ -36,6 +38,8 @@ import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
 import { conflict, forbidden, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
+import { announceStatus as announceCheckStatus, type CheckRunRow } from '../checks/model.js';
+import { cancelQueuedOnNode, createChecksService } from '../checks/service.js';
 import { announceStatus } from '../deployments/model.js';
 import { deployments } from '../deployments/schema.js';
 import { findRunningDeployment, markRunningStopped } from '../deployments/service.js';
@@ -85,6 +89,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     trustedMounts: row.trustedMounts,
     proxyServices: row.proxyServices,
     previews: { ...DEFAULT_APP_PREVIEW_SETTINGS, ...row.previews },
+    checks: { ...DEFAULT_APP_CHECKS_SETTINGS, ...row.checks },
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -377,7 +382,12 @@ export function createAppsService(deps: Deps): AppsService {
       }
       const proxyServices = input.proxyServices ? [...new Set(input.proxyServices)].sort() : null;
 
-      let result: { before: AppRow; after: AppRow; active: App['activeDeploymentId'] };
+      let result: {
+        before: AppRow;
+        after: AppRow;
+        active: App['activeDeploymentId'];
+        cancelledChecks: CheckRunRow[];
+      };
       try {
         result = await deps.db.transaction(async (tx) => {
           if (proxyServices) await tx.execute(ALIASES_LOCK);
@@ -403,6 +413,18 @@ export function createAppsService(deps: Deps): AppsService {
               if (value !== undefined) Object.assign(next, { [key]: value });
             }
             if (JSON.stringify(next) !== JSON.stringify(current)) patch.previews = next;
+          }
+          if (input.checks !== undefined) {
+            // Partial update like previews; `items` replaces the list (normalised by the contract).
+            const current = { ...DEFAULT_APP_CHECKS_SETTINGS, ...before.checks };
+            const next = { ...current };
+            for (const [key, value] of Object.entries(input.checks)) {
+              if (value !== undefined) Object.assign(next, { [key]: value });
+            }
+            if (input.checks.items !== undefined) {
+              next.items = input.checks.items.map((item) => CheckItem.parse(item));
+            }
+            if (JSON.stringify(next) !== JSON.stringify(current)) patch.checks = next;
           }
           if (patch.nodeId !== undefined && patch.nodeId !== before.nodeId) {
             const [busy] = await tx
@@ -432,11 +454,17 @@ export function createAppsService(deps: Deps): AppsService {
             target: { type: 'app', id },
             summary: diffSummary(before, after, Object.keys(patch)),
           });
-          return { before, after, active: await activeDeploymentId(tx, id) };
+          // Queued checks were meant for the old node; running ones finish there.
+          const cancelledChecks =
+            after.nodeId === before.nodeId
+              ? []
+              : await cancelQueuedOnNode(tx, id, before.nodeId, actor);
+          return { before, after, active: await activeDeploymentId(tx, id), cancelledChecks };
         });
       } catch (error) {
         throw mapWriteError(error);
       }
+      for (const run of result.cancelledChecks) announceCheckStatus(deps, run);
       deps.events.publish({ topic: 'apps', action: 'updated', resourceId: id });
       const runtimeKeys = [
         'composeFiles',
@@ -452,6 +480,8 @@ export function createAppsService(deps: Deps): AppsService {
 
     async remove(id, query, actor) {
       const app = await loadRow(deps.db, id);
+      // Check runs go with the app (cascade); stop what their nodes queue or run first.
+      await createChecksService(deps).cancelForApp(id, actor);
       await cancelUnsent(id, actor, 'Cancelled: the app is being deleted');
       const pending = await deps.db
         .select({

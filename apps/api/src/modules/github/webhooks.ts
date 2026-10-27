@@ -1,5 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
+  type AppChecksSettings,
   type AppPreviewSettings,
   CommitSha,
   DEFAULT_APP_PREVIEW_SETTINGS,
@@ -13,6 +14,8 @@ import { forgetInstallationTokens } from '../../lib/git-provider.js';
 import { badRequest, ProblemError, unauthorized } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
+import { checksSettingsOf } from '../checks/model.js';
+import { type CommitTarget, createChecksService } from '../checks/service.js';
 import { createDeploymentsService } from '../deployments/service.js';
 import { createPreviewsService } from '../previews/service.js';
 import type { ConnectionRow } from './providers.js';
@@ -75,6 +78,8 @@ const PushEvent = z.object({
   ref: z.string(),
   after: z.string(),
   deleted: z.boolean().optional(),
+  /** Who pushed (skipBots of the checks). */
+  sender: Account.nullish(),
   repository: Repository,
 });
 
@@ -126,7 +131,8 @@ const PullRequestEvent = z.object({
       sha: z.string().regex(/^[0-9a-f]{40}$/),
       repo: z.object({ full_name: z.string() }).nullable(),
     }),
-    base: z.object({ repo: z.object({ full_name: z.string() }) }),
+    /** `ref`: the branch the pull request merges into (the branch filter of the checks). */
+    base: z.object({ ref: z.string().optional(), repo: z.object({ full_name: z.string() }) }),
   }),
   repository: Repository,
 });
@@ -149,9 +155,63 @@ type PreviewAction =
   | { readonly kind: 'open' | 'close' }
   | { readonly kind: 'ignore'; readonly reason?: string };
 
+/** `pull_request` actions that run the checks of the head commit. */
+const CHECK_PULL_REQUEST_ACTIONS: ReadonlySet<string> = new Set([
+  'opened',
+  'reopened',
+  'synchronize',
+]);
+
+type Account = z.infer<typeof Account>;
+
 /** Bots: GitHub's account type, or the `[bot]` login suffix of GitHub Apps (`dependabot[bot]`). */
-function isBot(account: z.infer<typeof Account> | null | undefined): boolean {
+function isBot(account: Account | null | undefined): boolean {
   return account?.type === 'Bot' || account?.login.endsWith('[bot]') === true;
+}
+
+/** The push or pull request a check decision is about. */
+export type CheckEvent =
+  | {
+      readonly kind: 'push';
+      readonly branch: string;
+      /** Who pushed. */
+      readonly sender: Account | null | undefined;
+    }
+  | {
+      readonly kind: 'pull_request';
+      /** The branch the pull request merges into; null when the event does not name it. */
+      readonly baseBranch: string | null;
+      readonly author: Account | null | undefined;
+    };
+
+/**
+ * Whether a push to a branch, or a pull request from a branch of the repository, runs the checks
+ * of an app with these settings (ADR 0020): checks on and configured, `branches` (null: every
+ * branch) holding the pushed branch or the pull request's base branch, and with `skipBots` no
+ * bot as the pusher or the pull request's author. Forks never get here. Manual runs
+ * (`POST /apps/{id}/checks`) apply none of this.
+ */
+export function checkTrigger(
+  settings: Pick<AppChecksSettings, 'enabled' | 'branches' | 'skipBots' | 'items'>,
+  event: CheckEvent,
+): { readonly run: true } | { readonly run: false; readonly reason: string } {
+  const skip = (reason: string) => ({ run: false, reason }) as const;
+  if (!settings.enabled) return skip('checks are off for the app');
+  if (settings.items.length === 0) return skip('the app has no checks');
+  const push = event.kind === 'push';
+  const branch = push ? event.branch : event.baseBranch;
+  if (settings.branches !== null && (branch === null || !settings.branches.includes(branch))) {
+    return skip(
+      push
+        ? `pushes to ${branch} run no checks`
+        : `pull requests into ${branch ?? 'an unnamed base branch'} run no checks`,
+    );
+  }
+  const account = push ? event.sender : event.author;
+  if (settings.skipBots && isBot(account)) {
+    return skip(`${push ? 'pushed' : 'opened'} by the bot ${account?.login}`);
+  }
+  return { run: true };
 }
 
 /**
@@ -198,11 +258,72 @@ const InstallationEvent = z.object({
 
 const DELIVERY_ID = /^[A-Za-z0-9-]{1,128}$/;
 
+type AppRow = typeof apps.$inferSelect;
+
+/** GitHub or the database failing is worth a redelivery; configuration problems are not. */
+function needsRedelivery(error: unknown): boolean {
+  return !(error instanceof ProblemError) || error.type === 'upstream-failed';
+}
+
+function redeliver(detail: string): ProblemError {
+  // The handler forgets the delivery, so GitHub's redelivery is not rejected as a duplicate.
+  return new ProblemError('upstream-failed', { detail });
+}
+
 export function createWebhookHandler(deps: Deps) {
   const logger = deps.logger.child({ component: 'github-webhooks' });
   const actor = systemActor('github-webhook');
   const deployments = createDeploymentsService(deps);
   const previews = createPreviewsService(deps, { deployments });
+  const checks = createChecksService(deps);
+
+  /** Apps with checks turned on; only they log why an event runs no checks. */
+  const checksOn = sql`${apps.checks}->>'enabled' = 'true'`;
+
+  /**
+   * Queues the checks of a pushed commit or a pull request head for each app whose settings let
+   * the event run them (`checkTrigger`). `handled` when any app took it; `retry` when queueing
+   * failed in a way a redelivery may fix (queueing dedupes per commit, so redelivering is safe).
+   */
+  async function queueChecks(
+    targets: readonly AppRow[],
+    commit: CommitTarget,
+    event: CheckEvent,
+  ): Promise<{ handled: boolean; retry: boolean }> {
+    let handled = false;
+    let retry = false;
+    for (const app of targets) {
+      const decision = checkTrigger(checksSettingsOf(app), event);
+      if (!decision.run) {
+        logger.info(
+          {
+            appId: app.id,
+            trigger: commit.trigger,
+            commitSha: commit.sha,
+            ...(commit.prNumber === null ? {} : { prNumber: commit.prNumber }),
+            reason: decision.reason,
+          },
+          'event runs no checks for the app',
+        );
+        continue;
+      }
+      handled = true;
+      try {
+        const runs = await checks.queueForCommit(app, commit, actor);
+        logger.info(
+          { appId: app.id, trigger: commit.trigger, commitSha: commit.sha, queued: runs.length },
+          runs.length > 0 ? 'checks queued' : 'checks ran for this commit already',
+        );
+      } catch (error) {
+        logger.warn(
+          { appId: app.id, reason: error instanceof Error ? error.message : 'unknown' },
+          'queueing checks failed',
+        );
+        retry ||= needsRedelivery(error);
+      }
+    }
+    return { handled, retry };
+  }
 
   /**
    * Pull requests from branches of the repository open, update and close previews as far as each
@@ -214,6 +335,7 @@ export function createWebhookHandler(deps: Deps) {
     payload: unknown,
   ): Promise<WebhookOutcome> {
     const event = PullRequestEvent.parse(payload);
+    // Forks never get here: neither previews nor checks run code from forks.
     if (!PULL_REQUEST_ACTIONS.has(event.action)) return 'ignored';
     const pr = event.pull_request;
     const head = pr.head.repo?.full_name.toLowerCase() ?? null;
@@ -271,15 +393,38 @@ export function createWebhookHandler(deps: Deps) {
           },
           'handling a pull request for a preview failed',
         );
-        retry ||= !(error instanceof ProblemError) || error.type === 'upstream-failed';
+        retry ||= needsRedelivery(error);
       }
     }
+    const checked = await pullRequestChecks(event, targets);
     if (retry) {
-      throw new ProblemError('upstream-failed', {
-        detail: 'Updating a preview failed for at least one app; redeliver to retry',
-      });
+      throw redeliver('Updating a preview failed for at least one app; redeliver to retry');
     }
-    return handled ? 'processed' : 'ignored';
+    if (checked.retry) {
+      throw redeliver(
+        'Queueing the checks of a pull request failed for at least one app; redeliver to retry',
+      );
+    }
+    return handled || checked.handled ? 'processed' : 'ignored';
+  }
+
+  /** `opened`, `reopened` and `synchronize` run the checks of the head commit. */
+  function pullRequestChecks(event: PullRequestEvent, targets: readonly AppRow[]) {
+    const none = Promise.resolve({ handled: false, retry: false });
+    if (!CHECK_PULL_REQUEST_ACTIONS.has(event.action)) return none;
+    const pr = event.pull_request;
+    const enabled = targets.filter((app) => checksSettingsOf(app).enabled);
+    if (enabled.length === 0) return none;
+    const head = GitRef.safeParse(pr.head.ref);
+    if (!head.success) {
+      logger.info({ prNumber: event.number }, 'the head branch of the pull request runs no checks');
+      return none;
+    }
+    return queueChecks(
+      enabled,
+      { sha: pr.head.sha, ref: head.data, prNumber: event.number, trigger: 'pull_request' },
+      { kind: 'pull_request', baseBranch: pr.base.ref ?? null, author: pr.user },
+    );
   }
 
   /** Apps of the connection linked to the event's repository (case-insensitive, like GitHub). */
@@ -302,10 +447,10 @@ export function createWebhookHandler(deps: Deps) {
    * delivery fail so GitHub's redelivery retries (apps deployed already are skipped then).
    */
   async function deployEach(
-    targets: (typeof apps.$inferSelect)[],
+    targets: AppRow[],
     what: string,
-    create: (app: typeof apps.$inferSelect) => Promise<{ id: string } | null>,
-  ): Promise<WebhookOutcome> {
+    create: (app: AppRow) => Promise<{ id: string } | null>,
+  ): Promise<{ retry: boolean }> {
     let retry = false;
     for (const app of targets) {
       try {
@@ -319,17 +464,14 @@ export function createWebhookHandler(deps: Deps) {
           `auto-deploy of a ${what} failed`,
         );
         // GitHub or the database failing is worth a redelivery; an unknown ref is not.
-        retry ||= !(error instanceof ProblemError) || error.type === 'upstream-failed';
+        retry ||= needsRedelivery(error);
       }
     }
-    if (retry) {
-      // The handler forgets the delivery, so GitHub's redelivery is not rejected as a duplicate.
-      throw new ProblemError('upstream-failed', {
-        detail: `Auto-deploying the ${what} failed for at least one app; redeliver to retry`,
-      });
-    }
-    return 'processed';
+    return { retry };
   }
+
+  const deployFailed = (what: string) =>
+    redeliver(`Auto-deploying the ${what} failed for at least one app; redeliver to retry`);
 
   async function onRelease(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
     const event = ReleaseEvent.parse(payload);
@@ -339,24 +481,43 @@ export function createWebhookHandler(deps: Deps) {
       ? and(eq(apps.autoDeployReleases, true), eq(apps.autoDeployPrereleases, true))
       : eq(apps.autoDeployReleases, true);
     const targets = await appsOf(connection, event.repository, filter as SQL);
-    return deployEach(targets, 'release', (app) =>
+    const { retry } = await deployEach(targets, 'release', (app) =>
       deployments.createForRelease(app, publication.tag, actor),
     );
+    if (retry) throw deployFailed('release');
+    return 'processed';
   }
 
+  /** Pushes to a branch auto-deploy (`autoDeployBranch`) and run the checks of the commit. */
   async function onPush(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
     const event = PushEvent.parse(payload);
     const pushed = pushedBranch(event);
     if (!pushed) return 'ignored';
-    const targets = await appsOf(
+    const deployTargets = await appsOf(
       connection,
       event.repository,
       eq(apps.autoDeployBranch, pushed.branch),
     );
-    if (targets.length === 0) return 'ignored';
-    return deployEach(targets, 'push', (app) =>
-      deployments.createForPush(app, pushed.branch, pushed.commitSha, actor),
+    const checkTargets = await appsOf(connection, event.repository, checksOn);
+    if (deployTargets.length === 0 && checkTargets.length === 0) return 'ignored';
+    const deployed =
+      deployTargets.length === 0
+        ? { retry: false }
+        : await deployEach(deployTargets, 'push', (app) =>
+            deployments.createForPush(app, pushed.branch, pushed.commitSha, actor),
+          );
+    const checked = await queueChecks(
+      checkTargets,
+      { sha: pushed.commitSha, ref: pushed.branch, prNumber: null, trigger: 'push' },
+      { kind: 'push', branch: pushed.branch, sender: event.sender },
     );
+    if (deployed.retry) throw deployFailed('push');
+    if (checked.retry) {
+      throw redeliver(
+        'Queueing the checks of a push failed for at least one app; redeliver to retry',
+      );
+    }
+    return deployTargets.length > 0 || checked.handled ? 'processed' : 'ignored';
   }
 
   async function onInstallation(

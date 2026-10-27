@@ -1,0 +1,2 @@
+ALTER TABLE "settings" ADD COLUMN "check_max_queued_per_app" integer DEFAULT 30 NOT NULL;--> statement-breakpoint
+ALTER TABLE "settings" ADD COLUMN "check_max_queued_per_node" integer DEFAULT 100 NOT NULL;

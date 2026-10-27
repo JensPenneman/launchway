@@ -26,6 +26,8 @@ const settings = {
   checkMemoryMb: 4096,
   checkCpus: 2,
   checkPidsLimit: 4096,
+  checkMaxQueuedPerApp: 30,
+  checkMaxQueuedPerNode: 100,
   updatedAt: '2026-10-06T12:00:00.000Z',
 };
 

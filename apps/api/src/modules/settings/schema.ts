@@ -1,5 +1,7 @@
 import {
   DEFAULT_CHECK_CPUS,
+  DEFAULT_CHECK_MAX_QUEUED_PER_APP,
+  DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
   DEFAULT_CHECK_MEMORY_MB,
   DEFAULT_CHECK_PIDS_LIMIT,
   DEFAULT_PREVIEW_MAX_PER_APP,
@@ -48,6 +50,13 @@ export const settings = pgTable(
     checkMemoryMb: integer('check_memory_mb').notNull().default(DEFAULT_CHECK_MEMORY_MB),
     checkCpus: doublePrecision('check_cpus').notNull().default(DEFAULT_CHECK_CPUS),
     checkPidsLimit: integer('check_pids_limit').notNull().default(DEFAULT_CHECK_PIDS_LIMIT),
+    /** Bounds of the check queue: runs beyond them end at once (reason queue-full). */
+    checkMaxQueuedPerApp: integer('check_max_queued_per_app')
+      .notNull()
+      .default(DEFAULT_CHECK_MAX_QUEUED_PER_APP),
+    checkMaxQueuedPerNode: integer('check_max_queued_per_node')
+      .notNull()
+      .default(DEFAULT_CHECK_MAX_QUEUED_PER_NODE),
     ...timestamps(),
   },
   (t) => [

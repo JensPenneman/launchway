@@ -7,6 +7,8 @@ import {
   type CheckRun,
   DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_CHECK_CPUS,
+  DEFAULT_CHECK_MAX_QUEUED_PER_APP,
+  DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
   DEFAULT_CHECK_MEMORY_MB,
   DEFAULT_CHECK_PIDS_LIMIT,
   type Deployment,
@@ -776,6 +778,8 @@ export function createSettings(): Settings {
     checkMemoryMb: DEFAULT_CHECK_MEMORY_MB,
     checkCpus: DEFAULT_CHECK_CPUS,
     checkPidsLimit: DEFAULT_CHECK_PIDS_LIMIT,
+    checkMaxQueuedPerApp: DEFAULT_CHECK_MAX_QUEUED_PER_APP,
+    checkMaxQueuedPerNode: DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
     updatedAt: ago(60 * 24),
   };
 }

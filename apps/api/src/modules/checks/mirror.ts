@@ -147,6 +147,8 @@ function describe(run: StatusRun): string {
         : `Failed: exit code ${run.exitCode} after ${duration()}`;
     case 'errored': {
       const first = run.statusMessage?.split('\n', 1)[0]?.trim();
+      // "Not run: the app already has 30 queued checks (at most 30); run it again later"
+      if (run.reason === 'queue-full' && first) return first;
       return `Error: ${first || run.reason || 'unknown'}`;
     }
     case 'cancelled':

@@ -304,6 +304,8 @@ describe('checks against PostgreSQL', () => {
       checkMemoryMb: current?.checkMemoryMb ?? 4096,
       checkCpus: current?.checkCpus ?? 2,
       checkPidsLimit: current?.checkPidsLimit ?? 4096,
+      checkMaxQueuedPerApp: current?.checkMaxQueuedPerApp ?? 30,
+      checkMaxQueuedPerNode: current?.checkMaxQueuedPerNode ?? 100,
     };
     github.apps.set(ghAppId, {
       id: ghAppId,
@@ -516,13 +518,106 @@ describe('checks against PostgreSQL', () => {
     await deliver('push', push(repo, 'feature/a', sha(`${repo}-4`)));
     expect((await runRow(third?.id ?? '')).reason).toBe('superseded');
 
-    // The same commit again (any trigger) adds nothing and supersedes nothing.
+    // The newest push of the branch runs, whatever the commit: a commit whose runs were
+    // superseded runs again when it is pushed again (a force-push back), and supersedes in turn.
+    const [fourth] = (await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-4`));
     await deliver('push', push(repo, 'feature/a', sha(`${repo}-3`)));
-    expect((await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`))).toHaveLength(1);
+    const again = (await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`));
+    expect(again.map((r) => [r.status, r.reason])).toEqual([
+      ['cancelled', 'superseded'],
+      ['queued', null],
+    ]);
+    expect((await runRow(fourth?.id ?? '')).reason).toBe('superseded');
+    // The same commit again while it is queued adds nothing and supersedes nothing.
+    await deliver('push', push(repo, 'feature/a', sha(`${repo}-3`)));
+    await deliver(
+      'pull_request',
+      pullRequest(repo, 'synchronize', 3, sha(`${repo}-3`), { headRef: 'feature/a' }),
+    );
+    expect((await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`))).toHaveLength(2);
     await db
       .update(checkRuns)
       .set({ status: 'cancelled', finishedAt: new Date() })
       .where(eq(checkRuns.id, second?.id as CheckRunId));
+  });
+
+  it('bounds the queue per app and per node: runs beyond end at once as queue-full', async () => {
+    const setLimits = async (perApp: number, perNode: number) => {
+      const res = await api.request(
+        '/api/v1/settings',
+        json('PATCH', { checkMaxQueuedPerApp: perApp, checkMaxQueuedPerNode: perNode }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        checkMaxQueuedPerApp: perApp,
+        checkMaxQueuedPerNode: perNode,
+      } satisfies Partial<Settings>);
+    };
+    await setLimits(2, 3);
+    try {
+      // An offline node: every run stays queued.
+      const node = await newNode(false);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality, lint] });
+      await deliver('push', push(repo, 'feature/one', sha(`${repo}-one`)));
+      await deliver('push', push(repo, 'feature/two', sha(`${repo}-two`)));
+      const runs = await runsOf(app.id);
+      const one = runs.filter((r) => r.commitSha === sha(`${repo}-one`));
+      const two = runs.filter((r) => r.commitSha === sha(`${repo}-two`));
+      expect(one.map((r) => r.status)).toEqual(['queued', 'queued']);
+      // Both checks of the second push: all or nothing, ended at once so GitHub shows why.
+      for (const run of two) {
+        expect(run).toMatchObject({
+          status: 'errored',
+          reason: 'queue-full',
+          statusMessage:
+            'Not run: the app already has 2 queued checks (at most 2); run it again later',
+        });
+        expect(run.finishedAt).not.toBeNull();
+        expect((await auditsOf(run.id)).map((a) => [a.action, a.summary])).toEqual([
+          ['check.create', expect.objectContaining({ status: 'errored', reason: 'queue-full' })],
+        ]);
+      }
+      expect(gateway.checkRuns.filter((r) => two.some((t) => t.id === r.payload.runId))).toEqual(
+        [],
+      );
+
+      // By hand the request is refused instead.
+      const manual = await api.request(
+        `/api/v1/apps/${app.id}/checks`,
+        json('POST', { ref: 'main' }),
+      );
+      expect(manual.status).toBe(409);
+      expect(((await manual.json()) as { detail: string }).detail).toBe(
+        'Not queued: the app already has 2 queued checks (at most 2); wait for them or raise the limit',
+      );
+
+      // The node's bound counts the queued runs of all its apps.
+      const other = await createTestApp(node, { enabled: true, items: [quality, lint] });
+      await deliver('push', push(other.repo, 'main', sha(`${other.repo}-x`)));
+      const others = await runsOf(other.app.id);
+      expect(others.map((r) => [r.status, r.reason, r.statusMessage])).toEqual([
+        [
+          'errored',
+          'queue-full',
+          'Not run: its node already has 2 queued checks (at most 3); run it again later',
+        ],
+        [
+          'errored',
+          'queue-full',
+          'Not run: its node already has 2 queued checks (at most 3); run it again later',
+        ],
+      ]);
+
+      // Once there is room, pushing the commit again queues it: runs that never ran do not count.
+      await setLimits(4, 10);
+      await deliver('push', push(repo, 'feature/two', sha(`${repo}-two`)));
+      const queuedTwo = (await runsOf(app.id)).filter(
+        (r) => r.commitSha === sha(`${repo}-two`) && r.status === 'queued',
+      );
+      expect(queuedTwo).toHaveLength(2);
+    } finally {
+      await setLimits(30, 100);
+    }
   });
 
   it('runs checks by hand, re-runs finished runs and cancels queued ones', async () => {
@@ -662,11 +757,12 @@ describe('checks against PostgreSQL', () => {
       checkCpus: 1.5,
       checkPidsLimit: 512,
     } satisfies Partial<Settings>);
-    const [audit] = await db
+    const audits = await db
       .select()
       .from(auditEvents)
       .where(and(eq(auditEvents.action, 'settings.update'), eq(auditEvents.actorId, admin.user.id)))
       .orderBy(asc(auditEvents.createdAt));
+    const audit = audits.find((entry) => entry.summary && 'checkMemoryMb' in entry.summary);
     expect(audit?.summary).toMatchObject({ checkMemoryMb: { to: 1024 }, checkCpus: { to: 1.5 } });
 
     const node = await newNode(true);

@@ -669,16 +669,19 @@ describe('check runs against Docker', () => {
     await commitOnBranch(
       'network',
       dockerfileWith(
-        `RUN { cat /etc/resolv.conf; nslookup ${checkBuilderContainer(BUILDER)} >/dev/null && echo "resolved the builder"; wget -T 5 -q -O - http://${ip}:8080/ || echo "no way to the server"; } > /network.txt 2>&1`,
+        // The trailing dot: with a search domain in the node's resolv.conf (GitHub's runners have
+        // one), busybox's nslookup does not find a bare container name.
+        `RUN { cat /etc/resolv.conf; nslookup ${checkBuilderContainer(BUILDER)}. >/dev/null && echo "resolved the builder"; wget -T 5 -q -O - http://${ip}:8080/ || echo "no way to the server"; } > /network.txt 2>&1`,
       ),
     );
     const stdout = await runOk('run-network', 'network', 'cat /network.txt');
+    const shown = stdout.join('\n');
     // Build steps resolve through Docker's embedded DNS (container names too), not 8.8.8.8.
-    expect(stdout).toContain('nameserver 127.0.0.11');
-    expect(stdout).toContain('resolved the builder');
+    expect(stdout, shown).toContain('nameserver 127.0.0.11');
+    expect(stdout, shown).toContain('resolved the builder');
     // The builder's network is a bridge of its own: no route to the default bridge's containers.
-    expect(stdout).toContain('no way to the server');
-    expect(stdout).not.toContain(`reached-${suffix}`);
+    expect(stdout, shown).toContain('no way to the server');
+    expect(stdout, shown).not.toContain(`reached-${suffix}`);
   });
 
   it("refuses frontends other than Docker's Dockerfile frontend", async () => {

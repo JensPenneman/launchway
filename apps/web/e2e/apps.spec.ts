@@ -122,7 +122,7 @@ test('lists pull request previews and opens one by its number', async ({ page })
   const existing = page.getByRole('row', { name: /#42 Show elevation profiles/ });
   await expect(existing).toContainText('running');
   await expect(
-    existing.getByRole('link', { name: /trail-pr-42\.preview\.example\.com/ }),
+    existing.getByRole('link', { name: 'trail-pr-42.preview.example.com' }),
   ).toBeVisible();
 
   await page.getByLabel('Pull request number').fill('7');

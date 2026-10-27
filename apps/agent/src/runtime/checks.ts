@@ -16,6 +16,12 @@ import {
 } from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { z } from 'zod';
+import {
+  type BuilderContext,
+  CheckBuilderError,
+  ensureCheckBuilder,
+  pruneCheckBuilder,
+} from './check-builder.js';
 import { buildCheckDocument, checkEnvironment, checkSourcePaths } from './check-document.js';
 import { probeSources } from './check-sources.js';
 import { type ComposeTarget, composeArgs } from './compose.js';
@@ -471,6 +477,8 @@ class CheckRun {
   readonly #project: string;
   /** Set before the first command that creates Docker resources. */
   #dockerUsed = false;
+  /** The check builder the run built with, pruned after the run. */
+  #builder: string | null = null;
 
   constructor(
     job: CheckJob,
@@ -618,13 +626,25 @@ class CheckRun {
     const target: ComposeTarget = { project: this.#project, files: [documentPath], envFile };
 
     this.#dockerUsed = true;
+    const services = Object.values((built.document.services ?? {}) as Record<string, object>);
+    const builds = services.some((service) => 'build' in service);
     await this.#options.builds.use(async () => {
       this.#system('Building and pulling the images');
-      await this.#exec('docker', composeArgs(target, 'build', '--pull'), {
+      // Builds run in the check builder (limits, cache and network of their own), never in the
+      // engine's builder that deployments use.
+      const builder = builds ? await this.#ensureBuilder(runDir) : null;
+      const build = composeArgs(
+        target,
+        'build',
+        '--pull',
+        ...(builder ? ['--builder', builder] : []),
+      );
+      await this.#exec('docker', build, {
         label: 'docker compose build',
         reason: 'build',
         cwd: runDir,
-        env,
+        // Compose finds the check builder in the agent's buildx records.
+        env: builder ? await this.#builderEnv() : env,
         timeoutMs: TIMEOUTS.build,
       });
       // Always from the registry: an image that only exists on the node may be another app's.
@@ -912,6 +932,45 @@ class CheckRun {
     }
   }
 
+  /** The check builder for the run's limits, created or started when needed. */
+  async #ensureBuilder(cwd: string): Promise<string> {
+    const { limits } = this.#payload;
+    const ctx: BuilderContext = {
+      run: this.#run,
+      env: await this.#builderEnv(),
+      cwd,
+      logger: this.#logger,
+      signal: this.#signal,
+      onLine: (line) => this.#system(line),
+    };
+    try {
+      const name = await ensureCheckBuilder(ctx, limits);
+      this.#builder = name;
+      const mib = Math.round(limits.memoryBytes / (1024 * 1024));
+      this.#system(
+        `building with the check builder ${name}: ${mib} MiB without swap, ${limits.cpus} CPUs, ${limits.pidsLimit} processes`,
+      );
+      return name;
+    } catch (error) {
+      if (this.#signal.aborted) throw new Error('aborted');
+      if (error instanceof CheckBuilderError) {
+        for (const line of error.output) this.#line('stderr', line);
+        throw new CheckFailure('infrastructure', error.message, true);
+      }
+      throw error;
+    }
+  }
+
+  /** The docker environment of checks with the agent's own buildx records (BUILDX_CONFIG). */
+  async #builderEnv(): Promise<NodeJS.ProcessEnv> {
+    const env: NodeJS.ProcessEnv = {
+      ...this.#env(),
+      BUILDX_CONFIG: await this.#options.workspace.buildxDir(),
+    };
+    delete env.BUILDX_BUILDER;
+    return env;
+  }
+
   async #cleanup(): Promise<void> {
     const { app, runId } = this.#payload;
     const workspace = this.#options.workspace;
@@ -924,6 +983,17 @@ class CheckRun {
           logger: this.#logger,
         };
         await removeRunResources(ctx, this.#project, runId, app.slug);
+      }
+      if (this.#builder) {
+        await pruneCheckBuilder(
+          {
+            run: this.#run,
+            env: await this.#builderEnv(),
+            cwd: await workspace.neutralDir(),
+            logger: this.#logger,
+          },
+          this.#builder,
+        );
       }
     } catch (error) {
       this.#logger.warn({ err: error }, 'check cleanup failed');

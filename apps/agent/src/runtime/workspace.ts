@@ -140,6 +140,16 @@ export class Workspace {
     return join(this.root, 'checks');
   }
 
+  /**
+   * BUILDX_CONFIG of the commands of checks: buildx keeps the check builder's records here, in the
+   * agent's volume, so a new agent container still knows the builder (and its cache).
+   */
+  async buildxDir(): Promise<string> {
+    const dir = join(this.root, 'agent', 'buildx');
+    await mkdir(dir, { recursive: true, mode: 0o700 });
+    return dir;
+  }
+
   /** `src` (the checkout) plus the run's `compose.json` and `check.env`, outside the checkout. */
   checkRunDir(appId: string, runId: string): string {
     return join(this.checksDir(), appId, runId);

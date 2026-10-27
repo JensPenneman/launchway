@@ -37,11 +37,12 @@ const LIMITS = { memoryBytes: 256 * 1024 * 1024, cpus: 1, pidsLimit: 256 };
 let tmp: string;
 let workspace: string;
 let bareRepo: string;
-const commits: Record<'good' | 'bad' | 'leak' | 'include', string> = {
+const commits: Record<'good' | 'bad' | 'leak' | 'include' | 'hungry', string> = {
   good: '',
   bad: '',
   leak: '',
   include: '',
+  hungry: '',
 };
 /** Stands in for another app's decrypted environment next to the checkout. */
 const INCLUDE_MARKER = 'victim-database-password-1f3e';
@@ -70,6 +71,11 @@ async function docker(...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** A build step that needs more memory than the check builder may use (LIMITS: 256 MiB). */
+const HUNGRY_DOCKERFILE = `FROM alpine:3
+RUN dd if=/dev/zero of=/dev/null bs=600M count=1 && echo "took $((300 * 2)) MB"
+`;
+const BUILDER = 'launchway-check-build-256m-1c';
 const DOCKERFILE = `FROM alpine:3
 RUN adduser -D -u 1234 tester && install -d -o tester -g tester /workspace/.cache
 USER tester
@@ -154,6 +160,12 @@ async function createFixtureRepository(): Promise<void> {
   await git(src, 'add', '.');
   await git(src, 'commit', '--quiet', '-m', 'include with an env file outside');
   commits.include = await git(src, 'rev-parse', 'HEAD');
+  // The fixture project with a build step that needs 600 MB, on a branch of its own.
+  await git(src, 'checkout', '--quiet', '-b', 'hungry', commits.good);
+  await writeFile(join(src, '.devcontainer', 'Dockerfile'), HUNGRY_DOCKERFILE);
+  await git(src, 'commit', '--quiet', '-am', 'a build step that needs 600 MB');
+  commits.hungry = await git(src, 'rev-parse', 'HEAD');
+  await git(src, 'checkout', '--quiet', 'main');
   bareRepo = join(tmp, 'fixture.git');
   await git(tmp, 'clone', '--quiet', '--bare', src, bareRepo);
 }
@@ -299,6 +311,15 @@ async function cleanupDocker(): Promise<void> {
   await docker('volume', 'rm', '--force', `${leftover}_source`).catch(() => '');
   await docker('network', 'rm', `${leftover}_default`).catch(() => '');
   await docker('image', 'rm', '--force', checkImageName(slug, 'dev')).catch(() => '');
+  // The check builder the runs created (named after LIMITS) and its network, if nothing else uses it.
+  if (workspace) {
+    await exec('docker', ['buildx', 'rm', '--force', BUILDER], {
+      env: { ...process.env, BUILDX_CONFIG: join(workspace, 'agent', 'buildx') },
+    }).catch(() => undefined);
+  }
+  await docker('rm', '--force', `buildx_buildkit_${BUILDER}0`).catch(() => '');
+  await docker('volume', 'rm', '--force', `buildx_buildkit_${BUILDER}0_state`).catch(() => '');
+  await docker('network', 'rm', 'launchway-check-build').catch(() => '');
 }
 
 beforeAll(async () => {
@@ -518,6 +539,40 @@ describe('check runs against Docker', () => {
         ".devcontainer/compose.yaml: checks do not support include; list the files in the check's Compose files",
     });
     expect(JSON.stringify(plane.received)).not.toContain(INCLUDE_MARKER);
+    await expectCleanedUp(payload.runId);
+  });
+
+  it('builds in a check builder of its own with the check limits', async () => {
+    // The earlier runs built the fixture through it.
+    const builder = `buildx_buildkit_${BUILDER}0`;
+    const host = JSON.parse(await docker('inspect', '--format', '{{json .HostConfig}}', builder));
+    expect(host).toMatchObject({
+      Memory: LIMITS.memoryBytes,
+      MemorySwap: LIMITS.memoryBytes,
+      CpuQuota: 100_000,
+      CpuPeriod: 100_000,
+      PidsLimit: LIMITS.pidsLimit,
+      NetworkMode: 'launchway-check-build',
+    });
+    // Its BuildKit has a cache and cache mounts apart from the engine's builder.
+    expect(await docker('volume', 'ls', '--quiet', '--filter', `name=${builder}_state`)).toBe(
+      `${builder}_state`,
+    );
+  });
+
+  it('fails a build step that needs more memory than the builder may use', async () => {
+    const payload = checkPayload('hungry', 'true');
+    const result = await runCheck('run-hungry', payload);
+    expect(result).toMatchObject({ runId: payload.runId, reason: 'build', exitCode: null });
+    const output = logLinesOf('run-hungry')
+      .map((l) => l.line)
+      .join('\n');
+    // BuildKit reports the step it could not give 600 MB (the cgroup of the builder refused it).
+    expect(output).toMatch(
+      /cannot allocate memory|ResourceExhausted|signal: killed|exit code: 137/,
+    );
+    // The step's own output (the echo after dd) never appears.
+    expect(output).not.toContain('took 600 MB');
     await expectCleanedUp(payload.runId);
   });
 

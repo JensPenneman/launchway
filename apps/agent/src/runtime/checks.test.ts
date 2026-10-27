@@ -310,6 +310,11 @@ describe('CheckManager', () => {
       'git checkout',
       'git rev-parse',
       'compose config',
+      // The check builder: its network, booting it, its process limit, builders of other limits.
+      'docker network inspect',
+      'docker buildx',
+      'docker update',
+      'docker ps',
       'compose build',
       'compose pull',
       'docker volume create',
@@ -327,9 +332,32 @@ describe('CheckManager', () => {
       'docker volume ls',
       'docker network ls',
       'docker image prune',
+      // The check builder's cache, pruned to its bound.
+      'docker buildx',
     ]);
     // The result goes out before the cleanup starts.
-    expect(fake.events.indexOf('send check.result')).toBeLessThan(fake.events.indexOf('docker ps'));
+    expect(fake.events.indexOf('send check.result')).toBeLessThan(
+      fake.events.indexOf('compose down'),
+    );
+    const builder = 'launchway-check-build-1024m-2c';
+    const buildx = await import('node:fs').then((fs) => fs.realpathSync(root));
+    expect(callsOf('compose build')[0]?.args.slice(-3)).toEqual(['--pull', '--builder', builder]);
+    expect([root, buildx].map((r) => join(r, 'agent', 'buildx'))).toContain(
+      callsOf('compose build')[0]?.options.env?.BUILDX_CONFIG,
+    );
+    expect(callsOf('docker update')[0]?.args).toEqual([
+      'update',
+      '--pids-limit',
+      '1024',
+      '--',
+      `buildx_buildkit_${builder}0`,
+    ]);
+    expect(fake.calls.filter((c) => c.args[0] === 'buildx').map((c) => c.args.slice(0, 2))).toEqual(
+      [
+        ['buildx', 'inspect'],
+        ['buildx', 'prune'],
+      ],
+    );
 
     const dir = join(root, 'checks', APP.id, run.runId);
     const src = await import('node:fs').then((fs) => fs.realpathSync(root));

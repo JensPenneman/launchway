@@ -52,14 +52,20 @@ This is a summary of the security requirements in section 14 of
   `no-new-privileges` and is the first the kernel kills when memory runs out,
   and one check runs per node at a time. Check containers can still reach the
   network, including ports the node publishes (on Docker Desktop also the
-  host through `host.docker.internal`). Their image builds run in a BuildKit
-  of their own with the same memory, CPU and process limits, their own cache
-  and cache mounts and their own network; that BuildKit runs privileged in its
-  container, as buildx's `docker-container` builders do. Put
-  services on the node behind authentication and turn checks on only for
-  repositories whose writers you trust with that (ADR 0020). A member can also
-  start a run by hand for any commit GitHub serves for the repository, heads
-  of fork pull requests included, just as members can deploy any commit.
+  host through `host.docker.internal`, its loopback included). Their image
+  builds run in a BuildKit of their own with the same memory, CPU and
+  process limits, on a network of its own: build steps reach the internet
+  and the same published ports, but not the addresses of containers on other
+  networks. Cached `RUN` steps are kept per app, and cache mounts are emptied
+  before every build and after every run, so one repository's build cannot
+  hand another's what it planted there; `# syntax=` may only name Docker's
+  Dockerfile frontend. That BuildKit runs privileged in its container, as
+  buildx's `docker-container` builders do, and apps cannot mount its state.
+  Put services on the node behind authentication and turn checks on only
+  for repositories whose writers you trust with that (ADR 0020). A member
+  can also start a run by hand for any commit GitHub serves for the
+  repository, heads of fork pull requests included, just as members can
+  deploy any commit.
 - **Extra Caddy directives are trusted admin configuration.** A route's
   `extraDirectives` is placed verbatim in the Caddyfile, with the reach of
   any Caddyfile: placeholders such as `{env.*}` resolve in the Caddy

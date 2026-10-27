@@ -1,12 +1,17 @@
 import { readFileSync } from 'node:fs';
+import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { DeployPolicy, DeployRoute } from '@launchway/contracts';
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   type ComposeConfig,
   evaluateComposePolicy,
+  MAX_INLINE_FILE_BYTES,
   type PolicyContext,
   parseComposeConfig,
 } from './compose-policy.js';
+import { isInsideReal } from './workspace.js';
 
 const WORKSPACE = '/ws';
 const CHECKOUT = '/ws/apps/app_1/dep_1';
@@ -466,5 +471,226 @@ describe('evaluateComposePolicy with trusted mounts', () => {
     expect(found).toMatch(/mount type npipe/);
     expect(found).toMatch(/volumes backed by host paths/);
     expect(found).toMatch(/volume driver "local-persist"/);
+  });
+});
+
+describe('evaluateComposePolicy in check mode', () => {
+  const sizes: Record<string, number> = {
+    [`${CHECKOUT}/small.txt`]: 100,
+    [`${CHECKOUT}/limit.txt`]: MAX_INLINE_FILE_BYTES,
+    [`${CHECKOUT}/big.sql`]: MAX_INLINE_FILE_BYTES + 1,
+  };
+  const checkContext = (overrides: Partial<PolicyContext> = {}): PolicyContext => ({
+    ...context(),
+    mode: 'check',
+    fileSize: (path) => sizes[path] ?? null,
+    ...overrides,
+  });
+  const check = (config: ComposeConfig, overrides: Partial<PolicyContext> = {}) =>
+    evaluateComposePolicy(config, checkContext(overrides));
+  const bind = (source: string, extra: Record<string, unknown> = {}) =>
+    withService('dev', {
+      image: 'x',
+      volumes: [{ type: 'bind', source, target: '/workspace', bind: {}, ...extra }],
+    });
+
+  it('allows the realistic project; published ports are dropped, not reported', () => {
+    const result = check(base());
+    expect(result.violations).toEqual([]);
+    expect(result.ports).toEqual([]);
+    expect(result.trustedMounts).toEqual([]);
+  });
+
+  it.each([
+    ['the checkout itself', CHECKOUT],
+    ['a directory inside it', `${CHECKOUT}/src`],
+    ['a path that does not exist yet', `${CHECKOUT}/missing/dir`],
+    ['a relative path inside it', './scripts'],
+  ])('allows a bind of %s', (_label, source) => {
+    expect(check(bind(source)).violations).toEqual([]);
+  });
+
+  it.each([
+    ['/etc', '/etc'],
+    ['the agent workspace', '/ws/agent'],
+    ['the Docker socket', '/var/run/docker.sock'],
+    ['a relative path out of the checkout', '../..'],
+    ['an empty source', ''],
+  ])('refuses a bind of %s', (_label, source) => {
+    expect(check(bind(source)).violations).toEqual([
+      `service "dev": bind mount "${source}" is not allowed: checks only bind-mount paths inside the repository`,
+    ]);
+  });
+
+  it('ignores trusted mounts: a check is never trusted', () => {
+    const trusted: DeployPolicy = { trustedMounts: true, allowedBindRoots: ['/srv/data'] };
+    expect(check(bind('/srv/data/x'), { mountPolicy: trusted }).violations).toHaveLength(1);
+    const external = { ...base(), volumes: { data: { external: true, name: 'trail_data' } } };
+    expect(check(external as ComposeConfig, { mountPolicy: trusted }).violations.join()).toMatch(
+      /external volumes are not allowed/,
+    );
+  });
+
+  it('allows ports and container names (the check document removes them)', () => {
+    const config = withService('dev', {
+      image: 'x',
+      container_name: 'caddy',
+      ports: [{ target: 80, published: '80', protocol: 'tcp' }],
+    });
+    expect(check(config)).toEqual({ violations: [], ports: [], trustedMounts: [] });
+  });
+
+  it('refuses Docker Model Runner models and privileged lifecycle hooks', () => {
+    const models = { ...withService('dev', { image: 'x', models: { m: null } }), models: {} };
+    expect(check(models as ComposeConfig).violations).toEqual([
+      'service "dev": models (Docker Model Runner) are not allowed in checks',
+    ]);
+    const declared = { ...base(), models: { m: { model: 'ai/smollm2' } } } as ComposeConfig;
+    expect(check(declared).violations).toEqual([
+      'models (Docker Model Runner) are not allowed in checks',
+    ]);
+    const hooks = withService('dev', {
+      image: 'x',
+      post_start: [{ command: ['chown', '-R', 'node', '/x'] }],
+      pre_stop: [{ command: ['sh'], privileged: true }],
+    });
+    const refused = [
+      'service "dev": privileged lifecycle hooks (post_start, pre_stop) are not allowed',
+    ];
+    // Refused for deployments as well: a privileged exec gets every capability.
+    expect(check(hooks).violations).toEqual(refused);
+    expect(violations(hooks)).toEqual(refused);
+    const unprivileged = withService('dev', { image: 'x', post_start: [{ command: ['true'] }] });
+    expect(check(unprivileged).violations).toEqual([]);
+    expect(violations(unprivileged)).toEqual([]);
+  });
+
+  it.each<[string, string[], boolean]>([
+    ['the SSH agent', ['default'], true],
+    ['a key inside the repository', ['deploy=./keys/deploy'], true],
+    ['a key outside the repository', ['default=/root/.ssh/id_ed25519'], false],
+    ['a key in the home directory', ['default=~/.ssh/id_ed25519'], false],
+    ['a list with a key outside', ['a=./keys/a,/var/lib/launchway/agent/credentials.json'], false],
+  ])('checks build ssh entries in both modes: %s', (_label, ssh, allowed) => {
+    const config = withService('dev', { build: { context: CHECKOUT, ssh } });
+    for (const found of [check(config).violations, violations(config)]) {
+      if (allowed) expect(found).toEqual([]);
+      else expect(found.join()).toMatch(/build ssh key "\w+" \(.*\) is outside the repository/);
+    }
+  });
+
+  it('refuses configs and secrets that services mount when they are over 64 KiB', () => {
+    const config = {
+      ...withService('dev', {
+        image: 'x',
+        configs: [{ source: 'small' }, { source: 'limit' }, { source: 'big' }],
+        secrets: [{ source: 'token', target: '/run/secrets/token' }],
+        build: { context: CHECKOUT, secrets: [{ source: 'npmrc' }] },
+      }),
+      configs: {
+        small: { file: `${CHECKOUT}/small.txt` },
+        limit: { file: `${CHECKOUT}/limit.txt` },
+        big: { file: `${CHECKOUT}/big.sql` },
+        unused: { file: `${CHECKOUT}/big.sql` },
+      },
+      // Secrets only builds use stay files: no limit.
+      secrets: {
+        token: { file: `${CHECKOUT}/missing.txt` },
+        npmrc: { file: `${CHECKOUT}/big.sql` },
+      },
+    } as ComposeConfig;
+    expect(check(config).violations).toEqual([
+      `config "big": "${CHECKOUT}/big.sql" is larger than 64 KiB, the most a check passes to a service`,
+      `secret "token": "${CHECKOUT}/missing.txt" is not a file in the repository`,
+    ]);
+  });
+
+  it('keeps refusing configs and secrets outside the repository', () => {
+    const config = {
+      ...withService('dev', { image: 'x', secrets: [{ source: 's' }] }),
+      secrets: { s: { file: '/var/lib/launchway/agent/credentials.json' } },
+    } as ComposeConfig;
+    expect(check(config).violations).toEqual([
+      'secret "s": "/var/lib/launchway/agent/credentials.json" is outside the repository',
+    ]);
+  });
+
+  it('refuses names the check document uses', () => {
+    const config = {
+      ...base(),
+      volumes: { 'launchway-check-source': {} },
+      configs: { 'launchway-check-file-1': { content: 'x' } },
+    } as ComposeConfig;
+    expect(check(config).violations).toEqual([
+      'config "launchway-check-file-1": names starting with "launchway-check-" are reserved for Launchway',
+      'volume "launchway-check-source": names starting with "launchway-check-" are reserved for Launchway',
+    ]);
+  });
+
+  it.each<[string, Record<string, unknown>, RegExp]>([
+    ['privileged', { image: 'x', privileged: true }, /privileged is not allowed/],
+    ['network_mode host', { image: 'x', network_mode: 'host' }, /network_mode host/],
+    ['extra capabilities', { image: 'x', cap_add: ['SYS_ADMIN'] }, /cap_add SYS_ADMIN/],
+    ['devices', { image: 'x', devices: [{ source: '/dev/kvm', target: '/dev/kvm' }] }, /devices/],
+    ['security options', { image: 'x', security_opt: ['apparmor=unconfined'] }, /security_opt/],
+    ['the API socket', { image: 'x', use_api_socket: true }, /use_api_socket/],
+    ['provider services', { provider: { type: 'model' } }, /provider/],
+    ['a runtime', { image: 'x', runtime: 'nvidia' }, /runtime/],
+    ['gpus', { image: 'x', gpus: 'all' }, /gpus/],
+    ['the proxy network', { image: 'x', networks: { 'launchway-proxy': null } }, /proxy network/],
+    ['env files outside', { image: 'x', env_file: ['/etc/environment'] }, /env_file.*outside/],
+  ])('keeps refusing %s', (_label, service, pattern) => {
+    expect(check(withService('bad', service)).violations.join('\n')).toMatch(pattern);
+  });
+
+  describe('on a real checkout', () => {
+    let root: string;
+    let outside: string;
+    beforeAll(async () => {
+      const tmp = await realpath(await mkdtemp(join(tmpdir(), 'launchway-policy-')));
+      root = join(tmp, 'repo');
+      outside = join(tmp, 'outside');
+      await mkdir(join(root, 'src'), { recursive: true });
+      await mkdir(outside, { recursive: true });
+      await writeFile(join(outside, 'credentials.json'), '{}');
+      await symlink(outside, join(root, 'escape'));
+      await symlink(join(outside, 'credentials.json'), join(root, 'e$nv'));
+      await symlink(join(root, 'src'), join(root, 'inside'));
+    });
+    afterAll(async () => {
+      if (root) await rm(join(root, '..'), { recursive: true, force: true });
+    });
+    const real = (overrides: Partial<PolicyContext> = {}) =>
+      checkContext({
+        projectDir: root,
+        workspaceRoot: join(root, '..', 'ws'),
+        isInsideCheckout: (path) => isInsideReal(root, path),
+        ...overrides,
+      });
+
+    /** A project of one service, so that only its paths are checked. */
+    const only = (service: Record<string, unknown>) =>
+      ({ services: { dev: service } }) as unknown as ComposeConfig;
+
+    it('refuses binds through symlinks that leave the checkout', () => {
+      const config = (source: string) =>
+        only({ image: 'x', volumes: [{ type: 'bind', source, target: '/w' }] });
+      expect(evaluateComposePolicy(config(`${root}/inside`), real()).violations).toEqual([]);
+      expect(evaluateComposePolicy(config(`${root}/escape`), real()).violations).toHaveLength(1);
+      expect(evaluateComposePolicy(config('./escape/x'), real()).violations).toHaveLength(1);
+    });
+
+    it('reads `$$` in Compose output as `$`, so an escaped name cannot hide a symlink', () => {
+      // `config --format json` prints the env file `e$nv` as `e$$nv`.
+      const config = only({ image: 'x', env_file: [`${root}/e$$nv`] });
+      const refused = [`service "dev" env_file: "${root}/e$$nv" is outside the repository`];
+      expect(evaluateComposePolicy(config, real()).violations).toEqual(refused);
+      expect(evaluateComposePolicy(config, real({ mode: 'deploy' })).violations).toEqual(refused);
+      const bound = only({
+        image: 'x',
+        volumes: [{ type: 'bind', source: `${root}/e$$nv`, target: '/w' }],
+      });
+      expect(evaluateComposePolicy(bound, real()).violations).toHaveLength(1);
+    });
   });
 });

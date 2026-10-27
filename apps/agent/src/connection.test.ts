@@ -208,6 +208,11 @@ describe('AgentConnection', () => {
     expect(joined).toEqual([nodeId]);
 
     await waitFor(() => harness.received.some((m) => m.type === 'heartbeat'));
+    // This agent runs checks: its heartbeats always list them (none here).
+    expect(harness.received.find((m) => m.type === 'heartbeat')?.payload).toMatchObject({
+      activeDeploymentIds: [],
+      activeCheckRunIds: [],
+    });
 
     const socket = harness.sockets[0];
     const appId = generateId('app');
@@ -220,6 +225,13 @@ describe('AgentConnection', () => {
       }),
     );
     socket?.send(JSON.stringify({ id: 'req-8', type: 'logs.stop', payload: { streamId: 'nope' } }));
+    socket?.send(
+      JSON.stringify({
+        id: 'req-9',
+        type: 'check.cancel',
+        payload: { runId: generateId('chk') },
+      }),
+    );
     await waitFor(() => harness.received.some((m) => m.type === 'app.status'));
     expect(harness.received.find((m) => m.type === 'app.status')).toEqual({
       id: 'req-7',
@@ -230,6 +242,11 @@ describe('AgentConnection', () => {
     await waitFor(() => harness.received.some((m) => m.type === 'error'));
     expect(harness.received.find((m) => m.type === 'error')).toMatchObject({
       id: 'req-8',
+      payload: { code: 'not-found', retryable: false },
+    });
+    await waitFor(() => harness.received.some((m) => m.id === 'req-9'));
+    expect(harness.received.find((m) => m.id === 'req-9')).toMatchObject({
+      type: 'error',
       payload: { code: 'not-found', retryable: false },
     });
     expect(harness.received.some((m) => m.id === 'future-1')).toBe(false);

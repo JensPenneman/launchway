@@ -9,6 +9,8 @@ export interface ComposeTarget {
   /** Absolute Compose files; omitted for project-only commands (ps, logs, stop, down). */
   files?: readonly string[];
   projectDir?: string;
+  /** Interpolation variables instead of the project directory's `.env` (check runs). */
+  envFile?: string;
 }
 
 /** `docker compose` argument array with stable, line-oriented output. */
@@ -16,6 +18,7 @@ export function composeArgs(target: ComposeTarget, ...command: string[]): string
   const args = ['compose', '--ansi', 'never', '--progress', 'plain', '-p', target.project];
   if (target.projectDir) args.push('--project-directory', target.projectDir);
   for (const file of target.files ?? []) args.push('-f', file);
+  if (target.envFile) args.push('--env-file', target.envFile);
   return [...args, ...command];
 }
 

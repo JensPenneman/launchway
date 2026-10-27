@@ -1,6 +1,7 @@
 import type { AgentError, ServerToAgentMessage } from '@launchway/contracts';
 import type { Logger } from 'pino';
 import { type AppOps, ComposeCommandError } from './runtime/app-ops.js';
+import type { CheckManager } from './runtime/checks.js';
 import type { DeploymentManager } from './runtime/deployments.js';
 import type { LogStreamManager } from './runtime/log-streams.js';
 import type { Send } from './runtime/outbox.js';
@@ -13,6 +14,7 @@ export interface RequestHandlerDeps {
   logger: Logger;
   send: Send;
   deployments: DeploymentManager;
+  checks: CheckManager;
   logStreams: LogStreamManager;
   apps: AppOps;
 }
@@ -29,7 +31,7 @@ function toAgentError(error: unknown): AgentError {
  * `error` reply echoing the request id; nothing here may throw into the socket handler.
  */
 export function createRequestHandler(deps: RequestHandlerDeps) {
-  const { logger, send, deployments, logStreams, apps } = deps;
+  const { logger, send, deployments, checks, logStreams, apps } = deps;
 
   const fail = (id: string, error: unknown, type: string) => {
     if (!(error instanceof ComposeCommandError))
@@ -98,6 +100,22 @@ export function createRequestHandler(deps: RequestHandlerDeps) {
               payload: { appId: message.payload.appId, services: [] },
             });
           });
+          return;
+        case 'check.run':
+          checks.run(message.id, message.payload);
+          return;
+        case 'check.cancel':
+          if (!checks.cancel(message.payload.runId)) {
+            send({
+              id: message.id,
+              type: 'error',
+              payload: {
+                code: 'not-found',
+                message: 'No queued or running check run with this id on this node',
+                retryable: false,
+              },
+            });
+          }
           return;
         case 'logs.start':
           logStreams.start(message.id, message.payload);

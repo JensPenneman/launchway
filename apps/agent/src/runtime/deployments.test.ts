@@ -24,6 +24,8 @@ interface FakeDocker {
   /** Overrides per compose subcommand (config, build, pull, up, ps). */
   on: Partial<Record<string, (call: Call) => Promise<Partial<RunResult>> | Partial<RunResult>>>;
   head: string;
+  /** Content of the checkout's compose.yaml. */
+  composeYaml: string;
 }
 
 const ok = (stdout = ''): RunResult => ({
@@ -43,6 +45,7 @@ function fakeDocker(): FakeDocker {
     calls: [],
     on: {},
     head: SHA,
+    composeYaml: 'services: {}',
     run: async (command, args, options = {}) => {
       const call = { command, args: [...args], options };
       fake.calls.push(call);
@@ -50,7 +53,7 @@ function fakeDocker(): FakeDocker {
         if (args[0] === 'clone') {
           const dir = args.at(-1) as string;
           await mkdir(dir, { recursive: true });
-          await writeFile(join(dir, 'compose.yaml'), 'services: {}');
+          await writeFile(join(dir, 'compose.yaml'), fake.composeYaml);
           options.onStderrLine?.(`Cloning into '${dir}'... using ${AUTH}`);
         }
         if (args[0] === 'rev-parse') return ok(`${fake.head}\n`);
@@ -267,6 +270,88 @@ describe('DeploymentManager', () => {
     await waitFor(() => results().length === 1);
     expect(results()[0]?.payload).toMatchObject({ outcome: 'succeeded' });
     expect(logLines()).toContain('trusted mount: service web bind-mounts /srv/data/trail');
+  });
+
+  it.each<[string, string, RegExp]>([
+    [
+      'an include of a file outside the checkout',
+      'include:\n  - path: compose.yaml\n    env_file: /var/lib/launchway/apps/app_1/dep_1/.env\n',
+      /^compose\.yaml: include env_file ".*" must be a relative path inside the repository/,
+    ],
+    [
+      'an extends of a file out of the checkout',
+      'services:\n  web:\n    extends: {file: ../../other/compose.yaml, service: web}\n',
+      /^compose\.yaml: service "web" extends file "\.\.\/\.\.\/other\/compose\.yaml" leaves the repository/,
+    ],
+  ])('refuses %s before Compose reads anything', async (_label, compose, pattern) => {
+    const fake = fakeDocker();
+    fake.composeYaml = compose;
+    manager(fake).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    const result = results()[0]?.payload;
+    expect(result).toMatchObject({
+      outcome: 'failed',
+      error: { code: 'policy-violation', retryable: false },
+      reason: 'policy',
+    });
+    if (result?.outcome !== 'failed') throw new Error('expected failure');
+    expect(result.error.message).toMatch(pattern);
+    expect(fake.calls.filter((c) => c.command === 'docker')).toEqual([]);
+  });
+
+  it('reports a Compose file that is no valid YAML as a build failure, as before', async () => {
+    const fake = fakeDocker();
+    fake.composeYaml = 'services: [\n';
+    manager(fake).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(results()[0]?.payload).toMatchObject({
+      outcome: 'failed',
+      error: { code: 'internal-error', retryable: false },
+      reason: 'build',
+    });
+    expect(fake.calls.filter((c) => c.command === 'docker')).toEqual([]);
+  });
+
+  it("masks file content quoted by compose config and redacts the agent's secrets", async () => {
+    const credential = `lwya_${'n'.repeat(43)}`;
+    const fake = fakeDocker();
+    fake.on.config = (call) => {
+      call.options.onStderrLine?.(
+        `failed to read /var/lib/launchway/agent/credentials.json: line 1: unexpected character "{" in variable name ${JSON.stringify(`{"credential":"${credential}","x":"s3cr3t-value-123"}`)}`,
+      );
+      return { code: 1 };
+    };
+    fake.on.build = (call) => {
+      call.options.onStdoutLine?.(`token ${credential}`);
+      return {};
+    };
+    const deployments = new DeploymentManager({
+      logger,
+      send: (message) => messages.push(message),
+      workspace: new Workspace(root),
+      run: fake.run,
+      env: { PATH: process.env.PATH ?? '' },
+      secrets: () => [credential, null],
+    });
+    deployments.deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(logLines()).toEqual(
+      expect.arrayContaining([
+        'failed to read /var/lib/launchway/agent/credentials.json: line 1: unexpected character "{" in variable name "…"',
+        'Quoted text in the output of docker compose config is masked: it may quote files outside the repository',
+      ]),
+    );
+    expect(results()[0]?.payload).toMatchObject({ outcome: 'failed', reason: 'build' });
+    const everything = JSON.stringify(messages);
+    expect(everything).not.toContain('s3cr3t-value-123');
+    expect(everything).not.toContain(credential);
+
+    messages = [];
+    fake.on.config = undefined;
+    deployments.deploy('req-2', payload());
+    await waitFor(() => results().length === 1);
+    expect(logLines()).toContain('token [redacted]');
+    expect(JSON.stringify(messages)).not.toContain(credential);
   });
 
   it('fails with the last log lines when a command fails', async () => {

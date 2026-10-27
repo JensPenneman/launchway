@@ -41,6 +41,14 @@ const PROPAGATION_REFUSED = ['shared', 'rshared', 'slave', 'rslave'];
 /** Compose projects of the platform itself; their volumes are never reused by apps. */
 const PLATFORM_VOLUME_PREFIXES = ['launchway_', 'launchway-agent_'];
 
+/**
+ * Largest file a check passes inline (`configs: { content }`); bind-mounted files above it come
+ * from the source volume, configs and secrets above it are refused.
+ */
+export const MAX_INLINE_FILE_BYTES = 64 * 1024;
+/** Keys of the volumes and configs the check document adds; a project may not declare them. */
+export const CHECK_KEY_PREFIX = 'launchway-check-';
+
 /** Namespace modes that stay inside the container (besides `service:<name>`). */
 const PRIVATE_NAMESPACE_MODES = ['private', 'shareable', 'none'];
 const NamespaceMode = z.string().nullish();
@@ -80,6 +88,12 @@ const Service = z.looseObject({
   container_name: z.string().nullish(),
   provider: z.unknown().optional(),
   use_api_socket: z.boolean().nullish(),
+  // Read leniently: their shape is only checked in check mode.
+  configs: z.unknown().optional(),
+  secrets: z.unknown().optional(),
+  models: z.unknown().optional(),
+  post_start: z.unknown().optional(),
+  pre_stop: z.unknown().optional(),
   volumes: z
     .array(
       z.looseObject({
@@ -103,6 +117,7 @@ const Service = z.looseObject({
       network: z.string().nullish(),
       privileged: z.boolean().nullish(),
       entitlements: z.array(z.string()).nullish(),
+      ssh: z.unknown().optional(),
     })
     .nullish(),
 });
@@ -134,6 +149,7 @@ export const ComposeConfig = z.looseObject({
   networks: z.record(z.string(), Network).nullish(),
   configs: z.record(z.string(), FileObject).nullish(),
   secrets: z.record(z.string(), FileObject).nullish(),
+  models: z.unknown().optional(),
 });
 export type ComposeConfig = z.infer<typeof ComposeConfig>;
 
@@ -155,6 +171,16 @@ export interface PolicyContext {
    * means untrusted: no bind mounts, external volumes or custom volume names.
    */
   mountPolicy?: DeployPolicy | undefined;
+  /**
+   * `check` (ADR 0020): a check run. Always untrusted (`mountPolicy` is ignored) and without
+   * routes; binds of paths inside the checkout are allowed (the check document turns them into
+   * volume mounts), `ports` and `container_name` are allowed (they are removed), Docker Model
+   * Runner models and privileged lifecycle hooks are refused, and the configs and secrets the
+   * services use must be files of at most MAX_INLINE_FILE_BYTES.
+   */
+  mode?: 'deploy' | 'check';
+  /** Check mode: the size of the regular file at an absolute path (symlinks followed), or null. */
+  fileSize?: (path: string) => number | null;
 }
 
 export interface DeclaredPort {
@@ -221,6 +247,64 @@ function normalizeCapability(cap: string): string {
   return cap.toUpperCase().replace(/^CAP_/, '');
 }
 
+/**
+ * `docker compose config` doubles every `$` of its output (the file is interpolated again when it
+ * is loaded), paths included; `a$$b` names the file `a$b`.
+ */
+export function unescapeInterpolation(value: string): string {
+  return value.replaceAll('$$', () => '$');
+}
+
+/** The local path a path of the Compose output names (relative ones resolve against `base`). */
+export function localPath(base: string, value: string): string {
+  return resolve(base, unescapeInterpolation(value));
+}
+
+const hasEntries = (value: unknown) =>
+  Array.isArray(value)
+    ? value.length > 0
+    : typeof value === 'object' && value !== null && Object.keys(value).length > 0;
+
+const asArray = (value: unknown): unknown[] => (Array.isArray(value) ? value : []);
+
+/** `[id, path]` of the `build.ssh` entries that name key files (`id=path[,path]`). */
+function sshKeyPaths(value: unknown): [string, string][] {
+  const found: [string, string][] = [];
+  const add = (id: unknown, paths: unknown) => {
+    if (typeof paths !== 'string') return;
+    for (const path of paths.split(',')) if (path.trim()) found.push([String(id), path.trim()]);
+  };
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === 'string') {
+        const eq = entry.indexOf('=');
+        if (eq >= 0) add(entry.slice(0, eq), entry.slice(eq + 1));
+      } else if (typeof entry === 'object' && entry !== null) {
+        const key = entry as Record<string, unknown>;
+        add(key.id ?? key.ID ?? '', key.path ?? key.Path);
+      }
+    }
+  } else if (typeof value === 'object' && value !== null) {
+    for (const [id, paths] of Object.entries(value)) add(id, paths);
+  }
+  return found;
+}
+
+/** Names of the top-level configs or secrets that services (not builds) mount. */
+function usedByServices(config: ComposeConfig, kind: 'configs' | 'secrets'): Set<string> {
+  const used = new Set<string>();
+  for (const service of Object.values(config.services)) {
+    for (const entry of asArray(service[kind])) {
+      if (typeof entry === 'string') used.add(entry);
+      else if (typeof entry === 'object' && entry !== null) {
+        const source = (entry as { source?: unknown }).source;
+        if (typeof source === 'string') used.add(source);
+      }
+    }
+  }
+  return used;
+}
+
 /** Parses Compose output; `null` when the shape is not what the policy understands. */
 export function parseComposeConfig(json: string): ComposeConfig | null {
   try {
@@ -241,18 +325,22 @@ export function parseComposeConfig(json: string): ComposeConfig | null {
  * paths below the node's allowed roots and use external volumes and custom volume names. The
  * Docker socket, `/`, protected system paths, Docker's data, the agent workspace, mount
  * propagation and the platform's own volumes stay refused.
+ *
+ * Check runs use `mode: 'check'` (see PolicyContext.mode).
  */
 export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext): PolicyResult {
   const violations: string[] = [];
   const ports: DeclaredPort[] = [];
   const trustedMounts: string[] = [];
   const reject = (message: string) => violations.push(message);
-  const trusted = ctx.mountPolicy?.trustedMounts === true;
+  const check = ctx.mode === 'check';
+  const trusted = !check && ctx.mountPolicy?.trustedMounts === true;
   const roots = trusted ? (ctx.mountPolicy?.allowedBindRoots ?? []).map(posix.normalize) : [];
   const rootList = `allowed roots: ${roots.length > 0 ? roots.join(', ') : 'none configured on this node'}`;
   const proxyNames = new Set([ctx.proxyNetwork, DEFAULT_PROXY_NETWORK]);
+  const isInside = (path: string) => ctx.isInsideCheckout(localPath(ctx.projectDir, path));
   const checkFile = (where: string, path: string) => {
-    if (!isLocalPath(path) || !ctx.isInsideCheckout(resolve(path))) {
+    if (!isLocalPath(path) || !isInside(path)) {
       reject(`${where}: "${path}" is outside the repository`);
     }
   };
@@ -300,10 +388,32 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
     if (service.provider !== undefined && service.provider !== null) {
       reject(`${at}: provider services are not allowed`);
     }
-    if (service.container_name && RESERVED_SERVICE_NAMES.includes(service.container_name)) {
+    if (
+      !check &&
+      service.container_name &&
+      RESERVED_SERVICE_NAMES.includes(service.container_name)
+    ) {
       reject(`${at}: container_name "${service.container_name}" is reserved`);
     }
+    if (check && hasEntries(service.models)) {
+      reject(`${at}: models (Docker Model Runner) are not allowed in checks`);
+    }
+    // A privileged exec gets every capability inside the container.
+    for (const hook of [...asArray(service.post_start), ...asArray(service.pre_stop)]) {
+      if ((hook as { privileged?: unknown } | null)?.privileged === true) {
+        reject(`${at}: privileged lifecycle hooks (post_start, pre_stop) are not allowed`);
+      }
+    }
     for (const volume of service.volumes ?? []) {
+      if (volume.type === 'bind' && check) {
+        const source = volume.source ?? '';
+        if (!source || !isInside(source)) {
+          reject(
+            `${at}: bind mount "${source}" is not allowed: checks only bind-mount paths inside the repository`,
+          );
+        }
+        continue;
+      }
       if (volume.type === 'bind' && trusted) {
         const source = volume.source ?? '';
         const resolved = posix.resolve(ctx.projectDir, source);
@@ -355,13 +465,19 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
           reject(`${at}: additional_contexts "${value}" is not allowed`);
         }
       }
+      for (const [id, path] of sshKeyPaths(build.ssh)) {
+        if (path.startsWith('~') || !isInside(path)) {
+          reject(`${at}: build ssh key "${id}" (${path}) is outside the repository`);
+        }
+      }
       if (build.network === 'host') reject(`${at}: build network host is not allowed`);
       if (build.privileged) reject(`${at}: privileged builds are not allowed`);
       if (build.entitlements && build.entitlements.length > 0) {
         reject(`${at}: build entitlements are not allowed`);
       }
     }
-    for (const port of service.ports ?? []) {
+    // Checks remove published ports; deployments report them.
+    for (const port of check ? [] : (service.ports ?? [])) {
       ports.push({
         service: name,
         containerPort: String(port.target),
@@ -436,10 +552,41 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
   }
 
   for (const kind of ['configs', 'secrets'] as const) {
+    const inlined = check ? usedByServices(config, kind) : new Set<string>();
     for (const [key, entry] of Object.entries(config[kind] ?? {})) {
       const at = `${kind.slice(0, -1)} "${key}"`;
       if (entry?.file) checkFile(at, entry.file);
       if (entry && isExternal(entry.external)) reject(`${at}: external ${kind} are not allowed`);
+      if (check && key.startsWith(CHECK_KEY_PREFIX)) {
+        reject(`${at}: names starting with "${CHECK_KEY_PREFIX}" are reserved for Launchway`);
+      }
+      // Checks pass the files that services mount inline (bind mounts do not reach the agent).
+      if (
+        check &&
+        entry?.file &&
+        inlined.has(key) &&
+        isLocalPath(entry.file) &&
+        isInside(entry.file)
+      ) {
+        const size = ctx.fileSize?.(localPath(ctx.projectDir, entry.file)) ?? null;
+        if (size === null) reject(`${at}: "${entry.file}" is not a file in the repository`);
+        else if (size > MAX_INLINE_FILE_BYTES) {
+          reject(
+            `${at}: "${entry.file}" is larger than ${MAX_INLINE_FILE_BYTES / 1024} KiB, the most a check passes to a service`,
+          );
+        }
+      }
+    }
+  }
+
+  if (check) {
+    if (hasEntries(config.models)) reject('models (Docker Model Runner) are not allowed in checks');
+    for (const key of Object.keys(config.volumes ?? {})) {
+      if (key.startsWith(CHECK_KEY_PREFIX)) {
+        reject(
+          `volume "${key}": names starting with "${CHECK_KEY_PREFIX}" are reserved for Launchway`,
+        );
+      }
     }
   }
 

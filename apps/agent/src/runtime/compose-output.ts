@@ -134,3 +134,18 @@ export function parseComposeLogLine(
   if (!parsed.success) return null;
   return { service: parsed.data, timestamp, stream, line: text.slice(0, 16_384) };
 }
+
+/** Quoted text in a line of output (double quotes with escapes, or backticks). */
+const QUOTED = /"(?:[^"\\]|\\.)*"|`[^`]*`/g;
+/** Quoted text that may stay: a short name (service, volume, variable) or a character. */
+const QUOTED_NAME = /^(?:[A-Za-z0-9._-]{1,32}|.{1,4})$/;
+
+/**
+ * `docker compose config` reads the files a project names (label files, included files and their
+ * env files) before the policy can refuse paths outside the repository, and quotes their content
+ * in some parse errors (`unexpected character "{" in variable name "<line>"`), e.g. of the node
+ * credential. Masks quoted text other than short names in a line of its output.
+ */
+export function maskQuotedText(line: string): string {
+  return line.replace(QUOTED, (quoted) => (QUOTED_NAME.test(quoted.slice(1, -1)) ? quoted : '"…"'));
+}

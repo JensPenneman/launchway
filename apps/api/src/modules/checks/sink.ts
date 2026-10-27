@@ -14,7 +14,14 @@ import type { CheckSink } from '../../lib/agent-gateway.js';
 import { agentActor } from '../../lib/auth-context.js';
 import { recordAudit } from '../audit/service.js';
 import { createCheckDispatcher } from './dispatcher.js';
-import { announceStatus, type CheckRunRow, checkLogHub, NODE_OFFLINE_MESSAGE } from './model.js';
+import {
+  announceStatus,
+  type CheckRunRow,
+  checkLogHub,
+  checkNodeState,
+  NODE_OFFLINE_MESSAGE,
+  UNSUPPORTED_AGENT_MESSAGE,
+} from './model.js';
 import { checkLogLines, checkRuns } from './schema.js';
 
 export const LOST_RUN_MESSAGE = 'The node no longer reports this check; its result was lost';
@@ -114,6 +121,7 @@ export function createCheckSink(deps: Deps): CheckSink {
   const logger = deps.logger.child({ component: 'check-sink' });
   const dispatcher = createCheckDispatcher(deps);
   const hub = checkLogHub(deps.events);
+  const state = checkNodeState(deps.events);
   /** Per-run queue so log batches get gap-free, ordered sequence numbers. */
   const chains = new Map<CheckRunId, Promise<void>>();
   const nextSeq = new Map<CheckRunId, number>();
@@ -123,6 +131,7 @@ export function createCheckSink(deps: Deps): CheckSink {
   const unreported = new Map<CheckRunId, { nodeId: NodeId; count: number }>();
 
   function forget(id: CheckRunId): void {
+    state.unacknowledged.delete(id);
     nextSeq.delete(id);
     capped.delete(id);
     unreported.delete(id);
@@ -186,8 +195,22 @@ export function createCheckSink(deps: Deps): CheckSink {
     return updated;
   }
 
+  /** Puts a running run back in the queue to be sent again; false when it changed meanwhile. */
+  async function requeue(row: CheckRunRow): Promise<boolean> {
+    const [changed] = await deps.db
+      .update(checkRuns)
+      .set({ status: 'queued', startedAt: null })
+      .where(and(eq(checkRuns.id, row.id), eq(checkRuns.status, 'running')))
+      .returning();
+    forget(row.id);
+    if (changed) announceStatus(deps, changed);
+    return changed !== undefined;
+  }
+
   return {
     onLog(nodeId, payload: CheckLogPayload) {
+      // Any report about a run proves the agent has it.
+      state.unacknowledged.delete(payload.runId);
       return serialize(payload.runId, async () => {
         const row = await load(nodeId, payload.runId);
         if (row?.status !== 'running') return;
@@ -229,6 +252,7 @@ export function createCheckSink(deps: Deps): CheckSink {
     },
 
     async onResult(nodeId, payload: CheckResultPayload) {
+      state.unacknowledged.delete(payload.runId);
       const row = await load(nodeId, payload.runId);
       if (!row) return;
       if (row.status !== 'running') {
@@ -272,8 +296,20 @@ export function createCheckSink(deps: Deps): CheckSink {
     },
 
     async onHeartbeat(nodeId, activeCheckRunIds) {
-      // Agents without checks report nothing about them; their runs end by timeout or offline.
-      if (activeCheckRunIds === undefined) return;
+      // Agents that run checks list their runs in every heartbeat; one without the list does not.
+      state.capable.set(nodeId, activeCheckRunIds !== undefined);
+      if (activeCheckRunIds === undefined) {
+        const stuck = await deps.db
+          .select()
+          .from(checkRuns)
+          .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'running')));
+        for (const row of stuck) {
+          await failRunning(nodeId, row, 'unsupported', UNSUPPORTED_AGENT_MESSAGE);
+        }
+        // Errors the node's queued runs too (nothing would run them); not awaited, see below.
+        void dispatcher.dispatchNode(nodeId);
+        return;
+      }
       const active = new Set(activeCheckRunIds);
       const running = await deps.db
         .select()
@@ -288,11 +324,20 @@ export function createCheckSink(deps: Deps): CheckSink {
       for (const row of running) {
         if (active.has(row.id)) {
           unreported.delete(row.id);
+          state.unacknowledged.delete(row.id);
           continue;
         }
         const count = (unreported.get(row.id)?.count ?? 0) + 1;
         unreported.set(row.id, { nodeId, count });
         if (count < RECONCILE_AFTER_HEARTBEATS || (row.startedAt?.getTime() ?? 0) > cutoff) {
+          continue;
+        }
+        if (state.unacknowledged.has(row.id)) {
+          // Sent, never acknowledged and not on the node: it never arrived. Send it again.
+          if (await requeue(row)) {
+            logger.warn({ nodeId, runId: row.id }, 're-sending a check run the node never got');
+            freed = true;
+          }
           continue;
         }
         if (await failRunning(nodeId, row, 'lost', LOST_RUN_MESSAGE)) {
@@ -323,6 +368,8 @@ export function createCheckSink(deps: Deps): CheckSink {
     },
 
     onNodeOnline(nodeId) {
+      // A new connection may be a new agent: its heartbeats tell again whether it runs checks.
+      state.capable.delete(nodeId);
       // Send what waited for this node now instead of on the next worker pass. Not awaited:
       // dispatching waits for the agent's acknowledgement, which must not hold up the gateway.
       void dispatcher.dispatchNode(nodeId);

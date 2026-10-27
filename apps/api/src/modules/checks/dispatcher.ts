@@ -11,12 +11,16 @@ import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor } from '../github/providers.js';
 import { nodes } from '../nodes/schema.js';
 import { createSettingsService } from '../settings/service.js';
-import { announceStatus, type CheckRunRow, NODE_OFFLINE_MESSAGE } from './model.js';
+import {
+  announceStatus,
+  type CheckRunRow,
+  checkNodeState,
+  NODE_OFFLINE_MESSAGE,
+  UNSUPPORTED_AGENT_MESSAGE,
+} from './model.js';
 import { buildCheckRunPayload } from './payload.js';
 import { checkRuns } from './schema.js';
 
-export const UNSUPPORTED_AGENT_MESSAGE =
-  'The agent of this node did not acknowledge the check; agents older than checks ignore it. Update the agent.';
 export const NODE_TIMEOUT_MESSAGE = 'Timed out waiting for the node';
 /** Runs a dispatch pass tries after errors before it leaves the rest to the next pass. */
 const MAX_DISPATCH_ATTEMPTS = 10;
@@ -48,6 +52,7 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
   const logger = deps.logger.child({ component: 'check-dispatcher' });
   const settings = createSettingsService(deps);
   const actor = systemActor('check-dispatcher');
+  const state = checkNodeState(deps.events);
 
   /**
    * Marks the oldest queued run of the node `running` when none runs there. Concurrent claims of
@@ -135,8 +140,24 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
     return buildCheckRunPayload({ run, app, clone, limits: await settings.get() });
   }
 
+  /** Errors the queued runs of a node whose agent does not run checks: nothing would run them. */
+  async function failUnsupported(nodeId: NodeId): Promise<void> {
+    const queued = await deps.db
+      .select()
+      .from(checkRuns)
+      .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')));
+    for (const run of queued) await fail(run, 'queued', 'unsupported', UNSUPPORTED_AGENT_MESSAGE);
+    if (queued.length > 0) {
+      logger.warn({ nodeId, count: queued.length }, 'the agent of the node does not run checks');
+    }
+  }
+
   async function dispatchOnce(nodeId: NodeId): Promise<DispatchOutcome> {
     if (!deps.agents.isOnline(nodeId)) return 'none';
+    if (state.capable.get(nodeId) === false) {
+      await failUnsupported(nodeId);
+      return 'none';
+    }
     const claimed = await claim(nodeId);
     if (!claimed) return 'none';
     const { run, app } = claimed;
@@ -146,9 +167,16 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
       await deps.agents.runCheck(nodeId, await payloadFor(app, run));
     } catch (error) {
       if (error instanceof AgentRequestError && error.code === 'timeout') {
-        logger.warn(context, 'the agent did not acknowledge a check run');
-        await fail(run, 'running', 'unsupported', UNSUPPORTED_AGENT_MESSAGE);
-        return 'errored';
+        if (state.capable.get(nodeId) === false) {
+          await fail(run, 'running', 'unsupported', UNSUPPORTED_AGENT_MESSAGE);
+          return 'errored';
+        }
+        // The answer may be lost on a dropped link, or the agent may be older than checks: keep
+        // the claim until heartbeats tell. The sink sends the run again if the agent lacks it,
+        // and errors it as unsupported if the heartbeats show an agent without checks.
+        state.unacknowledged.add(run.id);
+        logger.warn(context, 'the agent did not acknowledge a check run in time');
+        return 'sent';
       }
       const transient =
         error instanceof AgentUnavailableError ||

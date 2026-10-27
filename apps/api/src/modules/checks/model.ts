@@ -2,9 +2,11 @@ import {
   type AppChecksSettings,
   type CheckItem,
   type CheckRun,
+  type CheckRunId,
   type CheckRunStatus,
   DEFAULT_APP_CHECKS_SETTINGS,
   isActiveCheckRunStatus,
+  type NodeId,
 } from '@launchway/contracts';
 import type { Deps } from '../../deps.js';
 import type { EventBus } from '../../lib/event-bus.js';
@@ -15,6 +17,34 @@ export type CheckRunRow = typeof checkRuns.$inferSelect;
 
 /** Status message of a run whose node went (or stayed) offline. */
 export const NODE_OFFLINE_MESSAGE = 'The node went offline';
+/** Status message of runs of a node whose agent does not run checks. */
+export const UNSUPPORTED_AGENT_MESSAGE =
+  'The agent of this node does not run checks: it is older than the control plane. Update the agent.';
+
+/**
+ * What the dispatcher and the sink of one process know about the agents' checks (shared through
+ * the event bus, like the log hub). Agents that run checks list their runs in every heartbeat, so
+ * a heartbeat without that list proves an agent without checks; until the first heartbeat of a
+ * connection it is unknown. Runs sent without an acknowledgement wait for the heartbeats to tell
+ * whether the agent has them.
+ */
+export interface CheckNodeState {
+  /** true: the node's agent runs checks; false: it does not; absent: no heartbeat yet. */
+  readonly capable: Map<NodeId, boolean>;
+  /** Runs sent to their node that the agent has not acknowledged (nor reported) yet. */
+  readonly unacknowledged: Set<CheckRunId>;
+}
+
+const nodeStates = new WeakMap<EventBus, CheckNodeState>();
+
+export function checkNodeState(events: EventBus): CheckNodeState {
+  let state = nodeStates.get(events);
+  if (!state) {
+    state = { capable: new Map(), unacknowledged: new Set() };
+    nodeStates.set(events, state);
+  }
+  return state;
+}
 
 export function toCheckRun(row: CheckRunRow): CheckRun {
   return {

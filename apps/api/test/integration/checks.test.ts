@@ -40,10 +40,9 @@ import {
 import {
   createCheckDispatcher,
   NODE_TIMEOUT_MESSAGE,
-  UNSUPPORTED_AGENT_MESSAGE,
 } from '../../src/modules/checks/dispatcher.js';
 import { createChecksMirror } from '../../src/modules/checks/mirror.js';
-import { NODE_OFFLINE_MESSAGE } from '../../src/modules/checks/model.js';
+import { NODE_OFFLINE_MESSAGE, UNSUPPORTED_AGENT_MESSAGE } from '../../src/modules/checks/model.js';
 import {
   APP_DELETED_MESSAGE,
   APP_MOVED_MESSAGE,
@@ -1047,16 +1046,49 @@ describe('checks against PostgreSQL', () => {
     });
   });
 
+  it('errors the runs of a node whose agent does not run checks', async () => {
+    const node = await newNode(true);
+    const { app } = await createTestApp(node, { items: [quality, lint] });
+    const sink = createCheckSink(deps);
+    const running = await runningRun(app.id, node);
+    const [queued] = await db
+      .insert(checkRuns)
+      .values({
+        appId: app.id,
+        nodeId: node,
+        name: 'lint',
+        command: 'npm run lint',
+        service: 'dev',
+        composeFiles: ['.devcontainer/compose.yaml'],
+        timeoutMinutes: 30,
+        commitSha: sha(unique('queued')),
+        ref: 'main',
+        trigger: 'manual',
+      })
+      .returning();
+    // Agents that run checks always list their runs; a heartbeat without the list proves the
+    // agent predates checks, so nothing on that node would ever run or report them.
+    await sink.onHeartbeat(node, undefined);
+    expect(await runRow(running.id)).toMatchObject({
+      status: 'errored',
+      reason: 'unsupported',
+      statusMessage: UNSUPPORTED_AGENT_MESSAGE,
+    });
+    await until(async () => (await runRow(queued?.id ?? '')).status === 'errored');
+    expect(await runRow(queued?.id ?? '')).toMatchObject({ reason: 'unsupported' });
+    expect(gateway.checkRuns.filter((r) => r.payload.runId === queued?.id)).toEqual([]);
+
+    // A new connection may be an upgraded agent: it is asked again.
+    await sink.onNodeOnline(node);
+    const [next] = await createRuns(app.id, { ref: 'main', names: ['quality'] });
+    await until(() => gateway.checkRuns.some((r) => r.payload.runId === next?.id));
+  });
+
   it('reconciles the runs a node reports in its heartbeats', async () => {
     const node = await newNode(true);
     const { app } = await createTestApp(node, { items: [quality] });
     const sink = createCheckSink(deps);
     const run = await runningRun(app.id, node, new Date(Date.now() - 60_000));
-
-    // Old agents report nothing about checks: nothing is settled.
-    await sink.onHeartbeat(node, undefined);
-    await sink.onHeartbeat(node, undefined);
-    expect((await runRow(run.id)).status).toBe('running');
 
     // Left out of two heartbeats in a row: its result was lost.
     await sink.onHeartbeat(node, []);
@@ -1290,22 +1322,46 @@ describe('checks over the agent socket', () => {
     vi.unstubAllGlobals();
   });
 
-  it('errors a run the agent does not acknowledge and sends the next one', async () => {
+  it('errors the runs of an agent without checks once its heartbeat shows it', async () => {
     const { nodeId, agent } = await joinNode();
     const app = await appOn(nodeId, [quality, lint]);
-    await queue(app.id);
+    const runs = await queue(app.id);
     const first = await agent.next('check.run');
-    // No answer, like an agent older than checks: errored once the acknowledgement times out.
+    // No answer, as from an agent older than checks: the run waits for the heartbeats.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect((await runRow(first.payload.runId)).status).toBe('running');
+    // Its heartbeat has no activeCheckRunIds: that agent runs no checks.
+    agent.heartbeat();
+    for (const run of runs) {
+      await until(async () => (await runRow(run.id)).status === 'errored');
+      expect(await runRow(run.id)).toMatchObject({
+        reason: 'unsupported',
+        statusMessage: UNSUPPORTED_AGENT_MESSAGE,
+      });
+    }
+    // Nothing more is sent to that agent.
+    await expect(agent.next('check.run', 500)).rejects.toThrow(/no check.run message/);
+  });
+
+  it('sends a run again that a current agent never acknowledged nor got', async () => {
+    const { nodeId, agent } = await joinNode();
+    const app = await appOn(nodeId, [quality]);
+    const [run] = await queue(app.id);
+    const runId = run?.id as CheckRunId;
+    await agent.next('check.run');
+    // The answer is lost (a dropped link): the run stays sent until the heartbeats tell.
+    await new Promise((resolve) => setTimeout(resolve, 600));
+    expect((await runRow(runId)).status).toBe('running');
+    await db
+      .update(checkRuns)
+      .set({ startedAt: new Date(Date.now() - 60_000) })
+      .where(eq(checkRuns.id, runId));
+    agent.heartbeat([], []);
+    agent.heartbeat([], []);
     const second = await agent.next('check.run', 5_000);
-    expect(second.payload.runId).not.toBe(first.payload.runId);
-    expect(await runRow(first.payload.runId)).toMatchObject({
-      status: 'errored',
-      reason: 'unsupported',
-      statusMessage: UNSUPPORTED_AGENT_MESSAGE,
-    });
+    expect(second.payload.runId).toBe(runId);
 
     // A current agent acknowledges at once, streams the output and reports the result.
-    const runId = second.payload.runId;
     agent.acknowledgeCheck(second);
     agent.send('check.log', { runId, lines: [line(0, 'all good')] }, second.id);
     agent.send('check.result', { runId, reason: 'exit', exitCode: 0 }, second.id);
@@ -1360,8 +1416,6 @@ describe('checks over the agent socket', () => {
       { code: 'not-found', message: 'No queued or running check run', retryable: false },
       cancel.id,
     );
-    // A heartbeat without activeCheckRunIds (an agent without checks) does not count.
-    agent.heartbeat();
     agent.heartbeat([], []);
     await until(async () => (await runRow(runId)).status === 'errored');
     expect(await runRow(runId)).toMatchObject({ reason: 'lost', statusMessage: LOST_RUN_MESSAGE });

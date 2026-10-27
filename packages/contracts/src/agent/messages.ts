@@ -263,8 +263,9 @@ export const CheckRunPayload = z.object({
     timeoutMs: z
       .number()
       .int()
-      .min(60_000)
-      .max(120 * 60_000),
+      .min(1000)
+      .max(120 * 60_000)
+      .describe('How long the command may run (the server sends whole minutes)'),
   }),
   limits: CheckLimits,
 });

@@ -216,7 +216,7 @@ describe('check protocol', () => {
       }).success,
     ).toBe(false);
     expect(
-      CheckRunPayload.safeParse({ ...payload, check: { ...payload.check, timeoutMs: 1000 } })
+      CheckRunPayload.safeParse({ ...payload, check: { ...payload.check, timeoutMs: 999 } })
         .success,
     ).toBe(false);
   });

@@ -1,5 +1,16 @@
-import { existsSync, realpathSync } from 'node:fs';
-import { mkdir, readdir, realpath, rm, rmdir, stat, unlink, writeFile } from 'node:fs/promises';
+import { constants, existsSync, realpathSync } from 'node:fs';
+import {
+  type FileHandle,
+  mkdir,
+  open,
+  readdir,
+  realpath,
+  rm,
+  rmdir,
+  stat,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { type AppSource, RELATIVE_PATH_PATTERN } from '@launchway/contracts';
 
@@ -200,6 +211,29 @@ export class Workspace {
     if (!isWithin(root, real)) throw new PolicyError(`"${path}" points outside the repository`);
     return real;
   }
+}
+
+/**
+ * Opens `path` for reading without blocking on a FIFO; with `noFollow`, a symlink in its last
+ * component fails instead of being followed. Callers stat and read through the handle, so what
+ * they check is what they read.
+ */
+export function openForReading(path: string, noFollow = false): Promise<FileHandle> {
+  const flags =
+    constants.O_RDONLY | (constants.O_NONBLOCK ?? 0) | (noFollow ? (constants.O_NOFOLLOW ?? 0) : 0);
+  return open(path, flags);
+}
+
+/** Reads at most `limit` bytes from the start of an open file (fewer at its end). */
+export async function readUpTo(handle: FileHandle, limit: number): Promise<Buffer> {
+  const buffer = Buffer.alloc(limit);
+  let filled = 0;
+  while (filled < limit) {
+    const { bytesRead } = await handle.read(buffer, filled, limit - filled, filled);
+    if (bytesRead === 0) break;
+    filled += bytesRead;
+  }
+  return buffer.subarray(0, filled);
 }
 
 /** Writes a file with `mode`, replacing (not following) whatever the repository put there. */

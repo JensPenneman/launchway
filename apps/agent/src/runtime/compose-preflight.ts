@@ -1,7 +1,7 @@
-import { readFile, realpath, stat } from 'node:fs/promises';
+import { realpath } from 'node:fs/promises';
 import { dirname, relative, resolve } from 'node:path';
 import { type Document, isAlias, isMap, isScalar, isSeq, parseAllDocuments, visit } from 'yaml';
-import { isInsideReal, PolicyError } from './workspace.js';
+import { isInsideReal, openForReading, PolicyError, readUpTo } from './workspace.js';
 
 /** A Compose file that is not valid YAML or not a mapping, or that names a missing file. */
 export class ComposeFileError extends PolicyError {
@@ -387,10 +387,19 @@ async function checkComposeFile(
       `${at}: Compose files pull in each other more than ${MAX_DEPTH} levels deep`,
     );
   }
-  const info = await stat(file);
-  if (!info.isFile()) throw new ComposeFileError(`${at} is not a file`);
-  if (info.size > MAX_FILE_BYTES) throw new ComposeFileError(`${at} is larger than 4 MiB`);
-  const docs = parseAllDocuments(await readFile(file, 'utf8'), PARSE_OPTIONS);
+  // Stat and read through one handle, so the file that was checked is the file that is parsed.
+  const handle = await openForReading(file);
+  let content: Buffer;
+  try {
+    const info = await handle.stat();
+    if (!info.isFile()) throw new ComposeFileError(`${at} is not a file`);
+    if (info.size > MAX_FILE_BYTES) throw new ComposeFileError(`${at} is larger than 4 MiB`);
+    content = await readUpTo(handle, MAX_FILE_BYTES + 1);
+  } finally {
+    await handle.close();
+  }
+  if (content.length > MAX_FILE_BYTES) throw new ComposeFileError(`${at} is larger than 4 MiB`);
+  const docs = parseAllDocuments(content.toString('utf8'), PARSE_OPTIONS);
   const refs: Reference[] = [];
   // An empty file parses to an empty stream, which is no array.
   for (const doc of Array.isArray(docs) ? docs : []) {

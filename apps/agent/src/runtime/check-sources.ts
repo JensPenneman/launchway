@@ -1,9 +1,15 @@
 import { isUtf8 } from 'node:buffer';
-import { lstat, readFile, realpath, stat } from 'node:fs/promises';
+import { lstat, realpath } from 'node:fs/promises';
 import { relative, sep } from 'node:path';
 import type { SourcePath } from './check-document.js';
 import { MAX_INLINE_FILE_BYTES } from './compose-policy.js';
-import { isInsideReal, PolicyError, realpathLenient } from './workspace.js';
+import {
+  isInsideReal,
+  openForReading,
+  PolicyError,
+  readUpTo,
+  realpathLenient,
+} from './workspace.js';
 
 /** Bind sources, configs and secrets one run may name (the agent reads small files into memory). */
 const MAX_PROBED_PATHS = 256;
@@ -29,25 +35,37 @@ async function probe(root: string, path: string, budget: Budget): Promise<Source
     );
     return link ? null : { kind: 'missing', relative: toRelative(root, realpathLenient(path)) };
   }
-  const info = await stat(real);
-  const rel = toRelative(root, real);
-  if (info.isDirectory()) return { kind: 'directory', relative: rel };
-  if (!info.isFile()) return null;
-  if (info.size > MAX_INLINE_FILE_BYTES) return { kind: 'file', relative: rel, size: info.size };
-  budget.bytes += info.size;
-  if (budget.bytes > MAX_PROBED_BYTES) {
-    throw new PolicyError(
-      `The project's small files to mount or pass inline exceed ${MAX_PROBED_BYTES / 1024 / 1024} MiB in total`,
-    );
+  // One handle for the type, the size and the content: what is checked is what is read, and a
+  // symlink swapped in after realpath is not followed.
+  const handle = await openForReading(real, true).catch(() => null);
+  if (!handle) return null;
+  try {
+    const info = await handle.stat();
+    const rel = toRelative(root, real);
+    if (info.isDirectory()) return { kind: 'directory', relative: rel };
+    if (!info.isFile()) return null;
+    if (info.size > MAX_INLINE_FILE_BYTES) return { kind: 'file', relative: rel, size: info.size };
+    budget.bytes += info.size;
+    if (budget.bytes > MAX_PROBED_BYTES) {
+      throw new PolicyError(
+        `The project's small files to mount or pass inline exceed ${MAX_PROBED_BYTES / 1024 / 1024} MiB in total`,
+      );
+    }
+    const bytes = await readUpTo(handle, MAX_INLINE_FILE_BYTES + 1);
+    // Grown since the stat: too big to pass inline after all.
+    if (bytes.length > MAX_INLINE_FILE_BYTES) {
+      return { kind: 'file', relative: rel, size: bytes.length };
+    }
+    const text = isUtf8(bytes) && !bytes.includes(0);
+    return {
+      kind: 'file',
+      relative: rel,
+      size: bytes.length,
+      ...(text ? { content: bytes.toString('utf8') } : {}),
+    };
+  } finally {
+    await handle.close();
   }
-  const bytes = await readFile(real);
-  const text = isUtf8(bytes) && !bytes.includes(0);
-  return {
-    kind: 'file',
-    relative: rel,
-    size: info.size,
-    ...(text ? { content: bytes.toString('utf8') } : {}),
-  };
 }
 
 /**

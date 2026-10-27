@@ -53,6 +53,9 @@ function trailConfig(): ComposeConfig {
         oom_kill_disable: true,
         oom_score_adj: -1000,
         pids_limit: -1,
+        ulimits: { nofile: { soft: 900000, hard: 900000 } },
+        cpuset: '0-1',
+        storage_opt: { size: '1G' },
         security_opt: ['no-new-privileges'],
         user: 'node',
         volumes: [
@@ -369,6 +372,7 @@ describe('buildCheckDocument', () => {
         pids_limit: 4096,
         oom_score_adj: 1000,
         security_opt: ['no-new-privileges:true'],
+        logging: { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } },
       });
       for (const key of [
         'ports',
@@ -376,10 +380,12 @@ describe('buildCheckDocument', () => {
         'deploy',
         'scale',
         'restart',
-        'logging',
         'develop',
         'cpu_shares',
         'oom_kill_disable',
+        'ulimits',
+        'cpuset',
+        'storage_opt',
       ]) {
         expect(service).not.toHaveProperty(key);
       }
@@ -388,13 +394,53 @@ describe('buildCheckDocument', () => {
     expect(dev.depends_on).toEqual({ db: { condition: 'service_healthy', required: true } });
   });
 
+  it('takes network addresses from the daemon, not from the repository', () => {
+    const config = {
+      name: project,
+      services: {
+        dev: {
+          image: 'alpine:3',
+          networks: {
+            default: null,
+            tools: { ipv4_address: '198.51.100.10', ipv6_address: 'fd00::10', aliases: ['t'] },
+            only: { ipv4_address: '198.51.100.11', link_local_ips: ['169.254.1.1'] },
+          },
+        },
+      },
+      networks: {
+        default: { name: `${project}_default`, ipam: {} },
+        tools: {
+          name: `${project}_tools`,
+          ipam: { config: [{ subnet: '198.51.100.0/24', gateway: '198.51.100.1' }] },
+          enable_ipv6: true,
+          internal: true,
+        },
+        only: { name: `${project}_only`, enable_ipv4: false, enable_ipv6: true },
+      },
+    } as unknown as ComposeConfig;
+    const { document } = buildCheckDocument(config, { ...input(), service: 'dev' });
+    const doc = document as {
+      services: Record<string, { networks: Record<string, unknown> }>;
+      networks: Record<string, unknown>;
+    };
+    expect(doc.networks).toEqual({
+      default: { name: `${project}_default`, labels: { 'launchway.check': runId } },
+      tools: { name: `${project}_tools`, internal: true, labels: { 'launchway.check': runId } },
+      only: { name: `${project}_only`, labels: { 'launchway.check': runId } },
+    });
+    expect(doc.services.dev?.networks).toEqual({
+      default: null,
+      tools: { aliases: ['t'] },
+      only: null,
+    });
+  });
+
   it('labels services, volumes and networks with the run', () => {
     const { dev, db, doc } = build();
     expect(dev.labels).toEqual({ 'org.example.role': 'dev', 'launchway.check': runId });
     expect(db.labels).toEqual({ 'launchway.check': runId });
     expect(doc.networks.default).toEqual({
       name: `${project}_default`,
-      ipam: {},
       labels: { 'launchway.check': runId },
     });
     expect(doc.volumes.db).toEqual({ name: `${project}_db`, labels: { 'launchway.check': runId } });
@@ -475,6 +521,7 @@ describe('buildCheckDocument', () => {
           cpus: 2,
           pids_limit: 4096,
           oom_score_adj: 1000,
+          logging: { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } },
           security_opt: ['no-new-privileges:true'],
           environment: input().env,
         },

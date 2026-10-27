@@ -76,7 +76,10 @@ export interface CheckDocument {
 
 type Json = Record<string, unknown>;
 
-/** Service keys a check drops: published ports, fixed names, restarts, and every resource knob. */
+/**
+ * Service keys a check drops: published ports, fixed names, restarts, the logging driver (replaced
+ * by CHECK_LOGGING), and every resource knob (replaced by the check limits).
+ */
 const REMOVED_SERVICE_KEYS = [
   'ports',
   'container_name',
@@ -97,6 +100,9 @@ const REMOVED_SERVICE_KEYS = [
   'cpu_rt_period',
   'cpu_shares',
   'blkio_config',
+  'cpuset',
+  'storage_opt',
+  'ulimits',
   'pids_limit',
   'oom_kill_disable',
   'oom_score_adj',
@@ -107,6 +113,21 @@ const REMOVED_SERVICE_KEYS = [
 
 /** Check containers are the first ones the kernel kills when the node runs out of memory. */
 const OOM_SCORE_ADJ = 1000;
+
+/**
+ * Logging of check containers: whatever the daemon's default driver is, a chatty check keeps at
+ * most 30 MB of logs on the node (the run forwards at most CHECK_LOG_LINE_LIMIT lines anyway).
+ */
+const CHECK_LOGGING = { driver: 'json-file', options: { 'max-size': '10m', 'max-file': '3' } };
+
+/**
+ * Network keys a check drops: a repository-chosen subnet could overlap the node's or the Docker
+ * VM's networks and change routing for every container while the run lasts, so check networks
+ * take their addresses from the daemon's pools.
+ */
+const REMOVED_NETWORK_KEYS = ['ipam', 'enable_ipv4', 'enable_ipv6'] as const;
+/** Fixed addresses need the subnet the check no longer chooses. */
+const REMOVED_ATTACHMENT_KEYS = ['ipv4_address', 'ipv6_address', 'link_local_ips'] as const;
 
 const isRecord = (value: unknown): value is Json =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -251,6 +272,16 @@ export function buildCheckDocument(
     service.cpus = input.limits.cpus;
     service.pids_limit = input.limits.pidsLimit;
     service.oom_score_adj = OOM_SCORE_ADJ;
+    service.logging = structuredClone(CHECK_LOGGING);
+    if (isRecord(service.networks)) {
+      const attachments: Json = {};
+      for (const [network, attachment] of Object.entries(service.networks)) {
+        const entry: Json | null = isRecord(attachment) ? { ...attachment } : null;
+        if (entry) for (const key of REMOVED_ATTACHMENT_KEYS) delete entry[key];
+        attachments[network] = entry && Object.keys(entry).length > 0 ? entry : null;
+      }
+      service.networks = attachments;
+    }
     const securityOpt = Array.isArray(service.security_opt) ? service.security_opt : [];
     service.security_opt = [
       ...securityOpt.filter(
@@ -386,6 +417,9 @@ export function buildCheckDocument(
   if (Object.keys(volumes).length > 0) doc.volumes = volumes;
   else delete doc.volumes;
   const networks = labelled(doc.networks);
+  for (const network of Object.values(networks)) {
+    if (isRecord(network)) for (const key of REMOVED_NETWORK_KEYS) delete network[key];
+  }
   if (Object.keys(networks).length > 0) doc.networks = networks;
   else delete doc.networks;
 

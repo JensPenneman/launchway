@@ -72,7 +72,16 @@ export function createSecretBox(masterKey: Buffer): SecretBox {
   };
 }
 
-/** SHA-256 (hex) of a token; tokens, session ids and node credentials are stored only as hashes. */
+/**
+ * SHA-256 (hex) of a token; tokens, session ids and node credentials are stored only as hashes.
+ *
+ * A fast, unsalted hash on purpose, not a password hash: every value hashed here is a random
+ * 256-bit secret (`generateToken`, `generateSessionToken`), so there is nothing to guess, and the
+ * hash is the lookup key of every authenticated request, which a salted, slow hash cannot be.
+ * Passwords, which people choose, are hashed with argon2id (`modules/auth/password.ts`). CodeQL's
+ * js/insufficient-password-hash reports this function because API tokens start with
+ * API_TOKEN_PREFIX; that alert is dismissed as a false positive.
+ */
 export function hashToken(token: string): string {
   return createHash('sha256').update(token, 'utf8').digest('hex');
 }

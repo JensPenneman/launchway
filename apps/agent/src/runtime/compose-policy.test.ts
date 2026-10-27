@@ -317,6 +317,29 @@ describe('evaluateComposePolicy', () => {
   });
 });
 
+describe('evaluateComposePolicy and the image namespace of checks', () => {
+  it.each([
+    ['an image', { image: 'launchway-check/trail-dev' }],
+    ['a Docker Hub spelling of it', { image: 'docker.io/launchway-check/trail-dev:latest' }],
+    ['a capitalised spelling', { image: 'Launchway-Check/other-dev' }],
+    [
+      'a build tag',
+      { build: { context: CHECKOUT, tags: ['ghcr.io/acme/app:1', 'launchway-check/trail-dev'] } },
+    ],
+    ['a built image name', { build: { context: CHECKOUT }, image: 'launchway-check/x' }],
+  ])('refuses %s in the launchway-check/ namespace for deployments', (_, service) => {
+    expect(violations(withService('app', service))).toEqual([
+      expect.stringMatching(/launchway-check\/ namespace, which belongs to checks/),
+    ]);
+  });
+
+  it('allows other images, including look-alikes outside the namespace', () => {
+    for (const image of ['launchway-checks/x', 'ghcr.io/launchway-check/x', 'launchway/check']) {
+      expect(violations(withService('app', { image })), image).toEqual([]);
+    }
+  });
+});
+
 describe('evaluateComposePolicy with trusted mounts', () => {
   const ROOTS = ['/srv/data', '/run/desktop/mnt/host/d/Backups'];
   const TRUSTED: DeployPolicy = { trustedMounts: true, allowedBindRoots: ROOTS };
@@ -505,6 +528,17 @@ describe('evaluateComposePolicy in check mode', () => {
       image: 'x',
       volumes: [{ type: 'bind', source, target: '/workspace', bind: {}, ...extra }],
     });
+
+  it('refuses images of the check namespace it does not build itself', () => {
+    expect(check(withService('dev', { image: 'launchway-check/other-dev' })).violations).toEqual([
+      expect.stringMatching(/launchway-check\/ namespace, which belongs to checks/),
+    ]);
+    // Built services are tagged into the namespace by the check document anyway.
+    expect(
+      check(withService('dev', { build: { context: CHECKOUT }, image: 'launchway-check/x' }))
+        .violations,
+    ).toEqual([]);
+  });
 
   it('allows the realistic project; published ports are dropped, not reported', () => {
     const result = check(base());

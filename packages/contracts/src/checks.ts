@@ -191,7 +191,7 @@ export type CheckLogsQuery = z.infer<typeof CheckLogsQuery>;
 // --- Limits and retention -----------------------------------------------------------------------
 
 /** Defaults of the platform settings that cap every service of a check. */
-export const DEFAULT_CHECK_MEMORY_MB = 4096;
+export const DEFAULT_CHECK_MEMORY_MB = 2048;
 export const DEFAULT_CHECK_CPUS = 2;
 export const DEFAULT_CHECK_PIDS_LIMIT = 4096;
 
@@ -227,9 +227,27 @@ export function checkProjectName(slug: string, runId: TypeId<'chk'>): string {
   return `${CHECK_PROJECT_PREFIX}${slug}_${runId.slice('chk_'.length)}`;
 }
 
+/**
+ * Repository namespace of the images checks build. Deployments may not use it, so a check build
+ * can never replace an image a deployment runs, and checks only ever build into it.
+ */
+export const CHECK_IMAGE_PREFIX = 'launchway-check/';
+
 /** Image tag of a service a check builds: one per app and service, so runs do not pile up. */
 export function checkImageName(slug: string, service: string): string {
-  return `launchway-check/${slug}-${service}`;
+  return `${CHECK_IMAGE_PREFIX}${slug}-${service}`;
+}
+
+/**
+ * True when an image reference names the check namespace. Docker Hub references normalise to the
+ * same local name (`docker.io/launchway-check/x` is `launchway-check/x`), so those count too.
+ */
+export function isCheckImageReference(reference: string): boolean {
+  const name = reference
+    .trim()
+    .toLowerCase()
+    .replace(/^(?:(?:index|registry-1)\.)?docker\.io\//, '');
+  return name.startsWith(CHECK_IMAGE_PREFIX);
 }
 
 /** The only variables a check gets from Launchway (no app variables, no secrets). */

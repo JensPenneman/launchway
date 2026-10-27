@@ -2797,7 +2797,7 @@
           "type": "integer",
           "primaryKey": false,
           "notNull": true,
-          "default": 4096
+          "default": 2048
         },
         "check_cpus": {
           "name": "check_cpus",

@@ -4,6 +4,7 @@ import {
   type DeployAttach,
   type DeployPolicy,
   type DeployRoute,
+  isCheckImageReference,
   RESERVED_SERVICE_NAMES,
 } from '@launchway/contracts';
 import { z } from 'zod';
@@ -61,6 +62,7 @@ const PortSpec = z.looseObject({
 });
 
 const Service = z.looseObject({
+  image: z.string().nullish(),
   privileged: z.boolean().nullish(),
   network_mode: z.string().nullish(),
   pid: NamespaceMode,
@@ -118,6 +120,7 @@ const Service = z.looseObject({
       privileged: z.boolean().nullish(),
       entitlements: z.array(z.string()).nullish(),
       ssh: z.unknown().optional(),
+      tags: z.array(z.string()).nullish(),
     })
     .nullish(),
 });
@@ -389,6 +392,21 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
       if (from.startsWith('container:')) reject(`${at}: volumes_from ${from} is not allowed`);
     }
     if (service.use_api_socket) reject(`${at}: use_api_socket is not allowed`);
+    // `launchway-check/` holds the images checks build: a deployment that ran or tagged one could
+    // run whatever a branch's check built. Checks retag their built services into it themselves.
+    const image = service.image ? unescapeInterpolation(service.image) : '';
+    if (isCheckImageReference(image) && (!check || !service.build)) {
+      reject(
+        `${at}: image "${image}" is in the launchway-check/ namespace, which belongs to checks`,
+      );
+    }
+    for (const tag of check ? [] : (service.build?.tags ?? [])) {
+      if (isCheckImageReference(unescapeInterpolation(tag))) {
+        reject(
+          `${at}: build tag "${unescapeInterpolation(tag)}" is in the launchway-check/ namespace, which belongs to checks`,
+        );
+      }
+    }
     if (service.provider !== undefined && service.provider !== null) {
       reject(`${at}: provider services are not allowed`);
     }

@@ -35,7 +35,7 @@ CREATE TABLE "check_runs" (
 );
 --> statement-breakpoint
 ALTER TABLE "apps" ADD COLUMN "checks" jsonb DEFAULT '{"enabled":false,"composeFiles":[".devcontainer/compose.yaml"],"branches":null,"skipBots":false,"items":[]}'::jsonb NOT NULL;--> statement-breakpoint
-ALTER TABLE "settings" ADD COLUMN "check_memory_mb" integer DEFAULT 4096 NOT NULL;--> statement-breakpoint
+ALTER TABLE "settings" ADD COLUMN "check_memory_mb" integer DEFAULT 2048 NOT NULL;--> statement-breakpoint
 ALTER TABLE "settings" ADD COLUMN "check_cpus" double precision DEFAULT 2 NOT NULL;--> statement-breakpoint
 ALTER TABLE "settings" ADD COLUMN "check_pids_limit" integer DEFAULT 4096 NOT NULL;--> statement-breakpoint
 ALTER TABLE "check_log_lines" ADD CONSTRAINT "check_log_lines_run_id_check_runs_id_fk" FOREIGN KEY ("run_id") REFERENCES "public"."check_runs"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint

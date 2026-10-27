@@ -167,7 +167,7 @@ test('saves the platform limits of checks', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Save check limits' })).toBeDisabled();
   await cpus.fill('1.5');
   await page.getByLabel('Memory (MiB)').fill('8192');
-  await expect(page.getByText('8.0 GiB per service')).toBeVisible();
+  await expect(page.getByText('2 services × 8.0 GiB = 16 GiB')).toBeVisible();
   await page.getByRole('button', { name: 'Save check limits' }).click();
   await expect(page.getByText('Check limits saved')).toBeVisible();
 });

@@ -8,8 +8,8 @@ import { Field } from '@/components/field';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { memoryHint } from '@/features/settings/check-limits';
 import { fieldError } from '@/lib/form';
-import { formatBytes } from '@/lib/format';
 
 const number = (text: string) => (text.trim() === '' ? Number.NaN : Number(text));
 const required = (text: string, error: string | undefined) =>
@@ -39,7 +39,10 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
     <Card>
       <CardHeader>
         <CardTitle>Checks</CardTitle>
-        <CardDescription>Every service of a check gets these limits; swap is off.</CardDescription>
+        <CardDescription>
+          Every service of a check gets these limits, so a check can use the number of its services
+          times them in total; swap is off.
+        </CardDescription>
       </CardHeader>
       <CardContent>
         <form
@@ -54,7 +57,7 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
             <Field
               label="Memory (MiB)"
               error={memoryError}
-              description={`${formatBytes(Number(memory) * 1024 ** 2)} per service`}
+              description={memoryHint(number(memory))}
             >
               <Input
                 inputMode="numeric"

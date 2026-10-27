@@ -25,6 +25,7 @@ import {
   checkStatusContext,
   githubStateOfCheck,
   isActiveCheckRunStatus,
+  isCheckImageReference,
 } from './checks.js';
 import { generateId } from './ids.js';
 
@@ -131,6 +132,21 @@ describe('check runs', () => {
     expect(project).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
     expect(checkImageName('trail', 'dev')).toBe('launchway-check/trail-dev');
     expect(checkStatusContext('e2e')).toBe('launchway/e2e');
+  });
+
+  it('recognises references to the image namespace of checks', () => {
+    for (const reference of [
+      'launchway-check/trail-dev',
+      'launchway-check/trail-dev:latest',
+      'docker.io/launchway-check/x',
+      'index.docker.io/launchway-check/x',
+      ' Launchway-Check/x ',
+    ]) {
+      expect(isCheckImageReference(reference), reference).toBe(true);
+    }
+    for (const reference of ['launchway-checks/x', 'ghcr.io/launchway-check/x', 'trail']) {
+      expect(isCheckImageReference(reference), reference).toBe(false);
+    }
   });
 
   it('accepts manual runs of a ref with an optional subset of checks', () => {

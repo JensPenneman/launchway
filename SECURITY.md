@@ -128,14 +128,17 @@ This is a summary of the security requirements in section 14 of
   `no-new-privileges`. The `launchway` container runs as a non-root user on a
   read-only root filesystem; the agent runs as root because it owns the
   Docker socket.
+- The runtime images contain no package manager: npm, npx, corepack and yarn
+  from the Node.js base image are removed.
 - Release images for `amd64` and `arm64` are signed with cosign (keyless) and
   carry SBOM and provenance attestations. Published images are scanned with
   Trivy (amd64) and the findings go to code scanning; the scan is
   informational and does not block a release.
 - The repository uses CodeQL, Dependabot (grouped weekly updates of npm
-  packages and GitHub Actions), secret scanning and push protection. The
-  Docker base images are pinned by major version only and are not yet
-  updated by Dependabot (see the roadmap).
+  packages and GitHub Actions, security updates in pull requests of their
+  own), secret scanning and push protection. The Docker base images are
+  pinned by major version only and are not yet updated by Dependabot (see
+  the roadmap).
 
 To verify the signature of an image:
 

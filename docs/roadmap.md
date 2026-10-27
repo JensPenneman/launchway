@@ -101,9 +101,12 @@ features that are deliberately out of scope for v0.1 are listed in
   closed. Check containers reach the network, including the node's published
   ports (the API's port 3000 until it is bound to loopback, and on Docker
   Desktop the host through `host.docker.internal`); an egress policy per check
-  would close that. Build steps run in BuildKit without the service limits,
-  and the BuildKit cache and the `launchway-check/*` images of checks are not
-  pruned automatically.
+  would close that. Build steps run in BuildKit without the service limits
+  and share the node's BuildKit cache and cache mounts with deployments (a
+  builder of their own would separate them); the BuildKit cache and the
+  `launchway-check/*` images of checks are not pruned automatically. If the
+  agent's Docker client holds registry credentials, checks can pull those
+  private images too.
 - Checkout pruning orders directories by deployment id (UUIDv7). Ids created
   in the same millisecond are not ordered; harmless in practice. It also keeps
   the newest two checkouts rather than the running one: record the last

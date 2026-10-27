@@ -87,17 +87,25 @@ shape the design:
    database after a restart.
 5. **One resolved document.** The agent fetches the exact commit, parses the
    configured Compose files itself (YAML 1.2) and refuses `include`, a
-   top-level merge key and any `extends.file` outside the checkout, then reads
-   the project with `docker compose config --no-env-resolution` and applies
-   the Compose policy in a checks mode: untrusted, no routes, every bind mount
-   outside the checkout refused. It writes one resolved document and uses
+   top-level merge key and any `extends.file`, `env_file` or `label_file`
+   that is not a relative path inside the checkout from every directory
+   Compose might resolve it against, then reads the project with `docker
+   compose config --no-env-resolution` and applies the Compose policy in a
+   checks mode: untrusted, no routes, every bind mount outside the checkout
+   refused, only volume and tmpfs mounts (no image mounts of other apps'
+   images), additional build contexts only from the repository, no configs or
+   secrets read from the environment. It writes one resolved document and uses
    only that file afterwards: every service gets the label
    `launchway.check=<run id>`, the limits of the platform settings, `no-new-
    privileges` and `oom_score_adj: 1000`; published ports, container names,
    restart policies, logging drivers and resource settings of the project are
    removed; built services are tagged `launchway-check/<slug>-<service>` so a
-   check can never retag an image of a deployment; nothing joins the proxy
-   network. The project is `launchway-check_<slug>_<run>`; app slugs contain
+   check can never retag an image of a deployment; every other image is pulled
+   from its registry for each run, so a check cannot use an image that only
+   exists on the node; environment entries and build arguments without a
+   value are dropped and Compose runs without the agent's proxy variables, so
+   nothing of the agent's environment reaches the containers; nothing joins
+   the proxy network. The project is `launchway-check_<slug>_<run>`; app slugs contain
    no `_`, so it cannot collide with an app or a preview.
 6. **Source delivery through a volume.** The checkout is copied into a volume
    of the run with `docker cp` into a created, never started container, and
@@ -124,7 +132,8 @@ shape the design:
    settings (defaults 4096 MiB, 2 CPUs, 4096 processes) and the OOM killer
    takes check containers first. Builds share the node's build slots with
    deployments and stop after 60 minutes; the command stops after its
-   `timeoutMinutes`; a run sends at most 20 000 log lines.
+   `timeoutMinutes`; a run sends at most 20 000 log lines or 16 MiB of text,
+   and inlines at most 256 files and 1 MiB.
 10. **Cleanup.** The result is reported first, then the run cleans up while it
     still holds the node's check slot: its containers, `down --volumes
     --remove-orphans`, the source volume, remaining labelled volumes and
@@ -142,18 +151,21 @@ shape the design:
 - Checks compete with production for the node. The caps, one check per node
   and the OOM preference bound that, and the operations guide sizes them for a
   16 GB node. Images and BuildKit cache of checks stay on the node.
-- The Compose file preflight applies to deployments as well: `include` and
-  `extends.file` must stay inside the repository there too, and remote
-  includes are refused, which closes the same way of reading another app's
-  `.env` for previews.
+- The Compose file preflight applies to deployments as well: `include`,
+  `extends.file`, `env_file` and `label_file` must stay inside the repository
+  there too, and remote includes are refused, which closes the same way of
+  reading another app's `.env` for previews.
 - Risks that remain: checks have outbound network access (installing
   dependencies needs it) and can reach ports the node publishes, the
   Launchway API's port 3000 included; build steps run in BuildKit without the
-  service limits; the policy is a deny-list, so a new Compose feature that
-  reaches outside the project is not refused until it is known; repository
-  code is isolated by the container runtime only.
-- Follow-ups: an allow-list of Compose keys for checks; pruning the BuildKit
-  cache of checks; binding the API's port to loopback (or a firewall rule)
+  service limits, and they share the node's BuildKit cache, cache mounts
+  (`RUN --mount=type=cache`) included, with the builds of deployments; images
+  the node's Docker client may pull with stored registry credentials can be
+  pulled by checks as well; the policy is a deny-list, so a new Compose
+  feature that reaches outside the project is not refused until it is known;
+  repository code is isolated by the container runtime only.
+- Follow-ups: an allow-list of Compose keys for checks; a BuildKit builder of
+  their own for checks (separate cache and cache mounts) and pruning it; binding the API's port to loopback (or a firewall rule)
   once the platform domain works, so job containers cannot reach it; cache
   volumes per app (package managers) to speed up runs; more than one check
   per node; `include` support for checks.

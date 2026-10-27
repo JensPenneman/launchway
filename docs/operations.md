@@ -498,6 +498,11 @@ dependencies first.
   mounts all of it); read-only bind mounts of small text files become files
   in the container. Bind mounts of other host paths, `include` and Compose
   files outside the repository are refused.
+- **Images from their registry.** Images a check does not build are pulled
+  from their registry for every run, so a check cannot run an image that only
+  exists on the node, such as another app's build, and cannot mount images.
+  Builds and Compose of checks do not see the agent's proxy variables; a node
+  behind a proxy needs it in Docker's own configuration.
 - **Its own, short-lived project.** Every run is the Compose project
   `launchway-check_<slug>_<run>`: published ports, fixed container names and
   restart policies are removed, nothing joins the proxy network, and its
@@ -509,8 +514,8 @@ dependencies first.
   commits of that branch; a push and a pull request of the same commit run
   once.
 - **Logs** stream to the run's drawer on the **Checks** tab and
-  `GET /api/v1/checks/{id}/logs?follow=true`, at most 20 000 lines per run,
-  and are deleted after 30 days. The runs stay listed.
+  `GET /api/v1/checks/{id}/logs?follow=true`, at most 20 000 lines or 16 MiB
+  per run, and are deleted after 30 days. The runs stay listed.
 
 ### Resources on a 16 GB node
 
@@ -566,8 +571,12 @@ is fixed.
   agent).
 - **A check errors with reason `policy`.** The log names the rule: bind mounts
   of host paths outside the repository, `include` (list the files under
-  Compose files instead), a Compose file outside the repository, or a service
-  that is not part of the project (services behind a Compose profile are not).
+  Compose files instead), a Compose file, `env_file` or `label_file` outside
+  the repository, image mounts, or a service that is not part of the project
+  (services behind a Compose profile are not).
+- **A check errors with reason `build` while pulling.** Images that a check
+  does not build must exist in their registry; build the image in the check's
+  own Compose file instead of using one that only exists on the node.
 - **Checks stay queued.** One check runs per node at a time. Checks of a node
   that is offline for 10 minutes end with *error*.
 - **No status on GitHub.** Grant the permission (above). Statuses are posted

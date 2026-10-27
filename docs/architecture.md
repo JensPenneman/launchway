@@ -534,12 +534,14 @@ export interface DnsProvider {
   1. fetch the commit into `/var/lib/launchway/checks/<appId>/<runId>/src`
      (credentials as for deployments);
   2. parse the Compose files (YAML) and refuse `include`, a top-level merge
-     key and `extends.file` outside the checkout; `docker compose config
+     key and any `extends.file`, `env_file` or `label_file` outside the
+     checkout; `docker compose config
      --no-env-resolution` with an environment file holding only `CI`,
      `COMPOSE_PROJECT_NAME`, `LAUNCHWAY_APP`, `LAUNCHWAY_CHECK`,
      `LAUNCHWAY_CHECK_RUN_ID`, `LAUNCHWAY_COMMIT_SHA` and `LAUNCHWAY_REF`;
      the policy in checks mode refuses every bind mount outside the
-     checkout;
+     checkout, image mounts, additional build contexts outside the
+     repository and configs or secrets read from the environment;
   3. write one resolved document `compose.json` next to the checkout and use
      only that afterwards: label `launchway.check=<runId>` on every service,
      volume and network; `mem_limit` = `memswap_limit`, `cpus`,
@@ -549,9 +551,11 @@ export interface DnsProvider {
      `launchway-check/<slug>-<service>`; directory binds inside the checkout
      turned into mounts of the run's source volume (`volume.subpath`),
      read-only text files of at most 64 KiB into `configs` with inline
-     content;
+     content; environment entries and build arguments without a value
+     dropped;
   4. `build --pull` (in the node's build slots, shared with deployments) and
-     `pull --ignore-buildable`;
+     `pull --policy always --ignore-buildable`, so no image comes from the
+     node alone; Compose of checks runs without the agent's proxy variables;
   5. create the volume `<project>_source`, `docker cp` the checkout into a
      created (never started) container that mounts it, and `chown` it to the
      user of the check's service in a one-shot container (the agent has no
@@ -566,8 +570,10 @@ export interface DnsProvider {
      earlier runs left behind (projects `launchway-check_*`).
 - **Compose preflight.** Before `docker compose config`, deployments parse
   their Compose files too: `include` entries (path, `env_file`,
-  `project_directory`) and `extends.file` must be relative paths without `$`
-  inside the checkout, and remote includes are refused. Compose reads such
+  `project_directory`), `extends.file`, `env_file` and `label_file` must be
+  relative paths without `$` that stay inside the checkout from every
+  directory Compose might resolve them against, and remote includes are
+  refused. Compose reads such
   files while it loads a project, before the policy sees anything.
 - All process execution uses `execFile` with argument arrays — never a shell
   string. Refs match `^[A-Za-z0-9._/-]+$` and may not start with `-`.

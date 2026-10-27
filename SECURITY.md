@@ -53,9 +53,9 @@ This is a summary of the security requirements in section 14 of
   and one check runs per node at a time. Check containers can still reach the
   network, including ports the node publishes (on Docker Desktop also the
   host through `host.docker.internal`), and builds run in BuildKit without the
-  service limits; put services on the node behind authentication and turn
-  checks on only for repositories whose writers you trust with that (ADR
-  0020).
+  service limits and share its cache and cache mounts with deployments; put
+  services on the node behind authentication and turn checks on only for
+  repositories whose writers you trust with that (ADR 0020).
 - **Extra Caddy directives are trusted admin configuration.** A route's
   `extraDirectives` is placed verbatim in the Caddyfile, with the reach of
   any Caddyfile: placeholders such as `{env.*}` resolve in the Caddy
@@ -115,11 +115,13 @@ This is a summary of the security requirements in section 14 of
   `-`.
 - GitHub webhooks: the `X-Hub-Signature-256` HMAC is verified before the body
   is parsed, and a delivery ID that was already processed is rejected.
-- Compose files are parsed by the agent before Compose loads them: `include`
-  and `extends` may only name files inside the repository (no remote
-  includes, no `$` in those paths), so a Compose file cannot pull in files of
-  the agent, such as other apps' environment files. Checks refuse `include`
-  altogether.
+- Compose files are parsed by the agent before Compose loads them: `include`,
+  `extends`, `env_file` and `label_file` may only name files inside the
+  repository (no remote includes, no `$` in those paths), so a Compose file
+  cannot pull in files of the agent, such as other apps' environment files.
+  Checks refuse `include` altogether, mount no images, and pull every image
+  they do not build from its registry, so they cannot use images that exist
+  only on the node.
 - The Compose policy is enforced on the agent, not only in the UI: no host
   bind mounts or host-path volume drivers, no `privileged`, no devices or
   `device_cgroup_rules`, no `network_mode` or other namespace outside the

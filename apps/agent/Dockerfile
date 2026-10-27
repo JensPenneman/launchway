@@ -38,6 +38,11 @@ LABEL org.opencontainers.image.title="Launchway agent" \
       org.opencontainers.image.description="Launchway node agent: runs Compose projects on its node" \
       org.opencontainers.image.source="https://github.com/JensPenneman/launchway" \
       org.opencontainers.image.licenses="Apache-2.0"
+# npm, npx, corepack and yarn come with the base image, but nothing in this image runs them: they
+# are removed, and with them the dependencies npm bundles.
+RUN rm -rf /usr/local/lib/node_modules /opt/yarn-v* \
+    /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack \
+    /usr/local/bin/yarn /usr/local/bin/yarnpkg
 RUN apk add --no-cache git ca-certificates
 COPY --from=docker-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=docker-cli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose

@@ -98,15 +98,18 @@ features that are deliberately out of scope for v0.1 are listed in
   after 20 000 lines).
 - Checks: the Compose policy for checks is a deny-list like the deployment
   policy; an allow-list of Compose keys would make new Compose features fail
-  closed. Check containers reach the network, including the node's published
-  ports (the API's port 3000 until it is bound to loopback, and on Docker
-  Desktop the host through `host.docker.internal`); an egress policy per check
-  would close that. Build steps run in BuildKit without the service limits
-  and share the node's BuildKit cache and cache mounts with deployments (a
-  builder of their own would separate them); the BuildKit cache and the
-  `launchway-check/*` images of checks are not pruned automatically. If the
-  agent's Docker client holds registry credentials, checks can pull those
-  private images too.
+  closed. Check containers and their build steps reach the network,
+  including the node's published ports (the API's port 3000 until it is
+  bound to loopback, and on Docker Desktop the host's loopback through
+  `host.docker.internal`, which binding to loopback does not close); an
+  egress policy per check would close that. The check builder's BuildKit
+  runs privileged (a rootless BuildKit would not), and one build can fill
+  the disk while it runs (only what the builder keeps afterwards is
+  bounded). Deployments still share the engine's build cache between apps;
+  keying their `RUN` steps per app, as checks do, would keep one app's
+  planted step from another's build. The `launchway-check/*` images of checks
+  are not pruned automatically. If the agent's Docker client holds registry
+  credentials, checks can pull those private images too.
 - Checkout pruning orders directories by deployment id (UUIDv7). Ids created
   in the same millisecond are not ordered; harmless in practice. It also keeps
   the newest two checkouts rather than the running one: record the last

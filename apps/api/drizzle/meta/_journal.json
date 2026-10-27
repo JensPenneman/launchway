@@ -43,6 +43,13 @@
       "when": 1793102705847,
       "tag": "0005_checks",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1793114654990,
+      "tag": "0006_check_queue_limits",
+      "breakpoints": true
     }
   ]
 }

@@ -158,7 +158,72 @@ shape the design:
   permission. Without it checks still run and show in Launchway.
 - Checks compete with production for the node. The caps, one check per node
   and the OOM preference bound that, and the operations guide sizes them for a
-  16 GB node. Images and BuildKit cache of checks stay on the node.
+  16 GB node. Images of checks and the check builder's cache stay on the node.
+- Builds of checks (follow-up of this decision) run in a buildx
+  `docker-container` builder of their own; deployments keep the engine's
+  builder. It has the memory without swap, CPUs and processes of a check
+  service and is named after the limits and a hash of everything it is made
+  of (`launchway-check-build-<memory>m-<cpus>c-<hash>`: BuildKit image,
+  network, BuildKit flags and configuration), so a change of any of them
+  makes a new builder instead of keeping one that no longer matches. The
+  agent creates it with the first build of a check (`docker compose build
+  --builder`, buildx records in the agent's volume), keeps it between runs,
+  removes the builders of other limits or settings when it creates one, and
+  removes builders unused for a day (at start and hourly), the builder
+  network with the last one. Like the sweep of check projects, this assumes
+  one agent per Docker daemon: a second agent would remove the first one's
+  builders, builds running in them included.
+- The builder's cache is bounded and kept apart per app. BuildKit keeps at
+  most 5000 MB (garbage collection while it builds, and a prune after every
+  run); that bounds what stays, not what one build writes while it runs.
+  Every check build gets the build argument
+  `BUILDKIT_SANDBOX_HOSTNAME=check-<app id>`, which the Dockerfile frontend
+  (1.2 and later) makes the hostname of `RUN` steps and part of their cache
+  key, and which a Dockerfile `ARG` cannot change: a `RUN` step one app built
+  is never reused by another app's build. That matters because a step's
+  cache key leaves out what its cache mounts and secrets held, so a step
+  shared between apps could carry what another repository planted. Steps
+  that follow from their inputs alone (`FROM`, `COPY`, `ADD`) are shared.
+  Cache mounts (`RUN --mount=type=cache`) are emptied before every build and
+  after every run, so they last for the builds of one run. A Dockerfile that
+  pins a frontend older than `docker/dockerfile:1.2` ignores the hostname;
+  its `RUN` steps are shared with other builds that do the same.
+- Build steps share the builder container's network namespace
+  (`--oci-worker-net=host`) on its own bridge network `launchway-check-build`
+  and resolve names through Docker's embedded DNS (`[dns] nameservers =
+  ["127.0.0.11"]`, which forwards to the node's resolvers; BuildKit would
+  give them 8.8.8.8 otherwise). They reach the internet but not the
+  addresses of containers on the default bridge or on other networks. They
+  do reach ports the node publishes, through the gateway of any bridge
+  (172.17.0.1, or the builder network's own), the API's port 3000 included,
+  and on Docker Desktop the host through `host.docker.internal`
+  (192.168.65.254), its loopback included: ports published on 127.0.0.1
+  answer there. Check containers reach the same.
+- `# syntax=` may only name Docker's Dockerfile frontend
+  (`[frontend."gateway.v0"] allowedRepositories =
+  ["docker.io/docker/dockerfile"]`); other frontend images are refused before
+  they are pulled. The BuildKit image is pinned by digest, in the agent
+  (`CHECK_BUILDER_IMAGE`) and in `apps/agent/check-builder.Dockerfile`, which
+  Dependabot updates; a test keeps both equal. As with every
+  `docker-container` builder, BuildKit runs privileged in that container and
+  buildx allows it the `network.host` entitlement; build steps stay in
+  BuildKit's sandbox, checks never request the entitlement (the policy
+  refuses `network: host` and entitlements), and the network it would give
+  is the builder's own anyway. Apps, trusted or not, cannot mount the state
+  volumes of check builders (`buildx_buildkit_launchway-check-build-*`).
+- The queue is bounded (follow-up of this decision): an app may hold at most
+  `checkMaxQueuedPerApp` queued runs (default 30) and a node
+  `checkMaxQueuedPerNode` (default 100), platform settings of at least 10, the
+  most checks an app may have, since a commit queues all its checks or none.
+  A push or pull request whose runs would exceed either bound gets them at
+  once as `errored` with reason `queue-full`, so GitHub shows a clear error
+  ("Not run: 28 queued and 5 new checks would exceed the app's limit of 30;
+  run it again later") instead of a pending status that may never move;
+  manual runs and re-runs are refused (409). Runs that never ran
+  (`superseded`, `queue-full`, and `offline` before their node took them) do
+  not count for the deduplication, so pushing such a commit again runs it,
+  and the newest push of a branch supersedes the queued runs of every other
+  commit of it.
 - The Compose file preflight applies to deployments as well: `include`,
   `extends.file`, `env_file` and `label_file` must stay inside the repository
   there too, and remote includes are refused, which closes the same way of
@@ -168,15 +233,17 @@ shape the design:
   deployments that worked before may now meet (*Upgrade*).
 - Risks that remain: checks have outbound network access (installing
   dependencies needs it) and can reach ports the node publishes, the
-  Launchway API's port 3000 included; build steps run in BuildKit without the
-  service limits, and they share the node's BuildKit cache, cache mounts
-  (`RUN --mount=type=cache`) included, with the builds of deployments; images
-  the node's Docker client may pull with stored registry credentials can be
-  pulled by checks as well; the policy is a deny-list, so a new Compose
+  Launchway API's port 3000 included; images the node's Docker client may
+  pull with stored registry credentials can be pulled by checks as well; the
+  check builder's BuildKit runs privileged in its container (see above), and
+  one build can fill the node's disk while it runs; the branches of one app
+  share its cached build steps; the policy is a deny-list, so a new Compose
   feature that reaches outside the project is not refused until it is known;
   repository code is isolated by the container runtime only.
-- Follow-ups: an allow-list of Compose keys for checks; a BuildKit builder of
-  their own for checks (separate cache and cache mounts) and pruning it; binding the API's port to loopback (or a firewall rule)
-  once the platform domain works, so job containers cannot reach it; cache
-  volumes per app (package managers) to speed up runs; more than one check
-  per node; `include` support for checks.
+- Follow-ups: an allow-list of Compose keys for checks; a rootless BuildKit
+  for the check builder; binding the API's port to loopback (or a firewall
+  rule) once the platform domain works, so job containers cannot reach it on
+  Linux nodes (on Docker Desktop they reach the host's loopback as well);
+  keying the build steps of deployments per app too (they share the engine's
+  cache); cache volumes per app (package managers) to speed up runs; more
+  than one check per node; `include` support for checks.

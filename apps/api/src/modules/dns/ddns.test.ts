@@ -138,6 +138,8 @@ describe('dynamic DNS service', () => {
       checkMemoryMb: 4096,
       checkCpus: 2,
       checkPidsLimit: 4096,
+      checkMaxQueuedPerApp: 30,
+      checkMaxQueuedPerNode: 100,
       updatedAt: new Date().toISOString(),
       ...initial,
     };

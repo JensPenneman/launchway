@@ -14,8 +14,24 @@ import {
   type CreateCheckRunsInput,
   isActiveCheckRunStatus,
   type NodeId,
+  type Settings,
 } from '@launchway/contracts';
-import { and, asc, desc, eq, gt, inArray, lt, ne, type SQL } from 'drizzle-orm';
+import {
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gt,
+  inArray,
+  isNotNull,
+  isNull,
+  lt,
+  ne,
+  notInArray,
+  or,
+  type SQL,
+} from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
@@ -28,6 +44,8 @@ import type { SseMessage } from '../../lib/sse.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor, toGitProblem } from '../github/providers.js';
+import { nodes } from '../nodes/schema.js';
+import { createSettingsService } from '../settings/service.js';
 import { createCheckDispatcher } from './dispatcher.js';
 import {
   announceCreated,
@@ -41,6 +59,7 @@ import {
 import { checkLogLines, checkRuns } from './schema.js';
 
 type AppRow = typeof apps.$inferSelect;
+type QueueLimits = Pick<Settings, 'checkMaxQueuedPerApp' | 'checkMaxQueuedPerNode'>;
 
 export const CANCELLED_MESSAGE = 'Cancelled';
 export const CANCEL_REQUESTED_MESSAGE = 'Cancellation requested';
@@ -166,6 +185,46 @@ export function createChecksService(deps: Deps): ChecksService {
   const logger = deps.logger.child({ component: 'checks' });
   const dispatcher = createCheckDispatcher(deps);
   const hub = checkLogHub(deps.events);
+  const platform = createSettingsService(deps);
+
+  /** The bounds of the queue, read before a transaction: never while it holds row locks. */
+  async function queueLimits(): Promise<QueueLimits> {
+    const { checkMaxQueuedPerApp, checkMaxQueuedPerNode } = await platform.get();
+    return { checkMaxQueuedPerApp, checkMaxQueuedPerNode };
+  }
+
+  /**
+   * Why `adding` more runs would overfill the queue of the app or of its node, or null when they
+   * fit. Locks the node row, so apps of one node count one after another; call it after the app
+   * row is locked.
+   */
+  async function queueFull(
+    tx: Executor,
+    app: AppRow,
+    adding: number,
+    limits: QueueLimits,
+  ): Promise<string | null> {
+    await tx.select({ id: nodes.id }).from(nodes).where(eq(nodes.id, app.nodeId)).for('update');
+    const queuedOf = async (where: SQL | undefined) => {
+      const [row] = await tx
+        .select({ value: count() })
+        .from(checkRuns)
+        .where(and(eq(checkRuns.status, 'queued'), where));
+      return Number(row?.value ?? 0);
+    };
+    // `28 queued and 5 new checks would exceed the app's limit of 30`.
+    const exceeded = (queued: number, whose: string, limit: number) =>
+      `${queued} queued and ${adding} new check${adding === 1 ? '' : 's'} would exceed ${whose} limit of ${limit}`;
+    const ofApp = await queuedOf(eq(checkRuns.appId, app.id));
+    if (ofApp + adding > limits.checkMaxQueuedPerApp) {
+      return exceeded(ofApp, "the app's", limits.checkMaxQueuedPerApp);
+    }
+    const ofNode = await queuedOf(eq(checkRuns.nodeId, app.nodeId));
+    if (ofNode + adding > limits.checkMaxQueuedPerNode) {
+      return exceeded(ofNode, "its node's", limits.checkMaxQueuedPerNode);
+    }
+    return null;
+  }
 
   async function loadApp(appId: AppId): Promise<AppRow> {
     const [app] = await deps.db.select().from(apps).where(eq(apps.id, appId));
@@ -227,8 +286,18 @@ export function createChecksService(deps: Deps): ChecksService {
     },
     actor: RequestActor,
     summary: Record<string, unknown> = {},
+    /** Set when the queue is full: the runs end at once, so GitHub shows why. */
+    full: string | null = null,
   ): Promise<CheckRunRow[]> {
     const createdAt = new Date();
+    const ended = full
+      ? {
+          status: 'errored' as const,
+          reason: 'queue-full' as const,
+          statusMessage: `Not run: ${full}; run it again later`,
+          finishedAt: createdAt,
+        }
+      : {};
     const rows = await tx
       .insert(checkRuns)
       .values(
@@ -242,6 +311,7 @@ export function createChecksService(deps: Deps): ChecksService {
           trigger: commit.trigger,
           triggeredById: actor.principal?.user.id ?? null,
           createdAt,
+          ...ended,
         })),
       )
       .returning();
@@ -256,6 +326,7 @@ export function createChecksService(deps: Deps): ChecksService {
           ref: row.ref,
           trigger: row.trigger,
           ...(row.prNumber === null ? {} : { prNumber: row.prNumber }),
+          ...(full ? { status: row.status, reason: row.reason } : {}),
           ...summary,
         },
       });
@@ -266,7 +337,7 @@ export function createChecksService(deps: Deps): ChecksService {
   /** After commit: announces new runs and sends the node's next run in the background. */
   function queued(rows: readonly CheckRunRow[], nodeId: NodeId): void {
     for (const row of rows) announceCreated(deps, row);
-    if (rows.length > 0) void dispatcher.dispatchNode(nodeId);
+    if (rows.some((row) => row.status === 'queued')) void dispatcher.dispatchNode(nodeId);
   }
 
   /** Cancels a queued or running run here (audited); undefined when its status changed. */
@@ -403,6 +474,7 @@ export function createChecksService(deps: Deps): ChecksService {
         );
       }
       const sha = await resolveCommit(app, input.ref);
+      const limits = await queueLimits();
       const { rows, nodeId } = await deps.db.transaction(async (tx) => {
         const locked = await lockApp(tx, appId);
         const settings = checksSettingsOf(locked);
@@ -413,6 +485,8 @@ export function createChecksService(deps: Deps): ChecksService {
         if (items.length === 0) {
           throw conflict(`Every requested check already runs for ${shortSha(sha)}`);
         }
+        const full = await queueFull(tx, locked, items.length, limits);
+        if (full) throw conflict(`Not queued: ${full}; wait for them or raise the limit`);
         const commit = { sha, ref: input.ref, prNumber: null, trigger: 'manual' as const };
         return {
           rows: await insertRuns(tx, locked, settings, items, commit, actor),
@@ -428,14 +502,30 @@ export function createChecksService(deps: Deps): ChecksService {
     },
 
     async queueForCommit(app, commit, actor) {
+      const limits = await queueLimits();
       const result = await deps.db.transaction(async (tx) => {
         const locked = await lockApp(tx, app.id);
         const settings = checksSettingsOf(locked);
-        // Concurrent and repeated deliveries of one commit queue each check once.
+        // Concurrent and repeated deliveries of one commit queue each check once; runs that never
+        // ran (superseded by another commit of the branch, not queued while the queue was full,
+        // or ended while their node was offline before it took them) do not count, so the
+        // commit runs when it is pushed again.
         const existing = await tx
           .select({ name: checkRuns.name })
           .from(checkRuns)
-          .where(and(eq(checkRuns.appId, app.id), eq(checkRuns.commitSha, commit.sha)));
+          .where(
+            and(
+              eq(checkRuns.appId, app.id),
+              eq(checkRuns.commitSha, commit.sha),
+              or(
+                isNull(checkRuns.reason),
+                and(
+                  notInArray(checkRuns.reason, ['superseded', 'queue-full']),
+                  or(ne(checkRuns.reason, 'offline'), isNotNull(checkRuns.startedAt)),
+                ),
+              ),
+            ),
+          );
         const seen = new Set(existing.map((row) => row.name));
         const items = settings.items.filter((item) => !seen.has(item.name));
         if (items.length === 0) return null;
@@ -455,8 +545,10 @@ export function createChecksService(deps: Deps): ChecksService {
           },
           actor,
         );
-        const rows = await insertRuns(tx, locked, settings, items, commit, actor);
-        return { rows, superseded, nodeId: locked.nodeId };
+        // Pushes to many branches must not queue without bound, each holding a pending status.
+        const full = await queueFull(tx, locked, items.length, limits);
+        const rows = await insertRuns(tx, locked, settings, items, commit, actor, {}, full);
+        return { rows, superseded, nodeId: locked.nodeId, full };
       });
       if (!result) return [];
       for (const row of result.superseded) announceStatus(deps, row);
@@ -467,8 +559,9 @@ export function createChecksService(deps: Deps): ChecksService {
           trigger: commit.trigger,
           checks: result.rows.map((row) => row.name),
           superseded: result.superseded.length,
+          ...(result.full ? { notQueued: result.full } : {}),
         },
-        'check runs queued',
+        result.full ? 'check runs not queued: the queue is full' : 'check runs queued',
       );
       queued(result.rows, result.nodeId);
       return result.rows.map(toCheckRun);
@@ -493,6 +586,7 @@ export function createChecksService(deps: Deps): ChecksService {
       if (isActiveCheckRunStatus(previous.status)) {
         throw conflict(`The check run is ${previous.status}; only finished runs can run again`);
       }
+      const limits = await queueLimits();
       const { row, nodeId } = await deps.db.transaction(async (tx) => {
         const app = await lockApp(tx, previous.appId);
         const settings = checksSettingsOf(app);
@@ -503,6 +597,8 @@ export function createChecksService(deps: Deps): ChecksService {
             `${item.name} already runs for ${shortSha(previous.commitSha)}; cancel it first`,
           );
         }
+        const full = await queueFull(tx, app, 1, limits);
+        if (full) throw conflict(`Not queued: ${full}; wait for them or raise the limit`);
         const commit = {
           sha: previous.commitSha,
           ref: previous.ref,

@@ -288,12 +288,17 @@ reported to GitHub as commit statuses that branch protection can require
   service (default dev), composeFile?, timeoutMinutes (1-120, default 30) }`.
   Members change them with `PATCH /apps/{id}`; the limits every service of a
   check gets are platform settings (`checkMemoryMb`, `checkCpus`,
-  `checkPidsLimit`; defaults 2048, 2, 4096).
+  `checkPidsLimit`; defaults 2048, 2, 4096), and so are the bounds of the
+  queue (`checkMaxQueuedPerApp` 30, `checkMaxQueuedPerNode` 100, each
+  10-1000).
 - **Triggers.** `push` to a branch (no tags, no deletions) and
   `pull_request` `opened` / `reopened` / `synchronize` from the same
   repository queue one run per item for the head commit; fork pull requests
-  never run. Runs are deduplicated per app, commit and name, and a newer
-  commit of a branch cancels the queued runs of older commits of that branch.
+  never run. Runs are deduplicated per app, commit and name (runs that never
+  ran do not count: `superseded`, `queue-full`, and `offline` before a node
+  took them), a newer push of a branch cancels the queued runs of the
+  other commits of that branch, and runs beyond the queue bounds end at once
+  as `errored` (`queue-full`).
   `POST /apps/{id}/checks` `{ ref, names? }` runs them by hand (the only
   trigger for token connections); `POST /checks/{id}/rerun` and `POST
   /checks/{id}/cancel` act on one run.
@@ -557,10 +562,21 @@ export interface DnsProvider {
      turned into mounts of the run's source volume (`volume.subpath`),
      read-only text files of at most 64 KiB into `configs` with inline
      content; environment entries and build arguments without a value
-     dropped;
-  4. `build --pull` (in the node's build slots, shared with deployments) and
-     `pull --policy always --ignore-buildable`, so no image comes from the
-     node alone; Compose of checks runs without the agent's proxy variables;
+     dropped; every build gets the build argument
+     `BUILDKIT_SANDBOX_HOSTNAME=check-<app id>`, which keys the cache of its
+     `RUN` steps per app;
+  4. `build --pull --builder launchway-check-build-<memory>m-<cpus>c-<hash>`
+     (in the node's build slots, shared with deployments): a buildx
+     `docker-container` builder of checks only (the hash covers its BuildKit
+     image, network, flags and `buildkitd.toml`), created on demand with the
+     memory (no swap), CPUs and processes of a check service, a cache of at
+     most 5000 MB whose cache mounts are emptied before every build and after
+     every run, its own network `launchway-check-build` with build steps in
+     the builder container's network namespace and Docker's DNS, and
+     `# syntax=` limited to `docker/dockerfile`; builders unused for a day
+     are removed. Then `pull --policy always --ignore-buildable`, so no image
+     comes from the node alone; Compose of checks runs without the agent's
+     proxy variables;
   5. create the volume `<project>_source`, `docker cp` the checkout into a
      created (never started) container that mounts it, and `chown` it to the
      user of the check's service in a one-shot container (the agent has no

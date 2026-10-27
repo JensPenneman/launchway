@@ -85,6 +85,14 @@ describe('commitStatusOf', () => {
     );
   });
 
+  it('says why a run was not queued', () => {
+    const message =
+      "Not run: 28 queued and 5 new checks would exceed the app's limit of 30; run it again later";
+    expect(
+      commitStatusOf(runOf({ status: 'errored', reason: 'queue-full', statusMessage: message })),
+    ).toEqual({ state: 'error', description: message });
+  });
+
   it('tells a superseded run from a cancelled one', () => {
     expect(
       commitStatusOf(

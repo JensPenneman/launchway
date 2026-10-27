@@ -1,4 +1,4 @@
-import { CheckCpus, CheckMemoryMb, CheckPidsLimit } from './checks.js';
+import { CheckCpus, CheckMemoryMb, CheckPidsLimit, CheckQueueLimit } from './checks.js';
 import {
   Email,
   Hostname,
@@ -77,6 +77,16 @@ export const Settings = z
     checkMemoryMb: CheckMemoryMb,
     checkCpus: CheckCpus,
     checkPidsLimit: CheckPidsLimit,
+    checkMaxQueuedPerApp: CheckQueueLimit.openapi({
+      description:
+        'Queued check runs an app may hold; runs beyond it end at once with error, reason queue-full',
+      example: 30,
+    }),
+    checkMaxQueuedPerNode: CheckQueueLimit.openapi({
+      description:
+        'Queued check runs a node may hold, all apps together; runs beyond it end at once with error, reason queue-full',
+      example: 100,
+    }),
     updatedAt: Timestamp,
   })
   .openapi('Settings');
@@ -98,6 +108,8 @@ export const UpdateSettingsInput = z
     checkMemoryMb: CheckMemoryMb.optional(),
     checkCpus: CheckCpus.optional(),
     checkPidsLimit: CheckPidsLimit.optional(),
+    checkMaxQueuedPerApp: CheckQueueLimit.optional(),
+    checkMaxQueuedPerNode: CheckQueueLimit.optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one setting')
   .refine((v) => !(v.forwardAuthUrl && v.forwardAuthTarget), {

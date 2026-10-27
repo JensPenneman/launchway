@@ -40,9 +40,11 @@ who can push to a deployed repository) mount host directories.
    Desktop exposes Windows drives below `/run/desktop/mnt/host`); Docker's
    data directory `/var/lib/docker`; the agent workspace; bind propagation
    `shared`, `rshared`, `slave` or `rslave`; the platform's own volumes
-   (`launchway_*`, `launchway-agent_*`); and everything the policy refuses
-   for untrusted apps (host-path volume drivers, privileges, devices,
-   namespaces and the rest). Refusals name the node's allowed roots.
+   (`launchway_*`, `launchway-agent_*`, and since ADR 0020 the BuildKit state
+   of check builders, `buildx_buildkit_launchway-check-build-*`); and
+   everything the policy refuses for untrusted apps (host-path volume
+   drivers, privileges, devices, namespaces and the rest). Refusals name the
+   node's allowed roots.
 5. **Visible.** The app header shows a "trusted mounts" badge and every
    deployment log lists the mounts that only trust allowed.
 

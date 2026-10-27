@@ -304,6 +304,8 @@ describe('checks against PostgreSQL', () => {
       checkMemoryMb: current?.checkMemoryMb ?? 4096,
       checkCpus: current?.checkCpus ?? 2,
       checkPidsLimit: current?.checkPidsLimit ?? 4096,
+      checkMaxQueuedPerApp: current?.checkMaxQueuedPerApp ?? 30,
+      checkMaxQueuedPerNode: current?.checkMaxQueuedPerNode ?? 100,
     };
     github.apps.set(ghAppId, {
       id: ghAppId,
@@ -516,13 +518,108 @@ describe('checks against PostgreSQL', () => {
     await deliver('push', push(repo, 'feature/a', sha(`${repo}-4`)));
     expect((await runRow(third?.id ?? '')).reason).toBe('superseded');
 
-    // The same commit again (any trigger) adds nothing and supersedes nothing.
+    // The newest push of the branch runs, whatever the commit: a commit whose runs were
+    // superseded runs again when it is pushed again (a force-push back), and supersedes in turn.
+    const [fourth] = (await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-4`));
     await deliver('push', push(repo, 'feature/a', sha(`${repo}-3`)));
-    expect((await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`))).toHaveLength(1);
+    const again = (await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`));
+    expect(again.map((r) => [r.status, r.reason])).toEqual([
+      ['cancelled', 'superseded'],
+      ['queued', null],
+    ]);
+    expect((await runRow(fourth?.id ?? '')).reason).toBe('superseded');
+    // The same commit again while it is queued adds nothing and supersedes nothing.
+    await deliver('push', push(repo, 'feature/a', sha(`${repo}-3`)));
+    await deliver(
+      'pull_request',
+      pullRequest(repo, 'synchronize', 3, sha(`${repo}-3`), { headRef: 'feature/a' }),
+    );
+    expect((await runsOf(app.id)).filter((r) => r.commitSha === sha(`${repo}-3`))).toHaveLength(2);
     await db
       .update(checkRuns)
       .set({ status: 'cancelled', finishedAt: new Date() })
       .where(eq(checkRuns.id, second?.id as CheckRunId));
+  });
+
+  it('bounds the queue per app and per node: runs beyond end at once as queue-full', async () => {
+    const setLimits = async (perApp: number, perNode: number) => {
+      const res = await api.request(
+        '/api/v1/settings',
+        json('PATCH', { checkMaxQueuedPerApp: perApp, checkMaxQueuedPerNode: perNode }),
+      );
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({
+        checkMaxQueuedPerApp: perApp,
+        checkMaxQueuedPerNode: perNode,
+      } satisfies Partial<Settings>);
+    };
+    // A commit queues all its checks or none: a bound below the most checks an app may have
+    // would keep such an app from ever queueing.
+    for (const limit of [{ checkMaxQueuedPerApp: 9 }, { checkMaxQueuedPerNode: 9 }]) {
+      expect((await api.request('/api/v1/settings', json('PATCH', limit))).status).toBe(400);
+    }
+    await setLimits(10, 11);
+    try {
+      // An offline node: every run stays queued.
+      const node = await newNode(false);
+      const items = ['a', 'b', 'c', 'd'].map((name) => ({ ...lint, name }));
+      const { app, repo } = await createTestApp(node, { enabled: true, items });
+      for (const label of ['one', 'two', 'three']) {
+        await deliver('push', push(repo, `feature/${label}`, sha(`${repo}-${label}`)));
+      }
+      const runs = await runsOf(app.id);
+      const of = (label: string) => runs.filter((r) => r.commitSha === sha(`${repo}-${label}`));
+      expect([...of('one'), ...of('two')].map((r) => r.status)).toEqual(Array(8).fill('queued'));
+      // The checks of the third push: all or nothing, ended at once so GitHub shows why.
+      expect(of('three')).toHaveLength(4);
+      for (const run of of('three')) {
+        expect(run).toMatchObject({
+          status: 'errored',
+          reason: 'queue-full',
+          statusMessage:
+            "Not run: 8 queued and 4 new checks would exceed the app's limit of 10; run it again later",
+        });
+        expect(run.finishedAt).not.toBeNull();
+        expect((await auditsOf(run.id)).map((a) => [a.action, a.summary])).toEqual([
+          ['check.create', expect.objectContaining({ status: 'errored', reason: 'queue-full' })],
+        ]);
+      }
+      expect(
+        gateway.checkRuns.filter((r) => of('three').some((t) => t.id === r.payload.runId)),
+      ).toEqual([]);
+
+      // By hand the request is refused instead.
+      const manual = await api.request(
+        `/api/v1/apps/${app.id}/checks`,
+        json('POST', { ref: 'main' }),
+      );
+      expect(manual.status).toBe(409);
+      expect(((await manual.json()) as { detail: string }).detail).toBe(
+        "Not queued: 8 queued and 4 new checks would exceed the app's limit of 10; wait for them or raise the limit",
+      );
+
+      // The node's bound counts the queued runs of all its apps.
+      const other = await createTestApp(node, { enabled: true, items });
+      await deliver('push', push(other.repo, 'main', sha(`${other.repo}-x`)));
+      const others = await runsOf(other.app.id);
+      expect(others.map((r) => [r.status, r.reason, r.statusMessage])).toEqual(
+        Array(4).fill([
+          'errored',
+          'queue-full',
+          "Not run: 8 queued and 4 new checks would exceed its node's limit of 11; run it again later",
+        ]),
+      );
+
+      // Once there is room, pushing the commit again queues it: runs that never ran do not count.
+      await setLimits(20, 30);
+      await deliver('push', push(repo, 'feature/three', sha(`${repo}-three`)));
+      const queuedThree = (await runsOf(app.id)).filter(
+        (r) => r.commitSha === sha(`${repo}-three`) && r.status === 'queued',
+      );
+      expect(queuedThree).toHaveLength(4);
+    } finally {
+      await setLimits(30, 100);
+    }
   });
 
   it('runs checks by hand, re-runs finished runs and cancels queued ones', async () => {
@@ -662,11 +759,12 @@ describe('checks against PostgreSQL', () => {
       checkCpus: 1.5,
       checkPidsLimit: 512,
     } satisfies Partial<Settings>);
-    const [audit] = await db
+    const audits = await db
       .select()
       .from(auditEvents)
       .where(and(eq(auditEvents.action, 'settings.update'), eq(auditEvents.actorId, admin.user.id)))
       .orderBy(asc(auditEvents.createdAt));
+    const audit = audits.find((entry) => entry.summary && 'checkMemoryMb' in entry.summary);
     expect(audit?.summary).toMatchObject({ checkMemoryMb: { to: 1024 }, checkCpus: { to: 1.5 } });
 
     const node = await newNode(true);
@@ -1044,6 +1142,42 @@ describe('checks against PostgreSQL', () => {
       reason: 'offline',
       statusMessage: NODE_OFFLINE_MESSAGE,
     });
+  });
+
+  it('queues a pushed commit again when its runs ended before their offline node took them', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const commit = sha(`${repo}-offline`);
+    await deliver('push', push(repo, 'feature/offline', commit));
+    const [first] = await runsOf(app.id);
+    expect(first).toMatchObject({ status: 'queued', commitSha: commit });
+    const old = new Date(Date.now() - 11 * 60_000);
+    await db
+      .update(checkRuns)
+      .set({ createdAt: old })
+      .where(eq(checkRuns.id, first?.id as CheckRunId));
+    await db.update(nodes).set({ lastSeenAt: old }).where(eq(nodes.id, node));
+    await createCheckDispatcher(deps).tick();
+    expect(await runRow(first?.id ?? '')).toMatchObject({
+      status: 'errored',
+      reason: 'offline',
+      startedAt: null,
+    });
+    // Pushed again (or delivered again): it never ran, so it queues once more, and only once.
+    await deliver('push', push(repo, 'feature/offline', commit));
+    await deliver('push', push(repo, 'feature/offline', commit));
+    const runs = await runsOf(app.id);
+    expect(runs.map((r) => [r.status, r.reason])).toEqual([
+      ['errored', 'offline'],
+      ['queued', null],
+    ]);
+    // A run its node took counts, whatever ended it.
+    await db
+      .update(checkRuns)
+      .set({ status: 'errored', reason: 'offline', startedAt: old, finishedAt: new Date() })
+      .where(eq(checkRuns.id, runs[1]?.id as CheckRunId));
+    await deliver('push', push(repo, 'feature/offline', commit));
+    expect(await runsOf(app.id)).toHaveLength(2);
   });
 
   it('errors the runs of a node whose agent does not run checks', async () => {

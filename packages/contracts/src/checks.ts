@@ -48,7 +48,8 @@ export type CheckRunTrigger = z.infer<typeof CheckRunTrigger>;
  * source volume, a dependency that does not start, ...), `interrupted` (the agent shut down),
  * `cancelled`, `superseded` (a newer commit of the branch arrived while it waited), `offline` (the
  * node was offline too long or went away), `lost` (the node no longer reports it), `unsupported`
- * (the node's agent does not run checks) and `dispatch` (the control plane could not prepare it).
+ * (the node's agent does not run checks), `dispatch` (the control plane could not prepare it) and
+ * `queue-full` (the app or its node already had as many queued runs as the platform allows).
  */
 export const CHECK_RUN_REASONS = [
   'exit',
@@ -63,6 +64,7 @@ export const CHECK_RUN_REASONS = [
   'lost',
   'unsupported',
   'dispatch',
+  'queue-full',
 ] as const;
 export const CheckRunReason = z.enum(CHECK_RUN_REASONS).openapi('CheckRunReason');
 export type CheckRunReason = z.infer<typeof CheckRunReason>;
@@ -207,6 +209,19 @@ export const CheckPidsLimit = z.number().int().min(64).max(1_048_576).openapi({
   description: 'Processes and threads of every service of a check',
   example: DEFAULT_CHECK_PIDS_LIMIT,
 });
+
+/**
+ * Defaults of the platform settings that bound the queue: runs that would make an app or a node
+ * hold more queued runs end at once with `errored`, reason `queue-full`.
+ */
+export const DEFAULT_CHECK_MAX_QUEUED_PER_APP = 30;
+export const DEFAULT_CHECK_MAX_QUEUED_PER_NODE = 100;
+
+/**
+ * Bound of the queue of an app or of a node. A commit queues all its checks or none, so the bound
+ * is at least MAX_CHECK_ITEMS: an app with that many checks could never queue below it.
+ */
+export const CheckQueueLimit = z.number().int().min(MAX_CHECK_ITEMS).max(1000);
 
 /** Log lines the agent sends per run; it then sends one "truncated" line and drops the rest. */
 export const CHECK_LOG_LINE_LIMIT = 20_000;

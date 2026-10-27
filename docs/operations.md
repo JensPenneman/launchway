@@ -456,7 +456,9 @@ images.
      (1-120, default 30) and, optionally, a Compose file of its own.
 3. **Limits** (admins): **Settings → Platform → Checks** sets the memory,
    CPUs and processes every service of a check gets (`checkMemoryMb`,
-   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096). The
+   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096) and how many
+   checks may wait (`checkMaxQueuedPerApp`, `checkMaxQueuedPerNode`; defaults
+   30 and 100). The
    memory limit applies to every service of a check, so a dev container with
    a database may use twice as much; the card shows the total.
 
@@ -505,6 +507,30 @@ dependencies first.
   exists on the node, such as another app's build, and cannot mount images.
   Builds and Compose of checks do not see the agent's proxy variables; a node
   behind a proxy needs it in Docker's own configuration.
+- **A builder of its own.** Images of checks are built by a BuildKit of
+  their own, not by the engine's builder that deployments use: a buildx
+  `docker-container` builder named after the limits and its settings
+  (`launchway-check-build-2048m-2c-<hash>`), with the memory (no swap), CPUs
+  and processes of a check service, on its own network
+  `launchway-check-build`. The agent creates it with the first build, keeps
+  it and its cache between runs, replaces it when the limits or its settings
+  change, and removes it after a day without check builds. A build step that
+  needs more memory fails with "cannot allocate memory". Run one agent per
+  Docker daemon: an agent removes the check builders it does not know.
+- **What builds reach.** Build steps resolve names through Docker's DNS and
+  reach the internet, but not the containers of the default bridge or of
+  other networks. Like check containers, they do reach the ports the node
+  publishes, through any bridge gateway such as 172.17.0.1, Launchway's API
+  on port 3000 included, and on Docker Desktop the host through
+  `host.docker.internal`, its loopback included. `# syntax=` lines may only
+  name Docker's Dockerfile frontend (`docker/dockerfile`).
+- **What builds share.** Cached `RUN` steps are kept per app: a step one app
+  built is never reused by another app's build (every check build gets the
+  build argument `BUILDKIT_SANDBOX_HOSTNAME=check-<app id>`; a Dockerfile
+  that pins a frontend older than `docker/dockerfile:1.2` ignores it). Base
+  images and `COPY` layers are shared. Cache mounts
+  (`RUN --mount=type=cache`) are emptied before every build and after every
+  run.
 - **Its own, short-lived project.** Every run is the Compose project
   `launchway-check_<slug>_<run>`: published ports, fixed container names,
   restart policies, `ulimits` and network subnets are removed, container logs
@@ -514,8 +540,17 @@ dependencies first.
   service, and later builds reuse their layers.
 - **One at a time.** A node runs one check at a time, oldest first across
   its apps. A newer push to a branch cancels the queued checks of older
-  commits of that branch; a push and a pull request of the same commit run
-  once.
+  commits of that branch, whichever commit it is (a force-push back to a
+  commit runs its checks again); a push and a pull request of the same commit
+  run once.
+- **A bounded queue.** An app may have at most `checkMaxQueuedPerApp` (30)
+  checks waiting and a node at most `checkMaxQueuedPerNode` (100); both are
+  at least 10, since a commit queues all its checks or none. The checks of a
+  push beyond that end at once with *error*, reason `queue-full`, and GitHub
+  shows, for example, "Not run: 28 queued and 5 new checks would exceed the
+  app's limit of 30; run it again later"; pushing the commit again or
+  **Re-run** queues them once there is room. Running checks by hand is
+  refused instead (409).
 - **Logs** stream to the run's drawer on the **Checks** tab and
   `GET /api/v1/checks/{id}/logs?follow=true`, at most 20 000 lines or 16 MiB
   per run, and are deleted after 30 days. The runs stay listed.
@@ -544,10 +579,34 @@ separately, so a check of Trail (`dev` and `db`) may take up to twice
   development container), which fits.
 - 4096 processes per service are plenty for Node and Chromium and stop a
   runaway fork.
-- Disk: runs remove their volumes and checkouts; images and the build cache
-  stay. `docker system df` shows them, `docker image ls 'launchway-check/*'`
-  the images of checks, and `docker builder prune --filter until=168h`
-  removes build cache older than a week (of deployments too).
+- The check builder counts as one more service: its builds get at most
+  `checkMemoryMb` and `checkCpus` while a check builds, before its own
+  services start. On Docker Desktop for Windows it is the container
+  `buildx_buildkit_launchway-check-build-<memory>m-<cpus>c-<hash>0` in WSL 2
+  (it restarts with Docker Desktop), and the first check build pulls its
+  BuildKit image `moby/buildkit` from Docker Hub (about 110 MB).
+- Disk: runs remove their volumes and checkouts; images of checks
+  (`docker image ls 'launchway-check/*'`) and the check builder's cache stay.
+  The builder keeps at most 5000 MB of cache (BuildKit's garbage collection,
+  and a prune after every run); that bounds what stays, not what one build
+  writes while it runs, so keep room for the largest build. To see the cache
+  or free it now, find the builder and ask the agent's buildx, which keeps
+  its records in the agent's volume:
+
+  ```sh
+  docker ps --filter name=buildx_buildkit_launchway-check-build --format '{{.Names}}'
+  # buildx_buildkit_launchway-check-build-2048m-2c-1a2b3c4d0 is the builder
+  # launchway-check-build-2048m-2c-1a2b3c4d (without buildx_buildkit_ and the final 0)
+  docker exec -e BUILDX_CONFIG=/var/lib/launchway/agent/buildx launchway-launchway-agent-1 \
+    docker buildx du --builder launchway-check-build-2048m-2c-1a2b3c4d
+  docker exec -e BUILDX_CONFIG=/var/lib/launchway/agent/buildx launchway-launchway-agent-1 \
+    docker buildx prune --builder launchway-check-build-2048m-2c-1a2b3c4d --force
+  ```
+
+  Removing the builder altogether (`docker rm -f` of its container and
+  `docker volume rm` of its `…0_state` volume) is safe: the next check build
+  creates it again. The engine's own build cache (`docker builder prune`)
+  belongs to deployments; checks no longer add to it.
 
 ### Require checks in branch protection
 
@@ -583,6 +642,17 @@ is fixed.
   own Compose file instead of using one that only exists on the node.
 - **Checks stay queued.** One check runs per node at a time. Checks of a node
   that is offline for 10 minutes end with *error*.
+- **"Not run: … would exceed the app's limit".** The queue of the app or
+  its node was full (reason `queue-full`). Wait for the queue to drain, then
+  push again or **Re-run**, or raise the limits under **Settings → Platform →
+  Checks**.
+- **A build fails with "cannot allocate memory" or "Could not create the
+  check builder".** Builds of checks get the memory of one check service;
+  raise `checkMemoryMb`, or check that the node can pull `moby/buildkit` from
+  Docker Hub. The run's log shows what Docker answered.
+- **A build fails with "is not an allowed gateway source".** A `# syntax=`
+  line names a frontend other than Docker's Dockerfile frontend; use
+  `# syntax=docker/dockerfile:1` or drop the line.
 - **No status on GitHub.** Grant the permission (above). Statuses are posted
   best effort; after a restart the API posts those of the last seven days
   that GitHub does not show yet.
@@ -689,8 +759,9 @@ To reuse an existing volume, declare it `external: true` with its real name
 Even trusted apps cannot mount the Docker socket, `/`, `/proc`, `/sys`,
 `/dev`, `/etc`, `/var/run` or `/run` (except below a deeper allowed root such
 as Docker Desktop's drive path), Docker's data directory, the agent workspace
-or the platform's own volumes, and cannot use `shared`/`slave` mount
-propagation. See [ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md).
+or the platform's own volumes (the check builders' BuildKit state among
+them), and cannot use `shared`/`slave` mount propagation. See
+[ADR 0015](adr/0015-trusted-mounts-are-an-explicit-admin-decision.md).
 
 ## Automatic deployments
 
@@ -822,6 +893,19 @@ docker compose -f compose.agent.yaml up -d
 
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
+
+### Upgrading to 0.5.0
+
+- **Builds of checks** move to the check builder (*What a check runs with*):
+  the first check build after the upgrade pulls `moby/buildkit` and starts
+  with an empty cache. The engine's build cache no longer grows with checks;
+  what earlier checks left there stays until `docker builder prune`.
+- **Queue bounds.** At most 30 queued checks per app and 100 per node
+  (**Settings → Platform → Checks**); checks of a push beyond that end at once
+  with *error*, reason `queue-full`.
+- **Deployments** fail with reason `policy` if a build forwards an SSH agent
+  (`build.ssh: [default]`, or an id without a key file): nodes have none, so
+  such builds failed anyway, later and less clearly.
 
 ### Upgrading to the version with checks
 

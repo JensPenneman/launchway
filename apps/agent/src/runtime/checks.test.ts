@@ -11,7 +11,8 @@ import {
   type LogLine,
 } from '@launchway/contracts';
 import { pino } from 'pino';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { cacheMountPruneArgs, checkBuilderName, checkBuilderPruneArgs } from './check-builder.js';
 import { CheckManager } from './checks.js';
 import { Semaphore } from './deployments.js';
 import type { Runner, RunOptions, RunResult } from './exec.js';
@@ -310,6 +311,13 @@ describe('CheckManager', () => {
       'git checkout',
       'git rev-parse',
       'compose config',
+      // The check builder: its network, booting it, its process limit, emptying its cache mounts,
+      // builders of other limits or settings.
+      'docker network inspect',
+      'docker buildx',
+      'docker update',
+      'docker buildx',
+      'docker ps',
       'compose build',
       'compose pull',
       'docker volume create',
@@ -327,9 +335,33 @@ describe('CheckManager', () => {
       'docker volume ls',
       'docker network ls',
       'docker image prune',
+      // The check builder: its cache mounts emptied, its cache pruned to its bound.
+      'docker buildx',
+      'docker buildx',
     ]);
     // The result goes out before the cleanup starts.
-    expect(fake.events.indexOf('send check.result')).toBeLessThan(fake.events.indexOf('docker ps'));
+    expect(fake.events.indexOf('send check.result')).toBeLessThan(
+      fake.events.indexOf('compose down'),
+    );
+    const builder = checkBuilderName({ memoryBytes: 1024 * 1024 ** 2, cpus: 2 });
+    expect(builder).toMatch(/^launchway-check-build-1024m-2c-[0-9a-f]{8}$/);
+    const buildx = await import('node:fs').then((fs) => fs.realpathSync(root));
+    expect(callsOf('compose build')[0]?.args.slice(-3)).toEqual(['--pull', '--builder', builder]);
+    expect([root, buildx].map((r) => join(r, 'agent', 'buildx'))).toContain(
+      callsOf('compose build')[0]?.options.env?.BUILDX_CONFIG,
+    );
+    expect(callsOf('docker update')[0]?.args).toEqual([
+      'update',
+      '--pids-limit',
+      '1024',
+      '--',
+      `buildx_buildkit_${builder}0`,
+    ]);
+    expect(fake.calls.filter((c) => c.args[0] === 'buildx').map((c) => c.args)).toEqual([
+      ['buildx', 'inspect', '--bootstrap', '--', builder],
+      cacheMountPruneArgs(builder),
+      ...checkBuilderPruneArgs(builder),
+    ]);
 
     const dir = join(root, 'checks', APP.id, run.runId);
     const src = await import('node:fs').then((fs) => fs.realpathSync(root));
@@ -1121,6 +1153,9 @@ describe('CheckManager.sweep', () => {
       'docker network ls',
       'docker network rm',
       'docker image prune',
+      // Check builders unused for a day: none here, so their network goes.
+      'docker ps',
+      'docker network rm',
     ]);
     const args = (key: string) => callsOf(key)[0]?.args;
     expect(args('docker ps')).toEqual([
@@ -1172,6 +1207,32 @@ describe('CheckManager.sweep', () => {
     expect(args('docker image prune')).toContain('label=launchway.check=zeus-api');
   });
 
+  it('looks for idle check builders at start and every hour, until it shuts down', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const listings = () =>
+        fake.calls.filter(
+          (c) =>
+            c.args[0] === 'ps' && c.args.includes('name=^buildx_buildkit_launchway-check-build-'),
+        ).length;
+      const checks = manager();
+      checks.sweep();
+      await waitFor(() => listings() === 1);
+      vi.advanceTimersByTime(60 * 60_000);
+      await waitFor(() => listings() === 2);
+      // An app's sweep leaves the builders alone and starts no second timer.
+      checks.sweep({ slug: 'trail' });
+      vi.advanceTimersByTime(60 * 60_000);
+      await waitFor(() => listings() === 3);
+      await checks.shutdown(1_000);
+      vi.advanceTimersByTime(3 * 60 * 60_000);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(listings()).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('leaves Docker alone when it cannot list the leftovers', async () => {
     fake.on['docker ps'] = () => ({ code: 1 });
     const checks = manager();
@@ -1179,6 +1240,7 @@ describe('CheckManager.sweep', () => {
     checks.run('req-1', payload());
     await waitFor(() => results().length === 1);
     const keys = fake.calls.map((c) => keyOf(c.command, c.args));
-    expect(keys.slice(0, keys.indexOf('git init'))).toEqual(['docker ps']);
+    // The leftovers and the check builders: neither listed, nothing removed.
+    expect(keys.slice(0, keys.indexOf('git init'))).toEqual(['docker ps', 'docker ps']);
   });
 });

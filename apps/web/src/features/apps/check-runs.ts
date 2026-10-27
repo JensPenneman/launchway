@@ -25,6 +25,7 @@ const OUTCOMES: Record<Exclude<CheckRunReason, 'exit' | 'timeout'>, string> = {
   lost: 'Its node no longer reports it',
   unsupported: "Its node's agent does not run checks (update the agent)",
   dispatch: 'Launchway could not prepare it',
+  'queue-full': 'The app or its node already had as many queued checks as allowed',
 };
 
 /** Why a run ended, in words; null while it is queued or running. */

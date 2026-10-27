@@ -22,6 +22,11 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type WebSocket, WebSocketServer } from 'ws';
 import { AgentConnection } from '../../src/connection.js';
 import { createAgentRuntime } from '../../src/runtime/agent-runtime.js';
+import {
+  CHECK_BUILDER_NETWORK,
+  checkBuilderContainer,
+  checkBuilderName,
+} from '../../src/runtime/check-builder.js';
 
 const exec = promisify(execFile);
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'silent' });
@@ -29,6 +34,8 @@ const logger = pino({ level: process.env.LOG_LEVEL ?? 'silent' });
 const suffix = randomBytes(4).toString('hex');
 const slug = `itc-${suffix}`;
 const appId = generateId('app');
+/** A second app, for what one app's runs must never pass to another's. */
+const other = { id: generateId('app'), slug: `itc-${suffix}-b` };
 const cloneUrl = 'https://git.example.test/acme/checks-fixture.git';
 const TOKEN = 'dGVzdDpjaGVjay10b2tlbi12YWx1ZQ==';
 const AUTHORIZATION = `basic ${TOKEN}`;
@@ -37,17 +44,19 @@ const LIMITS = { memoryBytes: 256 * 1024 * 1024, cpus: 1, pidsLimit: 256 };
 let tmp: string;
 let workspace: string;
 let bareRepo: string;
-const commits: Record<'good' | 'bad' | 'leak' | 'include', string> = {
+/** Commits of the fixture repository; tests add branches of their own (`commitOnBranch`). */
+const commits: Record<string, string> = {
   good: '',
   bad: '',
   leak: '',
   include: '',
+  hungry: '',
 };
 /** Stands in for another app's decrypted environment next to the checkout. */
 const INCLUDE_MARKER = 'victim-database-password-1f3e';
 /** Stands in for the node credential: a file outside the checkout that is no label file. */
 const LEAK_MARKER = `lwya_${'L'.repeat(43)}`;
-const runIds: string[] = [];
+const runs: { runId: string; slug: string }[] = [];
 /** A project left by an earlier run of this file's app, for the sweep. */
 const leftover = checkProjectName(slug, generateId('chk'));
 
@@ -70,8 +79,22 @@ async function docker(...args: string[]): Promise<string> {
   return stdout.trim();
 }
 
+/** A build step that needs more memory than the check builder may use (LIMITS: 256 MiB). */
+const HUNGRY_DOCKERFILE = `FROM alpine:3
+RUN dd if=/dev/zero of=/dev/null bs=600M count=1 && echo "took $((300 * 2)) MB"
+`;
+const BUILDER = checkBuilderName(LIMITS);
+const DOCKER_USER =
+  'RUN adduser -D -u 1234 tester && install -d -o tester -g tester /workspace/.cache';
 const DOCKERFILE = `FROM alpine:3
-RUN adduser -D -u 1234 tester && install -d -o tester -g tester /workspace/.cache
+${DOCKER_USER}
+USER tester
+WORKDIR /workspace
+`;
+/** The fixture Dockerfile with `steps` (build steps that write what a check reads) added. */
+const dockerfileWith = (...steps: string[]) => `FROM alpine:3
+${DOCKER_USER}
+${steps.join('\n')}
 USER tester
 WORKDIR /workspace
 `;
@@ -154,8 +177,26 @@ async function createFixtureRepository(): Promise<void> {
   await git(src, 'add', '.');
   await git(src, 'commit', '--quiet', '-m', 'include with an env file outside');
   commits.include = await git(src, 'rev-parse', 'HEAD');
+  // The fixture project with a build step that needs 600 MB, on a branch of its own.
+  await git(src, 'checkout', '--quiet', '-b', 'hungry', commits.good);
+  await writeFile(join(src, '.devcontainer', 'Dockerfile'), HUNGRY_DOCKERFILE);
+  await git(src, 'commit', '--quiet', '-am', 'a build step that needs 600 MB');
+  commits.hungry = await git(src, 'rev-parse', 'HEAD');
+  await git(src, 'checkout', '--quiet', 'main');
   bareRepo = join(tmp, 'fixture.git');
   await git(tmp, 'clone', '--quiet', '--bare', src, bareRepo);
+}
+
+/** Commits the fixture with another Dockerfile on a branch of its own and pushes it. */
+async function commitOnBranch(branch: string, dockerfile: string): Promise<string> {
+  const src = join(tmp, 'src');
+  await git(src, 'checkout', '--quiet', '-b', branch, commits.good ?? '');
+  await writeFile(join(src, '.devcontainer', 'Dockerfile'), dockerfile);
+  await git(src, 'commit', '--quiet', '-am', branch);
+  commits[branch] = await git(src, 'rev-parse', 'HEAD');
+  await git(src, 'checkout', '--quiet', 'main');
+  await git(src, 'push', '--quiet', bareRepo, branch);
+  return commits[branch] ?? '';
 }
 
 interface ControlPlane {
@@ -225,16 +266,19 @@ const logLinesOf = (id: string): LogLine[] =>
   repliesTo(id).flatMap((m) => (m.type === 'check.log' ? m.payload.lines : []));
 
 function checkPayload(
-  commit: keyof typeof commits,
+  commit: string,
   command: string,
   timeoutMs = 120_000,
+  app = { id: appId, slug },
 ): CheckRunPayload {
   const runId = generateId('chk');
-  runIds.push(runId);
+  runs.push({ runId, slug: app.slug });
+  const sha = commits[commit];
+  if (!sha) throw new Error(`no commit ${commit}`);
   return {
     runId,
-    app: { id: appId, slug },
-    source: { cloneUrl, ref: 'main', sha: commits[commit], authorization: AUTHORIZATION },
+    app,
+    source: { cloneUrl, ref: 'main', sha, authorization: AUTHORIZATION },
     composeFiles: ['.devcontainer/compose.yaml'],
     check: { name: 'quality', service: 'dev', command, timeoutMs },
     limits: LIMITS,
@@ -263,28 +307,55 @@ const labelled = async (kind: 'ps' | 'volume' | 'network' | 'image', filter: str
 };
 
 /** Cleanup runs after the result: waits until nothing of the run is left on Docker or disk. */
-async function expectCleanedUp(runId: string): Promise<void> {
+async function expectCleanedUp(runId: string, app = { id: appId, slug }): Promise<void> {
   const filter = `label=${CHECK_LABEL}=${runId}`;
   await waitFor(async () => {
     const left = [
       await labelled('ps', filter),
       await labelled('volume', filter),
       await labelled('network', filter),
-      await labelled('image', `label=${CHECK_LABEL}=${slug}`),
+      await labelled('image', `label=${CHECK_LABEL}=${app.slug}`),
     ].join('');
-    const dir = await stat(join(workspace, 'checks', appId, runId)).then(
+    const dir = await stat(join(workspace, 'checks', app.id, runId)).then(
       () => true,
       () => false,
     );
     return left === '' && !dir;
   }, 60_000);
-  const project = checkProjectName(slug, runId as `chk_${string}`);
+  const project = checkProjectName(app.slug, runId as `chk_${string}`);
   expect(await docker('volume', 'ls', '--quiet', '--filter', `name=${project}`)).toBe('');
 }
 
+/** What the command of a run printed: stdout after its `docker compose run` (builds print too). */
+const commandOutputOf = (id: string) => {
+  const lines = logLinesOf(id);
+  const run = lines.findLastIndex(
+    (l) => l.stream === 'system' && l.line.startsWith('$ docker ') && l.line.includes(' run '),
+  );
+  return lines
+    .slice(run + 1)
+    .filter((l) => l.stream === 'stdout')
+    .map((l) => l.line);
+};
+
+/** Runs `command` for `commit` and expects exit 0, showing the log otherwise. */
+async function runOk(id: string, commit: string, command: string, app = { id: appId, slug }) {
+  const payload = checkPayload(commit, command, 120_000, app);
+  const result = await runCheck(id, payload);
+  if (result.reason !== 'exit' || result.exitCode !== 0) {
+    const lines = logLinesOf(id).map((l) => l.line);
+    throw new Error(`check failed: ${JSON.stringify(result)}\n${lines.join('\n')}`);
+  }
+  await expectCleanedUp(payload.runId, app);
+  return commandOutputOf(id);
+}
+
+/** A web server on Docker's default bridge, as another app's container would be. */
+const server = `launchway-it-${suffix}-server`;
+
 /** Everything this file may have created; only ever names and labels of its own runs. */
 async function cleanupDocker(): Promise<void> {
-  for (const runId of runIds) {
+  for (const { runId, slug } of runs) {
     const filter = `label=${CHECK_LABEL}=${runId}`;
     const ids = await docker('ps', '--all', '--quiet', '--filter', filter).catch(() => '');
     if (ids) await docker('rm', '--force', '--volumes', ...ids.split('\n')).catch(() => '');
@@ -299,6 +370,19 @@ async function cleanupDocker(): Promise<void> {
   await docker('volume', 'rm', '--force', `${leftover}_source`).catch(() => '');
   await docker('network', 'rm', `${leftover}_default`).catch(() => '');
   await docker('image', 'rm', '--force', checkImageName(slug, 'dev')).catch(() => '');
+  await docker('image', 'rm', '--force', checkImageName(other.slug, 'dev')).catch(() => '');
+  await docker('rm', '--force', server).catch(() => '');
+  // The check builder the runs created (named after LIMITS) and its network, if nothing else uses it.
+  if (workspace) {
+    await exec('docker', ['buildx', 'rm', '--force', BUILDER], {
+      env: { ...process.env, BUILDX_CONFIG: join(workspace, 'agent', 'buildx') },
+    }).catch(() => undefined);
+  }
+  await docker('rm', '--force', checkBuilderContainer(BUILDER)).catch(() => '');
+  await docker('volume', 'rm', '--force', `${checkBuilderContainer(BUILDER)}_state`).catch(
+    () => '',
+  );
+  await docker('network', 'rm', CHECK_BUILDER_NETWORK).catch(() => '');
 }
 
 beforeAll(async () => {
@@ -519,6 +603,122 @@ describe('check runs against Docker', () => {
     });
     expect(JSON.stringify(plane.received)).not.toContain(INCLUDE_MARKER);
     await expectCleanedUp(payload.runId);
+  });
+
+  it('builds in a check builder of its own with the check limits', async () => {
+    // The earlier runs built the fixture through it.
+    expect(BUILDER).toMatch(/^launchway-check-build-256m-1c-[0-9a-f]{8}$/);
+    const builder = checkBuilderContainer(BUILDER);
+    const host = JSON.parse(await docker('inspect', '--format', '{{json .HostConfig}}', builder));
+    expect(host).toMatchObject({
+      Memory: LIMITS.memoryBytes,
+      MemorySwap: LIMITS.memoryBytes,
+      CpuQuota: 100_000,
+      CpuPeriod: 100_000,
+      PidsLimit: LIMITS.pidsLimit,
+      NetworkMode: CHECK_BUILDER_NETWORK,
+    });
+    // Its BuildKit has a cache and cache mounts apart from the engine's builder.
+    expect(await docker('volume', 'ls', '--quiet', '--filter', `name=${builder}_state`)).toBe(
+      `${builder}_state`,
+    );
+  });
+
+  it('fails a build step that needs more memory than the builder may use', async () => {
+    const payload = checkPayload('hungry', 'true');
+    const result = await runCheck('run-hungry', payload);
+    expect(result).toMatchObject({ runId: payload.runId, reason: 'build', exitCode: null });
+    const output = logLinesOf('run-hungry')
+      .map((l) => l.line)
+      .join('\n');
+    // BuildKit reports the step it could not give 600 MB (the cgroup of the builder refused it).
+    expect(output).toMatch(
+      /cannot allocate memory|ResourceExhausted|signal: killed|exit code: 137/,
+    );
+    // The step's own output (the echo after dd) never appears.
+    expect(output).not.toContain('took 600 MB');
+    await expectCleanedUp(payload.runId);
+  });
+
+  it("gives build steps Docker's DNS but no way to containers on other networks", async () => {
+    await docker(
+      'run',
+      '--detach',
+      '--name',
+      server,
+      'busybox',
+      'sh',
+      '-c',
+      `mkdir -p /www && echo reached-${suffix} > /www/index.html && exec httpd -f -p 8080 -h /www`,
+    );
+    const ip = await docker(
+      'inspect',
+      '--format',
+      '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}',
+      server,
+    );
+    expect(ip).toMatch(/^\d+\.\d+\.\d+\.\d+$/);
+    // Another container on the default bridge reaches it.
+    await waitFor(
+      () =>
+        docker('run', '--rm', 'busybox', 'wget', '-T', '5', '-q', '-O', '-', `http://${ip}:8080/`)
+          .then((page) => page === `reached-${suffix}`)
+          .catch(() => false),
+      30_000,
+    );
+    await commitOnBranch(
+      'network',
+      dockerfileWith(
+        // The trailing dot: with a search domain in the node's resolv.conf (GitHub's runners have
+        // one), busybox's nslookup does not find a bare container name.
+        `RUN { cat /etc/resolv.conf; nslookup ${checkBuilderContainer(BUILDER)}. >/dev/null && echo "resolved the builder"; wget -T 5 -q -O - http://${ip}:8080/ || echo "no way to the server"; } > /network.txt 2>&1`,
+      ),
+    );
+    const stdout = await runOk('run-network', 'network', 'cat /network.txt');
+    const shown = stdout.join('\n');
+    // Build steps resolve through Docker's embedded DNS (container names too), not 8.8.8.8.
+    expect(stdout, shown).toContain('nameserver 127.0.0.11');
+    expect(stdout, shown).toContain('resolved the builder');
+    // The builder's network is a bridge of its own: no route to the default bridge's containers.
+    expect(stdout, shown).toContain('no way to the server');
+    expect(stdout, shown).not.toContain(`reached-${suffix}`);
+  });
+
+  it("refuses frontends other than Docker's Dockerfile frontend", async () => {
+    await commitOnBranch('frontend', `# syntax=docker.io/example/frontend:1\n${DOCKERFILE}`);
+    const payload = checkPayload('frontend', 'true');
+    const result = await runCheck('run-frontend', payload);
+    expect(result).toMatchObject({ runId: payload.runId, reason: 'build', exitCode: null });
+    const output = logLinesOf('run-frontend')
+      .map((l) => l.line)
+      .join('\n');
+    expect(output).toContain('is not an allowed gateway source');
+    await expectCleanedUp(payload.runId);
+  });
+
+  it('starts every build with empty cache mounts and never reuses a step of another app', async () => {
+    const mount = 'RUN --mount=type=cache,id=launchway-it,target=/cache';
+    await commitOnBranch(
+      'plant',
+      dockerfileWith(
+        `${mount} hostname > /cache/planted && hostname > /built-on && date +%s%N > /built-at`,
+      ),
+    );
+    await commitOnBranch(
+      'harvest',
+      dockerfileWith(`${mount} (cat /cache/planted 2>/dev/null || echo nothing) > /harvested`),
+    );
+    const built = 'cat /built-on /built-at';
+    const [hostname, stamp] = await runOk('run-plant', 'plant', built);
+    expect(hostname).toBe(`check-${appId.slice(4)}`);
+    // What the first build left in the cache mount is gone for the next one.
+    expect(await runOk('run-harvest', 'harvest', 'cat /harvested')).toEqual(['nothing']);
+    // The app's own builds still reuse its steps (the same stamp)...
+    expect(await runOk('run-plant-again', 'plant', built)).toEqual([hostname, stamp]);
+    // ...another app's identical build runs them itself.
+    const [otherHostname, otherStamp] = await runOk('run-plant-other', 'plant', built, other);
+    expect(otherHostname).toBe(`check-${other.id.slice(4)}`);
+    expect(otherStamp).not.toBe(stamp);
   });
 
   it('answers a cancel of an unknown run with not-found', async () => {

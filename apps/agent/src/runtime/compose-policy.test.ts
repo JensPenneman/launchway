@@ -612,7 +612,8 @@ describe('evaluateComposePolicy in check mode', () => {
   });
 
   it.each<[string, string[], boolean]>([
-    ['the SSH agent', ['default'], true],
+    ['the SSH agent', ['default'], false],
+    ['an SSH agent by id', ['github'], false],
     ['a key inside the repository', ['deploy=./keys/deploy'], true],
     ['a key outside the repository', ['default=/root/.ssh/id_ed25519'], false],
     ['a key in the home directory', ['default=~/.ssh/id_ed25519'], false],
@@ -621,8 +622,27 @@ describe('evaluateComposePolicy in check mode', () => {
     const config = withService('dev', { build: { context: CHECKOUT, ssh } });
     for (const found of [check(config).violations, violations(config)]) {
       if (allowed) expect(found).toEqual([]);
-      else expect(found.join()).toMatch(/build ssh key "\w+" \(.*\) is outside the repository/);
+      else {
+        expect(found.join()).toMatch(
+          /build ssh key "\w+" \(.*\) is outside the repository|build ssh "\w+" forwards an SSH agent/,
+        );
+      }
     }
+  });
+
+  it('refuses references to the names it reserves, declared or not', () => {
+    const config = withService('dev', {
+      image: 'x',
+      volumes: [{ type: 'volume', source: 'launchway-check-source', target: '/w', volume: {} }],
+      configs: ['launchway-check-file-1', { source: 'launchway-check-file-2', target: '/x' }],
+      secrets: [{ source: 'launchway-check-secret', target: '/s' }],
+    });
+    expect(check(config).violations).toEqual([
+      expect.stringContaining('"launchway-check-source" is reserved for Launchway'),
+      expect.stringContaining('"launchway-check-file-1" is reserved for Launchway'),
+      expect.stringContaining('"launchway-check-file-2" is reserved for Launchway'),
+      expect.stringContaining('"launchway-check-secret" is reserved for Launchway'),
+    ]);
   });
 
   it('refuses configs and secrets that services mount when they are over 64 KiB', () => {

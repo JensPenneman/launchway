@@ -297,6 +297,22 @@ function sshKeyPaths(value: unknown): [string, string][] {
   return found;
 }
 
+/**
+ * Ids of `build.ssh` entries without a key path (`default`, `id`): they forward the SSH agent of
+ * the process that builds, which the agent does not have, so such builds could only fail late.
+ */
+function sshAgentForwards(value: unknown): string[] {
+  const found: string[] = [];
+  for (const entry of Array.isArray(value) ? value : []) {
+    if (typeof entry === 'string' && !entry.includes('=')) found.push(entry);
+    else if (typeof entry === 'object' && entry !== null) {
+      const key = entry as Record<string, unknown>;
+      if (key.path === undefined && key.Path === undefined) found.push(String(key.id ?? key.ID));
+    }
+  }
+  return found;
+}
+
 /** Names of the top-level configs or secrets that services (not builds) mount. */
 function usedByServices(config: ComposeConfig, kind: 'configs' | 'secrets'): Set<string> {
   const used = new Set<string>();
@@ -502,6 +518,11 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
           reject(`${at}: build ssh key "${id}" (${path}) is outside the repository`);
         }
       }
+      for (const id of sshAgentForwards(build.ssh)) {
+        reject(
+          `${at}: build ssh "${id}" forwards an SSH agent, which Launchway nodes do not offer (use a key file inside the repository)`,
+        );
+      }
       if (build.network === 'host') reject(`${at}: build network host is not allowed`);
       if (build.privileged) reject(`${at}: privileged builds are not allowed`);
       if (build.entitlements && build.entitlements.length > 0) {
@@ -622,6 +643,26 @@ export function evaluateComposePolicy(config: ComposeConfig, ctx: PolicyContext)
         reject(
           `volume "${key}": names starting with "${CHECK_KEY_PREFIX}" are reserved for Launchway`,
         );
+      }
+    }
+    // References too, declared or not: the check document declares such keys itself.
+    for (const [name, service] of Object.entries(config.services)) {
+      const referenced = [
+        ...(service.volumes ?? []).flatMap((volume) =>
+          volume.type === 'volume' && typeof volume.source === 'string' ? [volume.source] : [],
+        ),
+        ...[...asArray(service.configs), ...asArray(service.secrets)].flatMap((entry) => {
+          if (typeof entry === 'string') return [entry];
+          const source = (entry as { source?: unknown } | null)?.source;
+          return typeof source === 'string' ? [source] : [];
+        }),
+      ];
+      for (const key of new Set(referenced)) {
+        if (key.startsWith(CHECK_KEY_PREFIX)) {
+          reject(
+            `service "${name}": "${key}" is reserved for Launchway (names starting with "${CHECK_KEY_PREFIX}")`,
+          );
+        }
       }
     }
   }

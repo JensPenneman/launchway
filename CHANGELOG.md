@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/JensPenneman/launchway/compare/v0.3.0...v0.4.0) (2026-10-27)
+
+
+### Features
+
+* run app checks on the node and report them as commit statuses ([#13](https://github.com/JensPenneman/launchway/issues/13)) ([d4ca16a](https://github.com/JensPenneman/launchway/commit/d4ca16a09cd3b726516ce55a6a78da5e95fb9c69))
+
+
+### Bug Fixes
+
+* address the open code scanning and Dependabot alerts ([#14](https://github.com/JensPenneman/launchway/issues/14)) ([59be2f8](https://github.com/JensPenneman/launchway/commit/59be2f85350122405c66afbe42186a03a8f777dd))
+
 ## [0.3.0](https://github.com/JensPenneman/launchway/compare/v0.2.0...v0.3.0) (2026-10-07)
 
 

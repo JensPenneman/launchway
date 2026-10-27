@@ -291,6 +291,127 @@ export const UpdateAppPreviewSettings = z
   .openapi('UpdateAppPreviewSettings');
 export type UpdateAppPreviewSettings = z.infer<typeof UpdateAppPreviewSettings>;
 
+// --- Check settings (ADR 0020) -----------------------------------------------------------------
+
+/** Name of a check: also the GitHub status context `launchway/<name>`. */
+export const CheckName = z
+  .string()
+  .regex(
+    /^[a-z0-9][a-z0-9-]{0,38}$/,
+    'Use 1-39 lowercase letters, digits and dashes, starting with a letter or digit',
+  )
+  .openapi({ example: 'quality' });
+export type CheckName = z.infer<typeof CheckName>;
+
+/** Command of a check; the agent runs `sh -c <command>` in the check's service. */
+export const CheckCommand = z
+  .string()
+  .trim()
+  .min(1)
+  .max(4096)
+  .regex(/^[^\0]*$/, 'Must not contain NUL characters')
+  .openapi({ example: 'npm ci && npm run check' });
+
+export const MAX_CHECK_ITEMS = 10;
+export const DEFAULT_CHECK_SERVICE = 'dev';
+export const DEFAULT_CHECK_TIMEOUT_MINUTES = 30;
+export const DEFAULT_CHECK_COMPOSE_FILES = ['.devcontainer/compose.yaml'] as const;
+
+export const CheckTimeoutMinutes = z
+  .number()
+  .int()
+  .min(1)
+  .max(120)
+  .openapi({ description: 'How long the command may run (building the images is not counted)' });
+
+const checkItemFields = {
+  name: CheckName,
+  command: CheckCommand,
+  service: ServiceName.openapi({ description: 'Compose service the command runs in' }),
+  composeFile: RelativePath.optional().openapi({
+    description: 'Compose file of this check instead of the composeFiles of the checks',
+  }),
+  timeoutMinutes: CheckTimeoutMinutes,
+};
+
+/** One configured check: a command run in a service of the app's own Compose project. */
+export const CheckItem = z.object(checkItemFields).openapi('CheckItem');
+export type CheckItem = z.infer<typeof CheckItem>;
+
+/** A check as submitted: `service` defaults to `dev`, `timeoutMinutes` to 30. */
+export const CheckItemInput = z
+  .strictObject({
+    ...checkItemFields,
+    service: checkItemFields.service.default(DEFAULT_CHECK_SERVICE),
+    timeoutMinutes: CheckTimeoutMinutes.default(DEFAULT_CHECK_TIMEOUT_MINUTES),
+  })
+  .openapi('CheckItemInput');
+export type CheckItemInput = z.input<typeof CheckItemInput>;
+
+const uniqueCheckNames = (items: readonly { name: string }[]) =>
+  new Set(items.map((item) => item.name)).size === items.length;
+
+/** Branches whose pushes, and base branches whose pull requests, run the checks. */
+export const CheckBranches = z
+  .array(GitRef)
+  .min(1)
+  .max(20)
+  .refine((names) => new Set(names).size === names.length, 'Branch names must be unique')
+  .openapi({
+    description:
+      'Exact branch names: pushes to them and pull requests into them run the checks; null runs them for every branch',
+    example: ['main'],
+  });
+
+/** Per-app check settings (ADR 0020). */
+export const AppChecksSettings = z
+  .object({
+    enabled: z.boolean().openapi({
+      description:
+        'Pushes and pull requests from branches of the repository run the checks (webhooks). Runs started through the API do not need it.',
+    }),
+    composeFiles: ComposeFiles.openapi({
+      description:
+        'Compose files the checks run with, merged in order (the dev container by default)',
+      example: [...DEFAULT_CHECK_COMPOSE_FILES],
+    }),
+    branches: CheckBranches.nullable(),
+    skipBots: z.boolean().openapi({
+      description: 'Pushes and pull requests by bots (such as Dependabot) run no checks',
+    }),
+    items: z
+      .array(CheckItem)
+      .max(MAX_CHECK_ITEMS)
+      .refine(uniqueCheckNames, 'Check names must be unique')
+      .openapi({ description: `At most ${MAX_CHECK_ITEMS} checks with unique names` }),
+  })
+  .openapi('AppChecksSettings');
+export type AppChecksSettings = z.infer<typeof AppChecksSettings>;
+
+export const DEFAULT_APP_CHECKS_SETTINGS: AppChecksSettings = {
+  enabled: false,
+  composeFiles: [...DEFAULT_CHECK_COMPOSE_FILES],
+  branches: null,
+  skipBots: false,
+  items: [],
+};
+
+/** Partial update of the check settings; omitted fields keep their value, `items` replaces all. */
+export const UpdateAppChecksSettings = z
+  .strictObject({
+    enabled: z.boolean().optional(),
+    composeFiles: ComposeFiles.optional(),
+    branches: CheckBranches.nullable().optional(),
+    skipBots: z.boolean().optional(),
+    items: z
+      .array(CheckItemInput)
+      .max(MAX_CHECK_ITEMS)
+      .refine(uniqueCheckNames, 'Check names must be unique')
+      .optional(),
+  })
+  .openapi('UpdateAppChecksSettings');
+export type UpdateAppChecksSettings = z.infer<typeof UpdateAppChecksSettings>;
+
 export const App = z
   .object({
     id: AppId,
@@ -316,6 +437,7 @@ export const App = z
     trustedMounts: TrustedMounts,
     proxyServices: ProxyServices,
     previews: AppPreviewSettings,
+    checks: AppChecksSettings,
     activeDeploymentId: DeploymentId.nullable().openapi({
       description: 'The running production deployment',
     }),
@@ -375,6 +497,7 @@ export const UpdateAppInput = z
       description: 'Requires the admin role; takes effect with the next deployment',
     }),
     previews: UpdateAppPreviewSettings.optional(),
+    checks: UpdateAppChecksSettings.optional(),
   })
   .superRefine((value, ctx) => {
     checkSourceXor(value, ctx);

@@ -24,7 +24,7 @@ const hello = {
 };
 
 describe('agent protocol', () => {
-  it('lists the message types of the specification (plus error and deployment.cancel)', () => {
+  it('lists the message types of the specification (plus error, deployment.cancel and checks)', () => {
     expect([...AGENT_TO_SERVER_TYPES].sort()).toEqual(
       [
         'hello',
@@ -35,6 +35,8 @@ describe('agent protocol', () => {
         'app.status',
         'logs.chunk',
         'logs.end',
+        'check.log',
+        'check.result',
         'error',
       ].sort(),
     );
@@ -48,6 +50,8 @@ describe('agent protocol', () => {
         'status',
         'logs.start',
         'logs.stop',
+        'check.run',
+        'check.cancel',
         'error',
       ].sort(),
     );

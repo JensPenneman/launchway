@@ -1,3 +1,4 @@
+import { CheckRunStatus } from './checks.js';
 import { JsonObject, Timestamp } from './common.js';
 import { AppLogLine, DeploymentStatus, LogLine } from './deployments.js';
 import { z } from './zod.js';
@@ -20,6 +21,8 @@ export const EVENT_TOPICS = [
   'previews',
   /** The edge configuration was (or failed to be) loaded into Caddy. */
   'edge',
+  /** Check runs of apps (queued, running, finished). */
+  'checks',
 ] as const;
 export const EventTopic = z.enum(EVENT_TOPICS).openapi('EventTopic');
 export type EventTopic = z.infer<typeof EventTopic>;
@@ -34,7 +37,7 @@ export const SSE_EVENTS = {
   platform: 'platform',
   /** Log line (`data`: LogLine or AppLogLine). */
   log: 'log',
-  /** Deployment status change (`data`: { status }). */
+  /** Deployment or check run status change (`data`: { status }). */
   status: 'status',
   /** Stream finished (`data`: { status } or { reason }). */
   end: 'end',
@@ -72,3 +75,11 @@ export const AppLogStreamEvent = z.discriminatedUnion('event', [
   }),
 ]);
 export type AppLogStreamEvent = z.infer<typeof AppLogStreamEvent>;
+
+/** Typed view of the check log stream (`GET /checks/{id}/logs?follow=true`). */
+export const CheckStreamEvent = z.discriminatedUnion('event', [
+  z.object({ event: z.literal('log'), data: LogLine }),
+  z.object({ event: z.literal('status'), data: z.object({ status: CheckRunStatus }) }),
+  z.object({ event: z.literal('end'), data: z.object({ status: CheckRunStatus }) }),
+]);
+export type CheckStreamEvent = z.infer<typeof CheckStreamEvent>;

@@ -24,13 +24,15 @@ export const GITHUB_WEBHOOK_EVENTS = [
 /**
  * Permissions/events requested by the generated GitHub App. `deployments: write` mirrors Launchway
  * deployments to GitHub's Deployments API; `pull_requests: read` and the `pull_request` event serve
- * preview deployments. Apps created before these were added must be updated on GitHub (ADR 0017).
+ * preview deployments and checks; `statuses: write` reports checks as commit statuses. Apps created
+ * before these were added must be updated on GitHub (ADR 0017, ADR 0020).
  */
 export const GITHUB_APP_PERMISSIONS = {
   contents: 'read',
   metadata: 'read',
   deployments: 'write',
   pull_requests: 'read',
+  statuses: 'write',
 } as const;
 export const GITHUB_APP_EVENTS = ['release', 'push', 'pull_request'] as const;
 /** How long the capabilities of a connection are cached by the API. */
@@ -225,7 +227,7 @@ export type GitHubCapabilitiesQuery = z.infer<typeof GitHubCapabilitiesQuery>;
 /**
  * What a connection may do on GitHub beyond reading code. GitHub Apps: read with the app JWT
  * (`GET /app` and the installation). Tokens: probed with cheap read calls on a repository; write
- * access to deployments is inferred from the last mirror attempt.
+ * access to deployments and commit statuses is inferred from the last attempt to write them.
  */
 export const GitHubConnectionCapabilities = z
   .object({
@@ -233,15 +235,18 @@ export const GitHubConnectionCapabilities = z
     kind: GitHubConnectionKind,
     deployments: z
       .boolean()
-      .openapi({ description: 'Launchway can create deployments and statuses on GitHub' }),
+      .openapi({ description: 'Launchway can create deployments and their statuses on GitHub' }),
     pullRequests: z.boolean().openapi({ description: 'Launchway can read pull requests' }),
+    statuses: z.boolean().openapi({
+      description: 'Launchway can report checks as commit statuses (launchway/<name>)',
+    }),
     events: z
       .array(z.string())
       .openapi({ description: 'Webhook events delivered to Launchway (empty for tokens)' }),
     missing: z.array(z.string()).openapi({
       description:
-        'Permissions (`deployments: write`) and events (`event: pull_request`) still to grant',
-      example: ['deployments: write', 'event: pull_request'],
+        'Permissions (`deployments: write`, `statuses: write`) and events (`event: pull_request`) still to grant',
+      example: ['deployments: write', 'statuses: write', 'event: pull_request'],
     }),
     pendingApproval: z.boolean().openapi({
       description:
@@ -259,6 +264,9 @@ export const GitHubConnectionCapabilities = z
     }),
     lastDeniedAt: Timestamp.nullable().openapi({
       description: 'Last time GitHub refused a deployment mirror request of this connection',
+    }),
+    lastStatusDeniedAt: Timestamp.nullable().openapi({
+      description: 'Last time GitHub refused a commit status (check) of this connection',
     }),
     checkedAt: Timestamp,
   })

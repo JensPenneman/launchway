@@ -20,6 +20,7 @@ export const ID_PREFIXES = {
   route: 'rt',
   auditEvent: 'aud',
   preview: 'prv',
+  checkRun: 'chk',
 } as const;
 
 export type IdPrefix = (typeof ID_PREFIXES)[keyof typeof ID_PREFIXES];
@@ -84,3 +85,5 @@ export const AuditEventId = typeId('aud');
 export type AuditEventId = z.infer<typeof AuditEventId>;
 export const PreviewId = typeId('prv');
 export type PreviewId = z.infer<typeof PreviewId>;
+export const CheckRunId = typeId('chk');
+export type CheckRunId = z.infer<typeof CheckRunId>;

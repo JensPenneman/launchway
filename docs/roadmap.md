@@ -71,7 +71,13 @@ features that are deliberately out of scope for v0.1 are listed in
   contract, so the UI cannot link to it yet. The new-app wizard has no
   "Show deployments on GitHub" switch (the default is on).
 - Mirror refusals and the capability cache live in process memory and reset
-  on restart.
+  on restart (deployments and commit statuses alike).
+- Checks ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md))
+  report commit statuses only; GitHub's Checks API would add annotations and
+  re-run buttons on GitHub but needs a GitHub App. Branch filters are exact
+  names (no patterns), one check runs per node at a time, and every run
+  installs its dependencies again (no cache volumes per app yet). `include`
+  is refused in checks.
 - Webhook deliveries of apps whose installation was removed still pass the
   signature check; their release events fail to resolve the ref (logged).
 - Members can still change the source of a trusted app (connection,
@@ -88,7 +94,16 @@ features that are deliberately out of scope for v0.1 are listed in
   reject such files.
 - `docker compose logs` merges stdout and stderr, so app log lines always
   report `stdout`. Per-stream output needs the Docker API with demuxing.
-- Deployment build output has no line-rate cap (log streams do).
+- Deployment build output has no line-rate cap (log streams do; checks stop
+  after 20 000 lines).
+- Checks: the Compose policy for checks is a deny-list like the deployment
+  policy; an allow-list of Compose keys would make new Compose features fail
+  closed. Check containers reach the network, including the node's published
+  ports (the API's port 3000 until it is bound to loopback, and on Docker
+  Desktop the host through `host.docker.internal`); an egress policy per check
+  would close that. Build steps run in BuildKit without the service limits,
+  and the BuildKit cache and the `launchway-check/*` images of checks are not
+  pruned automatically.
 - Checkout pruning orders directories by deployment id (UUIDv7). Ids created
   in the same millisecond are not ordered; harmless in practice. It also keeps
   the newest two checkouts rather than the running one: record the last

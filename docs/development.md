@@ -103,10 +103,10 @@ apps/api/src/modules/<module>/
   circular imports between modules.
 - Shared infrastructure lives in `apps/api/src/lib` (`problem`, `auth-context`, `csrf`,
   `rate-limit`, `crypto`, `sse`, `event-bus`, `pagination`, `jobs`, `openapi`, `client-ip`,
-  `agent-gateway`, `git-provider`, `static`) and `apps/api/src/db` (`client`, `columns`, `errors`,
+  `agent-gateway`, `git-provider`, `log-stream`, `static`) and `apps/api/src/db` (`client`, `columns`, `errors`,
   `migrate`, `schema`). Extend it there when several modules need the same thing.
-- Cross-module wiring (the agent gateway and the deployments sink, the edge's domain hooks, the
-  background workers) happens in the composition root, `src/server.ts`
+- Cross-module wiring (the agent gateway with the deployment and check sinks, the edge's domain
+  hooks, the background workers and the GitHub mirrors) happens in the composition root, `src/server.ts`
   ([ADR 0010](adr/0010-composition-root-wiring.md)).
 
 ### Registering routes
@@ -313,8 +313,8 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 
 - Pages are file-based routes in `apps/web/src/routes` (`_app/` = inside the app shell); larger
   page parts live in `src/features/<area>`.
-- Data comes from the resource modules in `src/api` (`apps`, `auth`, `domains`, `github`,
-  `nodes`, `platform`, `users`): TanStack Query `queryOptions` and mutations around one
+- Data comes from the resource modules in `src/api` (`apps`, `auth`, `checks`, `domains`,
+  `github`, `nodes`, `platform`, `previews`, `users`): TanStack Query `queryOptions` and mutations around one
   `request()` helper that sends the session cookie, turns problem documents into `ApiError` and
   parses every response with its `@launchway/contracts` schema (`ContractDriftError` on mismatch;
   [ADR 0013](adr/0013-web-ui-data-layer.md)). `useApiMutation` adds toasts and invalidation.
@@ -322,7 +322,7 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
   to refresh. The client generated from the OpenAPI document (`src/lib/api/client.ts`) is used
   for the health probe only.
 - Streams use the hooks in `src/api/events.ts`: `useLiveEvents` (change feed),
-  `useDeploymentLogStream` and `useAppLogStream`.
+  `useDeploymentLogStream`, `useCheckLogStream` and `useAppLogStream`.
 - `pnpm --filter @launchway/web dev:mock` runs the UI against the MSW mock API; mock users sign in
   with the password `correct horse battery staple` (see `apps/web/README.md` for the
   scenarios).
@@ -338,9 +338,14 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
   environment (`GIT_CONFIG_COUNT`/`KEY`/`VALUE`, the equivalent of `-c http.extraHeader=...`
   without showing up in the process list), and never log environment values. Child processes get
   an allow-listed environment only.
-- The runtime lives in `apps/agent/src/runtime`: checkout, Compose file resolution, the policy
-  (`compose-policy.ts`), the `compose.launchway.yaml` override, the per-app deployment queue, log
-  streams and the outbox that re-sends results after a reconnect.
+- The runtime lives in `apps/agent/src/runtime`: checkout, Compose file resolution, the YAML
+  preflight of Compose files (`compose-preflight.ts`), the policy (`compose-policy.ts`, with a
+  checks mode), the `compose.launchway.yaml` override, the per-app deployment queue, the check
+  runner (`checks.ts`, one check at a time) with its resolved document (`check-document.ts`), log
+  streams and the outbox that re-sends results after a reconnect. Deployments and checks share
+  the node's build slots.
+- Every Docker resource a check creates carries the label `launchway.check`; cleanup and the
+  start-up sweep only touch resources with that label and the `launchway-check_` project prefix.
 - Protocol changes start in `packages/contracts/src/agent`. Breaking changes bump
   `AGENT_PROTOCOL_VERSION`. Requests are answered with replies echoing the request `id`; a request
   the agent cannot handle answers an `error` (for example `not-found` or `busy`).

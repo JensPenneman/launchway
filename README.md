@@ -55,6 +55,12 @@ reachable through a REST API; the web UI is only a client of that API.
 - **Deployments on GitHub.** Every deployment, preview or production, shows
   in the repository's *Environments* and *Deployments* with its status, URL
   and a link back to Launchway.
+- **Checks.** An app's test commands run on its node for every push and pull
+  request from a branch of its repository, in containers of the app's own
+  development container, with no app variables or secrets and capped memory,
+  CPUs and processes. Their logs stream to the UI, and each check is a
+  GitHub commit status (`launchway/<name>`) that branch protection can
+  require, so CI runs on your own machine.
 - **Compose runtime.** One or more Compose files, or a single `Dockerfile`.
   Before anything runs, the node's agent checks the configuration against a
   policy: no host bind mounts, no privileged containers, no host network or

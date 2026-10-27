@@ -43,6 +43,19 @@ This is a summary of the security requirements in section 14 of
 - **Deployed apps are trusted code.** The Compose policy limits what an app
   can request from Docker, but it is not a sandbox. Deploy only repositories
   you trust.
+- **Checks run the code of any branch of an app's repository** on the app's
+  node: whoever can push a branch to the repository can run commands there.
+  Pull requests from forks never run. A check gets no app variables or
+  secrets, no bind mounts outside its checkout (the checkout reaches its
+  containers through a volume), no published ports and no proxy network;
+  every service is capped in memory (no swap), CPUs and processes, runs with
+  `no-new-privileges` and is the first the kernel kills when memory runs out,
+  and one check runs per node at a time. Check containers can still reach the
+  network, including ports the node publishes (on Docker Desktop also the
+  host through `host.docker.internal`), and builds run in BuildKit without the
+  service limits; put services on the node behind authentication and turn
+  checks on only for repositories whose writers you trust with that (ADR
+  0020).
 - **Extra Caddy directives are trusted admin configuration.** A route's
   `extraDirectives` is placed verbatim in the Caddyfile, with the reach of
   any Caddyfile: placeholders such as `{env.*}` resolve in the Caddy
@@ -64,12 +77,18 @@ This is a summary of the security requirements in section 14 of
   node credentials and invitation tokens are stored as SHA-256 hashes and
   compared in constant time. Plaintext tokens are shown once.
 - Git credentials are passed to `git` per command and never written to disk.
-  A deploying node receives, per deployment, a fresh GitHub App token limited
-  to the app's repository and `contents: read`. With a personal access token
+  A deploying node receives, per deployment or check, a fresh GitHub App
+  token limited to the app's repository and `contents: read`; check
+  containers never see it. With a personal access token
   connection the node receives that token itself, so use a fine-grained,
   read-only token; classic tokens with write scopes are refused.
 - Logs never contain secrets, tokens or `Authorization` headers; environment
-  values are never logged.
+  values are never logged. Deployment and check logs redact the clone token,
+  the node credential and the join token, and mask quoted file content in
+  Compose's error messages.
+- Commit statuses of checks are posted with the connection's own token
+  (`statuses: write`). Require them in branch protection from the Launchway
+  GitHub App only, so nothing else can report them.
 
 ### Authentication and authorization
 
@@ -96,6 +115,11 @@ This is a summary of the security requirements in section 14 of
   `-`.
 - GitHub webhooks: the `X-Hub-Signature-256` HMAC is verified before the body
   is parsed, and a delivery ID that was already processed is rejected.
+- Compose files are parsed by the agent before Compose loads them: `include`
+  and `extends` may only name files inside the repository (no remote
+  includes, no `$` in those paths), so a Compose file cannot pull in files of
+  the agent, such as other apps' environment files. Checks refuse `include`
+  altogether.
 - The Compose policy is enforced on the agent, not only in the UI: no host
   bind mounts or host-path volume drivers, no `privileged`, no devices or
   `device_cgroup_rules`, no `network_mode` or other namespace outside the

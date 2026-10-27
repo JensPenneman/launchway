@@ -48,10 +48,11 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
 | **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
-| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route) and `previews` settings (enabled, bot and label filters, host template, env overrides, Compose files). |
+| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route), `previews` settings (enabled, bot and label filters, host template, env overrides, Compose files) and `checks` settings (enabled, Compose files, branch and bot filters, the checks to run). |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app in one environment (`production` or a preview's `preview/pr-<n>`). Has a state machine and logs. |
 | **Preview** | The running copy of an app for one pull request: branch, head commit, host name, the domain and route it created, status (section 4). |
+| **CheckRun** | One run of one configured check of an app for one commit: the command as configured, trigger (`push`, `pull_request`, `manual`), status, reason, exit code, logs and the commit status posted to GitHub (section 4). |
 | **Node** | A machine running the agent. Reports Docker info, LAN IP, architecture, health. One node is the `edge` (runs Caddy). |
 | **DnsProviderAccount** | Credentials for one DNS provider (kind + encrypted credentials). |
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
@@ -62,7 +63,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 
 IDs are prefixed type IDs (`typeid-js`, UUIDv7 underneath): `user_…`, `sess_…`,
 `pk_…`, `tok_…`, `inv_…`, `gh_…`, `app_…`, `env_…`, `dep_…`, `node_…`, `prov_…`,
-`zone_…`, `dom_…`, `rt_…`, `aud_…`, `prv_…`.
+`zone_…`, `dom_…`, `rt_…`, `aud_…`, `prv_…`, `chk_…`.
 
 ### Deployment state machine
 
@@ -273,6 +274,44 @@ whose head is a branch of its repository (fork pull requests are ignored)
   and forced through the DNS preflight; its route copies the service, port
   and options of the app's first route (no extra directives).
 
+### Checks
+
+An app's checks are its test commands, run in job containers on its node for
+every push and every pull request from a branch of its repository, and
+reported to GitHub as commit statuses that branch protection can require
+([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)):
+
+- **Settings.** `App.checks`: `enabled`, `composeFiles` (default
+  `.devcontainer/compose.yaml`, the app's development container), `branches`
+  (exact names; pushes to them and pull requests into them run the checks;
+  `null` = every branch), `skipBots` and up to ten `items` `{ name, command,
+  service (default dev), composeFile?, timeoutMinutes (1-120, default 30) }`.
+  Members change them with `PATCH /apps/{id}`; the limits every service of a
+  check gets are platform settings (`checkMemoryMb`, `checkCpus`,
+  `checkPidsLimit`; defaults 4096, 2, 4096).
+- **Triggers.** `push` to a branch (no tags, no deletions) and
+  `pull_request` `opened` / `reopened` / `synchronize` from the same
+  repository queue one run per item for the head commit; fork pull requests
+  never run. Runs are deduplicated per app, commit and name, and a newer
+  commit of a branch cancels the queued runs of older commits of that branch.
+  `POST /apps/{id}/checks` `{ ref, names? }` runs them by hand (the only
+  trigger for token connections); `POST /checks/{id}/rerun` and `POST
+  /checks/{id}/cancel` act on one run.
+- **Lifecycle.** `queued → running → succeeded | failed | errored`, or
+  `cancelled`. One check runs per node at a time (a partial unique index),
+  oldest first across the node's apps. `failed` means the command exited
+  non-zero or timed out; `errored` that there is no verdict on the code
+  (policy, build, Docker, an offline node, an agent without checks). Logs are
+  kept 30 days, runs for good.
+- **Runtime.** The agent fetches the commit into
+  `/var/lib/launchway/checks/<appId>/<runId>`, reads the Compose files with a
+  preflight and the policy in checks mode, writes one resolved document
+  (labels, limits, no ports, the checkout as a volume) and runs
+  `docker compose run <service> sh -c <command>` with no app variables or
+  secrets. Section 9 has the details.
+- **On GitHub.** Each run posts the status `launchway/<name>`: `pending`,
+  then `success`, `failure` or `error`, with a link to the run.
+
 ## 5. Edge, TLS and public exposure
 
 - **Caddy** is the only owner of ports 80/443(+udp) on the edge node. The API
@@ -405,19 +444,21 @@ export interface DnsProvider {
   tokens (`@octokit/app`, `@octokit/rest`).
 - **Personal access token (fallback)**: a fine-grained PAT with
   `Contents: read`, `Metadata: read` (plus `Deployments: read and write` to
-  show deployments on GitHub). Same interface, no webhooks (polling
-  releases every 5 min when `autoDeployReleases` is on).
+  show deployments on GitHub and `Commit statuses: read and write` for
+  checks). Same interface, no webhooks (polling releases every 5 min when
+  `autoDeployReleases` is on; checks only by hand).
 - **Webhooks** at `POST /api/v1/webhooks/github`: HMAC `X-Hub-Signature-256`
   verified with timing-safe comparison; events handled: `release`
   (`published`/`released`, or `edited` from draft to published → deployment
   when auto-deploy is on; drafts never, prereleases only with
   `autoDeployPrereleases`), `push` (to `App.autoDeployBranch` → deployment of
-  the pushed commit), `pull_request` (previews, section 4), `installation`,
+  the pushed commit; checks), `pull_request` (previews and checks, section
+  4), `installation`,
   `installation_repositories`, `ping`. *(Release and push deployments carry
   the trigger `auto` and are deduplicated per tag or commit.)*
 - The GitHub App asks for `contents: read`, `metadata: read`,
-  `deployments: write` and `pull_requests: read`, and subscribes to `release`,
-  `push` and `pull_request`.
+  `deployments: write`, `pull_requests: read` and `statuses: write`, and
+  subscribes to `release`, `push` and `pull_request`.
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; getPullRequest; }` so another host could be
   added later.
@@ -434,6 +475,13 @@ export interface DnsProvider {
   created before these permissions must be updated on GitHub, and
   `GET /github/connections/{id}/capabilities` (cached 5 minutes) reports what
   is missing ([ADR 0017](adr/0017-github-deployments-mirror.md)).
+- **Commit statuses**: every check run posts `launchway/<name>` on its
+  commit (`pending` while queued or running, `success`, `failure` for a
+  non-zero exit or a timeout, `error` otherwise) with a link to the run
+  (`<publicUrl>/apps/<appId>?tab=checks&check=<runId>`). Best effort like the
+  deployment mirror, with its own refusal pause; at start the API posts the
+  statuses of the last seven days that GitHub does not show yet
+  (`check_runs.github_state` holds the last posted state) ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)).
 
 ## 9. Node agent
 
@@ -452,8 +500,9 @@ export interface DnsProvider {
 - **Protocol**: JSON messages `{ id, type, payload }` over WebSocket, schemas
   in `@launchway/contracts` (`agent/*`). Agent → server: `hello`, `heartbeat`
   (15 s), `deployment.progress`, `deployment.log`, `deployment.result`,
-  `app.status`, `logs.chunk`, `logs.end`. Server → agent: `hello.ok`,
-  `deploy`, `stop`, `remove`, `status`, `logs.start`, `logs.stop`. Request
+  `app.status`, `logs.chunk`, `logs.end`, `check.log`, `check.result`.
+  Server → agent: `hello.ok`, `deploy`, `stop`, `remove`, `status`,
+  `logs.start`, `logs.stop`, `check.run`, `check.cancel`. Request
   types carry the `id` the reply must echo. Unknown message types are
   ignored with a warning (forward compatibility); `hello` carries the
   protocol version and the server refuses incompatible agents with a clear
@@ -469,6 +518,57 @@ export interface DnsProvider {
   `deploy` at once with a log line, and the server compares the heartbeat's
   `activeDeploymentIds` with the database: a deployment left out of two
   heartbeats is failed (its result was lost) or, if never started, re-sent.)*
+- **Checks** (protocol version 1, additive;
+  [ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)):
+  `check.run { runId, app, source { cloneUrl, ref, sha, authorization },
+  composeFiles, check { name, service, command, timeoutMs }, limits
+  { memoryBytes, cpus, pidsLimit } }` is acknowledged at once with a
+  `check.log` line; more `check.log` batches follow (dropped while
+  disconnected, at most 20 000 lines per run) and one `check.result
+  { runId, reason, exitCode, message? }` ends the run (`reason`: `exit`,
+  `timeout`, `policy`, `build`, `infrastructure`, `interrupted`,
+  `cancelled`). `check.cancel { runId }` ends a run with `cancelled`.
+  Heartbeats carry `activeCheckRunIds`. Agents without checks ignore
+  `check.run`, and the server marks the run `errored` after 30 seconds
+  without an acknowledgement. The agent runs one check at a time:
+  1. fetch the commit into `/var/lib/launchway/checks/<appId>/<runId>/src`
+     (credentials as for deployments);
+  2. parse the Compose files (YAML) and refuse `include`, a top-level merge
+     key and `extends.file` outside the checkout; `docker compose config
+     --no-env-resolution` with an environment file holding only `CI`,
+     `COMPOSE_PROJECT_NAME`, `LAUNCHWAY_APP`, `LAUNCHWAY_CHECK`,
+     `LAUNCHWAY_CHECK_RUN_ID`, `LAUNCHWAY_COMMIT_SHA` and `LAUNCHWAY_REF`;
+     the policy in checks mode refuses every bind mount outside the
+     checkout;
+  3. write one resolved document `compose.json` next to the checkout and use
+     only that afterwards: label `launchway.check=<runId>` on every service,
+     volume and network; `mem_limit` = `memswap_limit`, `cpus`,
+     `pids_limit`, `oom_score_adj: 1000` and `no-new-privileges` on every
+     service; no `ports`, `container_name`, `restart`, `logging`, `deploy`
+     or resource settings of the project; built services tagged
+     `launchway-check/<slug>-<service>`; directory binds inside the checkout
+     turned into mounts of the run's source volume (`volume.subpath`),
+     read-only text files of at most 64 KiB into `configs` with inline
+     content;
+  4. `build --pull` (in the node's build slots, shared with deployments) and
+     `pull --ignore-buildable`;
+  5. create the volume `<project>_source`, `docker cp` the checkout into a
+     created (never started) container that mounts it, and `chown` it to the
+     user of the check's service in a one-shot container (the agent has no
+     `CHOWN` capability);
+  6. `docker compose run -T --name <project>-check <service> sh -c
+     <command>` within `timeoutMs` (the sidecars start through
+     `depends_on`); the run container's exit code decides;
+  7. report the result, then clean up within the slot: the run's
+     containers, `down --volumes --remove-orphans`, the source volume, other
+     labelled volumes and networks, dangling images with the
+     `launchway.check` label, the checkout. At start the agent removes what
+     earlier runs left behind (projects `launchway-check_*`).
+- **Compose preflight.** Before `docker compose config`, deployments parse
+  their Compose files too: `include` entries (path, `env_file`,
+  `project_directory`) and `extends.file` must be relative paths without `$`
+  inside the checkout, and remote includes are refused. Compose reads such
+  files while it loads a project, before the policy sees anything.
 - All process execution uses `execFile` with argument arrays — never a shell
   string. Refs match `^[A-Za-z0-9._/-]+$` and may not start with `-`.
   Environment values are never logged.
@@ -487,8 +587,8 @@ export interface DnsProvider {
   `rate-limited`, …).
 - Lists are cursor-paginated: `?limit=&cursor=` → `{ items, nextCursor }`.
 - Streams use Server-Sent Events: `GET /deployments/{id}/logs?follow=true`,
-  `GET /apps/{id}/logs?service=&follow=true`, `GET /events` (platform-wide
-  change feed the UI uses to refresh).
+  `GET /checks/{id}/logs?follow=true`, `GET /apps/{id}/logs?service=&follow=true`,
+  `GET /events` (platform-wide change feed the UI uses to refresh).
 - Authentication: session cookie **or** `Authorization: Bearer lwy_…`.
 - Health: `GET /api/health/live` (process up) and `/api/health/ready`
   (database reachable).
@@ -498,7 +598,9 @@ export interface DnsProvider {
   `github/connections/{id}/capabilities`, `github/repos`,
   `github/repos/{owner}/{repo}/releases`, `apps`, `apps/{id}/env`,
   `apps/{id}/deployments`, `apps/{id}/previews`, `previews`, `previews/{id}`,
-  `previews/{id}/redeploy`, `deployments/{id}`, `deployments/{id}/logs`,
+  `previews/{id}/redeploy`, `apps/{id}/checks`, `checks/{id}`,
+  `checks/{id}/logs`, `checks/{id}/cancel`, `checks/{id}/rerun`,
+  `deployments/{id}`, `deployments/{id}/logs`,
   `deployments/{id}/cancel`, `domains`, `domains/{id}/verify`, `routes`,
   `dns/providers`, `dns/accounts`, `dns/zones`, `dns/zones/{id}/records`,
   `nodes`, `nodes/{id}/join-token`, `edge/config` (rendered Caddyfile, read-only),
@@ -514,8 +616,9 @@ the UI's resource modules validate every response with the contract schemas
 instead; [ADR 0013](adr/0013-web-ui-data-layer.md).)* Dark and
 light theme. Pages: setup wizard · sign-in (passkey first, password fallback) ·
 overview · apps (list, create wizard: connection → repository → compose
-location → node) · app detail (deployments with live logs, environment,
-domains & routes, settings, danger zone) · domains (zones, records, managed
+location → node) · app detail (deployments with live logs, previews, checks
+with their runs and live logs, environment, domains & routes, settings with
+the preview and check settings, danger zone) · domains (zones, records, managed
 domains with DNS/TLS status) · nodes (list, add node with join snippet,
 detail) · settings (account, passkeys, API tokens, users & invitations, GitHub
 connections, DNS provider accounts, platform settings) · audit log.
@@ -599,6 +702,11 @@ Agent (`launchway-agent` container):
   and reaches: admin only.
 - No shell string execution anywhere; all external input validated with Zod.
 - Compose policy (section 4) enforced on the agent, not only in the UI.
+- Checks run untrusted branch code: no app variables or secrets, no bind
+  mounts outside the checkout (the checkout reaches containers through a
+  volume), no published ports, per-service memory (no swap), CPU and process
+  limits, one check per node, fork pull requests never run, logs capped and
+  redacted ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)).
 - Internal endpoints (`/internal/*`, agent WebSocket upgrades without a valid
   token) reject requests from outside the Docker networks. *(v0.1 refuses
   upgrades without a valid token with 401 from any network; the network

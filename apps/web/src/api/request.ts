@@ -141,7 +141,7 @@ export async function request<T = undefined>(path: string, options: RequestOptio
       .slice(0, 5)
       .map((issue) => `${issue.path.join('.') || '(root)'}: ${issue.message}`)
       .join('; ');
-    console.error(`[launchway] contract drift on ${method} ${path}`, parsed.error.issues);
+    console.error('[launchway] contract drift on %s %s', method, path, parsed.error.issues);
     throw new ContractDriftError(`${method} ${path}`, issues);
   }
   return parsed.data;

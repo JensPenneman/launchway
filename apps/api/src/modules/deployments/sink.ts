@@ -16,6 +16,7 @@ import {
 import { and, eq, inArray, isNotNull, ne, or, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import type { DeploymentSink } from '../../lib/agent-gateway.js';
+import { agentActor } from '../../lib/auth-context.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
 import {
@@ -25,7 +26,7 @@ import {
   nextImageRetry,
 } from './dispatcher.js';
 import { logHubFor } from './log-hub.js';
-import { ACTIVE_STATUSES, agentActor, announceStatus, type DeploymentRow } from './model.js';
+import { ACTIVE_STATUSES, announceStatus, type DeploymentRow } from './model.js';
 import { deploymentLogLines, deployments } from './schema.js';
 
 export const NODE_OFFLINE_MESSAGE = 'node went offline';

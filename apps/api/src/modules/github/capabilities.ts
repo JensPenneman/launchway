@@ -10,7 +10,13 @@ import { z } from 'zod';
 import type { Deps } from '../../deps.js';
 import { appJwt, classifyGitHubError } from '../../lib/git-provider.js';
 import { apps } from '../apps/schema.js';
-import { errorStatus, type OctokitLike, requestWithRetry, toOctokitLike } from './octokit.js';
+import {
+  errorStatus,
+  type OctokitLike,
+  type OctokitResponse,
+  requestWithRetry,
+  toOctokitLike,
+} from './octokit.js';
 import {
   appCredentials,
   type ConnectionRow,
@@ -43,12 +49,13 @@ const RawInstallation = z.object({
   events: z.array(z.string()).default([]),
 });
 const RawRepos = z.array(z.object({ name: z.string(), owner: z.object({ login: z.string() }) }));
+const RawCommits = z.array(z.object({ sha: z.string().min(1) }));
 
 function satisfies(granted: string | undefined, wanted: Level): boolean {
   return wanted === 'read' ? granted === 'read' || granted === 'write' : granted === 'write';
 }
 
-/** `deployments: write` / `event: pull_request` entries the grants lack. */
+/** `deployments: write` / `statuses: write` / `event: pull_request` entries the grants lack. */
 export function missingGrants(permissions: Grants, events: readonly string[]): string[] {
   const missing: string[] = [];
   for (const [name, level] of Object.entries(GITHUB_APP_PERMISSIONS)) {
@@ -89,6 +96,7 @@ export function appCapabilities(
     kind: 'app',
     deployments: satisfies(effective.permissions.deployments, 'write'),
     pullRequests: satisfies(effective.permissions.pull_requests, 'read'),
+    statuses: satisfies(effective.permissions.statuses, 'write'),
     events: [...effective.events].sort(),
     missing,
     pendingApproval: grants.installation !== null && missing.length > 0 && appMissing.length === 0,
@@ -165,8 +173,37 @@ export function createCapabilitiesService(
   }
 
   /**
-   * Tokens do not list their permissions: probe reads of deployments and pull requests on a
-   * repository of the connection. Write access to deployments only shows when the mirror tries.
+   * Commit statuses of the newest commit of the repository; false without a commit (an empty
+   * repository answers 409).
+   */
+  async function probeStatuses(client: OctokitLike, repo: { owner: string; name: string }) {
+    let commits: OctokitResponse;
+    try {
+      commits = await request(client, 'GET /repos/{owner}/{repo}/commits', {
+        owner: repo.owner,
+        repo: repo.name,
+        per_page: 1,
+      });
+    } catch (error) {
+      const status = errorStatus(error);
+      if (status === 403 || status === 404 || status === 409) return false;
+      throw error;
+    }
+    const parsed = RawCommits.safeParse(commits.data);
+    const sha = parsed.success ? parsed.data[0]?.sha : undefined;
+    if (!sha) return false;
+    return probe(client, 'GET /repos/{owner}/{repo}/commits/{ref}/statuses', {
+      owner: repo.owner,
+      repo: repo.name,
+      ref: sha,
+      per_page: 1,
+    });
+  }
+
+  /**
+   * Tokens do not list their permissions: probe reads of deployments, pull requests and commit
+   * statuses on a repository of the connection. Write access to deployments and statuses only
+   * shows when the mirrors try.
    */
   async function checkPat(row: ConnectionRow): Promise<CheckedCapabilities> {
     const client = patClientFor(row);
@@ -188,6 +225,7 @@ export function createCapabilitiesService(
     }
     let deployments = false;
     let pullRequests = false;
+    let statuses = false;
     if (repo) {
       const params = { owner: repo.owner, repo: repo.name, per_page: 1 };
       deployments =
@@ -196,15 +234,18 @@ export function createCapabilitiesService(
         ...params,
         state: 'all',
       });
+      statuses = !classic && (await probeStatuses(client, repo));
     }
     const missing: string[] = [];
     if (!deployments) missing.push('deployments: write');
     if (!pullRequests) missing.push('pull_requests: read');
+    if (!statuses) missing.push('statuses: write');
     return {
       connectionId: row.id,
       kind: 'pat',
       deployments,
       pullRequests,
+      statuses,
       events: [],
       missing,
       pendingApproval: false,
@@ -233,9 +274,10 @@ export function createCapabilitiesService(
           expiresAt: now() + GITHUB_CAPABILITIES_TTL_MS,
         });
       }
+      const recent = (at: number | undefined) =>
+        at !== undefined && now() - at < DENIAL_LOG_INTERVAL_MS;
       const denial = shared.denials.get(id);
-      const recentDenial = denial !== undefined && now() - denial.at < DENIAL_LOG_INTERVAL_MS;
-      if (row.kind === 'pat' && recentDenial && checked.deployments) {
+      if (row.kind === 'pat' && recent(denial?.at) && checked.deployments) {
         // The read probe passed, but GitHub refused to write a deployment.
         checked = {
           ...checked,
@@ -243,7 +285,18 @@ export function createCapabilitiesService(
           missing: ['deployments: write', ...checked.missing],
         };
       }
-      return { ...checked, lastDeniedAt: denial ? new Date(denial.at).toISOString() : null };
+      const statusDenial = shared.statusDenials.get(id);
+      if (row.kind === 'pat' && recent(statusDenial?.at) && checked.statuses) {
+        // Statuses could be read, but GitHub refused to write one.
+        checked = { ...checked, statuses: false, missing: [...checked.missing, 'statuses: write'] };
+      }
+      const isoOf = (at: number | undefined) =>
+        at === undefined ? null : new Date(at).toISOString();
+      return {
+        ...checked,
+        lastDeniedAt: isoOf(denial?.at),
+        lastStatusDeniedAt: isoOf(statusDenial?.at),
+      };
     },
   };
 }

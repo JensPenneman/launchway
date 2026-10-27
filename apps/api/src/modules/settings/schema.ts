@@ -1,11 +1,24 @@
 import {
+  DEFAULT_CHECK_CPUS,
+  DEFAULT_CHECK_MEMORY_MB,
+  DEFAULT_CHECK_PIDS_LIMIT,
   DEFAULT_PREVIEW_MAX_PER_APP,
   DEFAULT_PREVIEW_MAX_TOTAL,
   type ForwardAuthTarget,
   type NodeId,
 } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { boolean, check, inet, integer, jsonb, pgTable, smallint, text } from 'drizzle-orm/pg-core';
+import {
+  boolean,
+  check,
+  doublePrecision,
+  inet,
+  integer,
+  jsonb,
+  pgTable,
+  smallint,
+  text,
+} from 'drizzle-orm/pg-core';
 import { timestamps, tz } from '../../db/columns.js';
 import { nodes } from '../nodes/schema.js';
 
@@ -31,6 +44,10 @@ export const settings = pgTable(
     previewBaseDomain: text('preview_base_domain'),
     previewMaxPerApp: integer('preview_max_per_app').notNull().default(DEFAULT_PREVIEW_MAX_PER_APP),
     previewMaxTotal: integer('preview_max_total').notNull().default(DEFAULT_PREVIEW_MAX_TOTAL),
+    /** Caps of every service of a check run (ADR 0020). */
+    checkMemoryMb: integer('check_memory_mb').notNull().default(DEFAULT_CHECK_MEMORY_MB),
+    checkCpus: doublePrecision('check_cpus').notNull().default(DEFAULT_CHECK_CPUS),
+    checkPidsLimit: integer('check_pids_limit').notNull().default(DEFAULT_CHECK_PIDS_LIMIT),
     ...timestamps(),
   },
   (t) => [

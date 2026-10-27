@@ -196,7 +196,9 @@ export function createNodesService(deps: NodesDeps): NodesService {
         });
       } catch (error) {
         if (isForeignKeyViolation(error)) {
-          throw conflict('The node is still referenced by deployments and cannot be deleted');
+          throw conflict(
+            'The node is still referenced by deployments or check runs and cannot be deleted',
+          );
         }
         throw error;
       }

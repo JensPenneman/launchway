@@ -6,6 +6,8 @@ import { serve, type WebSocketServerLike } from '@hono/node-server';
 import {
   AGENT_PROTOCOL_VERSION,
   AGENT_WS_PATH,
+  type CheckRunId,
+  type DeploymentId,
   type HelloPayload,
   type ServerToAgentMessage,
 } from '@launchway/contracts';
@@ -118,6 +120,37 @@ export class TestAgent {
   async handshake(overrides: Partial<HelloPayload> = {}) {
     this.send('hello', helloPayload(overrides));
     return this.next('hello.ok');
+  }
+
+  /**
+   * A heartbeat; without `activeCheckRunIds` it is one of an agent older than checks (the field
+   * is absent then, not empty).
+   */
+  heartbeat(activeDeploymentIds: DeploymentId[] = [], activeCheckRunIds?: CheckRunId[]): void {
+    this.send('heartbeat', {
+      sentAt: new Date().toISOString(),
+      activeDeploymentIds,
+      ...(activeCheckRunIds === undefined ? {} : { activeCheckRunIds }),
+    });
+  }
+
+  /** Answers `check.run` like the agent does at once: one system line echoing the request id. */
+  acknowledgeCheck(request: Extract<ServerToAgentMessage, { type: 'check.run' }>): void {
+    this.send(
+      'check.log',
+      {
+        runId: request.payload.runId,
+        lines: [
+          {
+            seq: 0,
+            timestamp: new Date().toISOString(),
+            stream: 'system',
+            line: 'Received by the node',
+          },
+        ],
+      },
+      request.id,
+    );
   }
 
   close(): void {

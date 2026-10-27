@@ -6,6 +6,8 @@ import {
   type AgentError,
   type AgentToServerMessage,
   type AppLogLine,
+  type CheckRunId,
+  type CheckRunPayload,
   type DeploymentId,
   type DeployPayload,
   type HelloPayload,
@@ -24,8 +26,10 @@ import {
   AgentRequestError,
   AgentUnavailableError,
   type AppTarget,
+  type CheckSink,
   type DeploymentSink,
   type LogsRequest,
+  noopCheckSink,
 } from '../../lib/agent-gateway.js';
 import { type AgentAuth, createNodeAgentStore, type NodeAgentStore } from './agent-store.js';
 
@@ -50,6 +54,10 @@ export interface GatewayTimeouts {
   stopMs: number;
   /** `deployment.cancel`: until the deployment's result (or an error) arrives. */
   cancelMs: number;
+  /** First reply to `check.run` (agents without checks never answer). */
+  checkAckMs: number;
+  /** `check.cancel`: until the run's result (or an error) arrives. */
+  checkCancelMs: number;
   /** Time a new socket has to send `hello`. */
   helloMs: number;
   /** A node without heartbeat for this long is offline. */
@@ -69,12 +77,14 @@ const DEFAULT_TIMEOUTS: GatewayTimeouts = {
   // Above the agent's worst case: unwinding a deployment plus `compose stop` (5 min limit).
   stopMs: 360_000,
   cancelMs: 30_000,
+  checkAckMs: 30_000,
+  checkCancelMs: 30_000,
   helloMs: 10_000,
   offlineAfterMs: NODE_OFFLINE_AFTER_MS,
   offlineGraceMs: NODE_OFFLINE_AFTER_MS,
   sweepIntervalMs: 5_000,
 };
-/** Attempts to hand a deployment result to the sink (transient database errors). */
+/** Attempts to hand a deployment or check result to its sink (transient database errors). */
 const RESULT_DELIVERY_ATTEMPTS = 4;
 
 const DEFAULT_LOG_TAIL = 200;
@@ -87,6 +97,8 @@ type GatewayDeps = Pick<Deps, 'logger' | 'events' | 'lifecycle' | 'version'> &
 export interface CreateAgentGatewayOptions {
   deps: GatewayDeps;
   sink: DeploymentSink;
+  /** Receives check reports (ADR 0020); dropped when omitted. */
+  checks?: CheckSink;
   /** Persistence of node state; defaults to the PostgreSQL store (needs `deps.db`). */
   store?: NodeAgentStore;
   timeouts?: Partial<GatewayTimeouts>;
@@ -97,12 +109,13 @@ type Outgoing = {
   [K in OutgoingMessage['type']]: Extract<OutgoingMessage, { type: K }>['payload'];
 };
 
-type PendingKind = 'deploy' | 'cancel' | 'status' | 'stop' | 'remove';
+type PendingKind = 'deploy' | 'cancel' | 'status' | 'stop' | 'remove' | 'check' | 'check-cancel';
 
 interface Pending {
   readonly connection: Connection;
   readonly kind: PendingKind;
   readonly deploymentId?: DeploymentId;
+  readonly runId?: CheckRunId;
   readonly resolve: (value: unknown) => void;
   readonly reject: (error: Error) => void;
   readonly timer: NodeJS.Timeout;
@@ -154,6 +167,7 @@ export class NodeAgentGateway implements AgentGateway {
   readonly #log: Logger;
   readonly #deps: GatewayDeps;
   readonly #sink: DeploymentSink;
+  readonly #checks: CheckSink;
   readonly #store: NodeAgentStore;
   readonly #timeouts: GatewayTimeouts;
   /** The live, handshaken connection per node. */
@@ -171,6 +185,7 @@ export class NodeAgentGateway implements AgentGateway {
     this.#deps = options.deps;
     this.#log = options.deps.logger.child({ component: 'agent-gateway' });
     this.#sink = options.sink;
+    this.#checks = options.checks ?? noopCheckSink;
     this.#timeouts = { ...DEFAULT_TIMEOUTS, ...options.timeouts };
     if (options.store) this.#store = options.store;
     else if (options.deps.db) this.#store = createNodeAgentStore({ db: options.deps.db });
@@ -251,6 +266,23 @@ export class NodeAgentGateway implements AgentGateway {
       'deployment.cancel',
       { deploymentId },
       { kind: 'cancel', deploymentId, timeoutMs: this.#timeouts.cancelMs },
+    );
+  }
+
+  async runCheck(nodeId: NodeId, payload: CheckRunPayload): Promise<void> {
+    await this.#request(nodeId, 'check.run', payload, {
+      kind: 'check',
+      runId: payload.runId,
+      timeoutMs: this.#timeouts.checkAckMs,
+    });
+  }
+
+  async cancelCheck(nodeId: NodeId, runId: CheckRunId): Promise<void> {
+    await this.#request(
+      nodeId,
+      'check.cancel',
+      { runId },
+      { kind: 'check-cancel', runId, timeoutMs: this.#timeouts.checkCancelMs },
     );
   }
 
@@ -477,6 +509,7 @@ export class NodeAgentGateway implements AgentGateway {
       });
       const onNodeOnline = this.#sink.onNodeOnline?.bind(this.#sink);
       if (onNodeOnline) await this.#deliver(() => onNodeOnline(nodeId), 'onNodeOnline', nodeId);
+      await this.#deliver(() => this.#checks.onNodeOnline(nodeId), 'checks.onNodeOnline', nodeId);
     });
   }
 
@@ -495,6 +528,11 @@ export class NodeAgentGateway implements AgentGateway {
           const active = message.payload.activeDeploymentIds;
           this.#forward(connection, 'onHeartbeat', () => onHeartbeat(nodeId, active));
         }
+        // Agents without checks send no activeCheckRunIds: the sink must tell that from none.
+        const activeChecks = message.payload.activeCheckRunIds;
+        this.#forward(connection, 'checks.onHeartbeat', () =>
+          this.#checks.onHeartbeat(nodeId, activeChecks),
+        );
         return;
       }
       case 'deployment.progress':
@@ -522,6 +560,31 @@ export class NodeAgentGateway implements AgentGateway {
           connection,
           'onResult',
           () => this.#sink.onResult(nodeId, message.payload),
+          RESULT_DELIVERY_ATTEMPTS,
+        );
+        return;
+      case 'check.log':
+        this.#settle(connection, message.id, 'check', undefined);
+        this.#forward(connection, 'checks.onLog', () =>
+          this.#checks.onLog(nodeId, message.payload),
+        );
+        return;
+      case 'check.result':
+        this.#settle(connection, message.id, 'check', undefined);
+        // The agent answers check.cancel with the run's result, echoing the id of check.run.
+        for (const [id, pending] of this.#pending) {
+          if (
+            pending.kind === 'check-cancel' &&
+            pending.connection === connection &&
+            pending.runId === message.payload.runId
+          ) {
+            this.#settle(connection, id, 'check-cancel', undefined);
+          }
+        }
+        this.#forward(
+          connection,
+          'checks.onResult',
+          () => this.#checks.onResult(nodeId, message.payload),
           RESULT_DELIVERY_ATTEMPTS,
         );
         return;
@@ -593,7 +656,12 @@ export class NodeAgentGateway implements AgentGateway {
     nodeId: NodeId,
     type: keyof Outgoing,
     payload: Outgoing[keyof Outgoing],
-    options: { kind: PendingKind; deploymentId?: DeploymentId; timeoutMs: number },
+    options: {
+      kind: PendingKind;
+      deploymentId?: DeploymentId;
+      runId?: CheckRunId;
+      timeoutMs: number;
+    },
   ): Promise<T> {
     const connection = this.#connections.get(nodeId);
     if (connection?.state !== 'ready') return Promise.reject(new AgentUnavailableError(nodeId));
@@ -617,6 +685,7 @@ export class NodeAgentGateway implements AgentGateway {
         connection,
         kind: options.kind,
         ...(options.deploymentId === undefined ? {} : { deploymentId: options.deploymentId }),
+        ...(options.runId === undefined ? {} : { runId: options.runId }),
         resolve: resolve as (value: unknown) => void,
         reject,
         timer,
@@ -694,26 +763,27 @@ export class NodeAgentGateway implements AgentGateway {
     );
   }
 
-  /** Calls the sink; retries with a short backoff when `attempts` > 1 (results must not drop). */
+  /**
+   * Calls a sink (`what`: the deployment sink's method, or `checks.<method>` of the check sink);
+   * retries with a short backoff when `attempts` > 1 (results must not drop).
+   */
   async #deliver(
     call: () => Promise<void>,
     what: string,
     nodeId: NodeId,
     attempts = 1,
   ): Promise<void> {
+    const sink = what.startsWith('checks.') ? 'check sink' : 'deployment sink';
     for (let attempt = 1; ; attempt += 1) {
       try {
         await call();
         return;
       } catch (error) {
         if (attempt >= attempts || this.#deps.lifecycle.shuttingDown) {
-          this.#log.error({ err: error, nodeId, sink: what }, 'deployment sink failed');
+          this.#log.error({ err: error, nodeId, sink: what }, `${sink} failed`);
           return;
         }
-        this.#log.warn(
-          { err: error, nodeId, sink: what, attempt },
-          'deployment sink failed; retrying',
-        );
+        this.#log.warn({ err: error, nodeId, sink: what, attempt }, `${sink} failed; retrying`);
         await new Promise((resolve) => setTimeout(resolve, 250 * 2 ** attempt));
       }
     }
@@ -732,6 +802,11 @@ export class NodeAgentGateway implements AgentGateway {
       this.#enqueue(nodeId, async () => {
         if (this.#connections.has(nodeId)) return;
         await this.#deliver(() => this.#sink.onNodeOffline(nodeId), 'onNodeOffline', nodeId);
+        await this.#deliver(
+          () => this.#checks.onNodeOffline(nodeId),
+          'checks.onNodeOffline',
+          nodeId,
+        );
       });
     }, this.#timeouts.offlineGraceMs);
     timer.unref();

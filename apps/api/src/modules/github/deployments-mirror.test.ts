@@ -277,7 +277,7 @@ describe('deployments mirror', () => {
       deployment_id: 1000,
       state: 'success',
       description: 'Running',
-      log_url: `https://deploy.example.com/apps/app_01?deployment=${id}`,
+      log_url: `https://deploy.example.com/apps/app_01?tab=deployments&deployment=${id}`,
       environment_url: 'https://trail.example.com',
     });
   });

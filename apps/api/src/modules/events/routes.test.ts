@@ -24,6 +24,19 @@ describe('GET /events', () => {
     expect(text).toContain('event: platform');
     expect(text).toContain('"topic":"users"');
 
+    // Check runs reach the feed like every topic (the UI refreshes them from it).
+    deps.events.publish({
+      topic: 'checks',
+      action: 'updated',
+      resourceId: 'chk_x',
+      data: { appId: 'app_x', status: 'running' },
+    });
+    let more = '';
+    while (!more.includes('"topic":"checks"')) {
+      more += new TextDecoder().decode((await reader.read()).value);
+    }
+    expect(more).toContain('"data":{"appId":"app_x","status":"running"}');
+
     deps.lifecycle.beginShutdown();
     let done = false;
     while (!done) ({ done } = await reader.read());

@@ -4,6 +4,7 @@
 export * from '../modules/apps/schema.js';
 export * from '../modules/audit/schema.js';
 export * from '../modules/auth/schema.js';
+export * from '../modules/checks/schema.js';
 export * from '../modules/deployments/schema.js';
 export * from '../modules/dns/schema.js';
 export * from '../modules/domains/schema.js';

@@ -11,7 +11,6 @@ import {
 import { and, asc, eq, isNull } from 'drizzle-orm';
 import { z } from 'zod';
 import type { Deps } from '../../deps.js';
-import { forgetInstallationTokens } from '../../lib/git-provider.js';
 import { apps } from '../apps/schema.js';
 import { recordGitHubDeploymentId } from '../deployments/model.js';
 import { deployments } from '../deployments/schema.js';
@@ -28,7 +27,12 @@ import {
 } from './octokit.js';
 import type { ConnectionRow } from './providers.js';
 import { githubConnections } from './schema.js';
-import { DENIAL_LOG_INTERVAL_MS, githubConnectionState } from './state.js';
+import {
+  DENIAL_LOG_INTERVAL_MS,
+  DENIAL_PAUSE_MS,
+  forgetAfterDenial,
+  githubConnectionState,
+} from './state.js';
 
 /** States of a GitHub deployment status that Launchway posts. */
 export type GitHubDeploymentState = 'in_progress' | 'success' | 'failure' | 'inactive';
@@ -97,6 +101,11 @@ export interface MirrorSnapshot {
   readonly environmentUrl: string | null;
   /** Platform public URL (origin), for `log_url`. */
   readonly publicUrl: string | null;
+}
+
+/** The deployment in the app's deployments tab, GitHub's "View logs" link (`log_url`). */
+function deploymentLogUrl(publicUrl: string, appId: AppId, id: DeploymentId): string {
+  return `${publicUrl}/apps/${appId}?tab=deployments&deployment=${id}`;
 }
 
 export interface MirrorStore {
@@ -191,10 +200,6 @@ export interface MirrorOptions {
   readonly now?: () => number;
 }
 
-/** After a refusal, new GitHub deployments of the connection are not attempted for this long. */
-export const DENIAL_PAUSE_MS = 5 * 60 * 1000;
-/** Cached installation tokens are dropped after a refusal at most this often. */
-const TOKEN_FORGET_INTERVAL_MS = 5 * 60 * 1000;
 /** Bound of the "last posted state" memory. */
 const MAX_REMEMBERED = 2000;
 const DESCRIPTION_MAX = 140;
@@ -313,17 +318,8 @@ export function createDeploymentsMirror(
   function onDenied(connection: ConnectionRow, status: number) {
     const at = now();
     shared.denials.set(connection.id, { at, status });
-    // The capability hint must reflect the refusal on its next read.
-    shared.capabilities.delete(connection.id);
-    if (connection.appId !== null) {
-      const forgotten = shared.tokensForgottenAt.get(connection.appId) ?? 0;
-      // Installation tokens carry the permissions of their creation; a fresh one picks up a
-      // permission the owner approved in the meantime.
-      if (at - forgotten >= TOKEN_FORGET_INTERVAL_MS) {
-        shared.tokensForgottenAt.set(connection.appId, at);
-        forgetInstallationTokens(connection.appId);
-      }
-    }
+    // The capability hint must reflect the refusal on its next read; fresh tokens follow grants.
+    forgetAfterDenial(shared, connection, at);
     const announced = shared.denialAnnouncedAt.get(connection.id);
     if (announced !== undefined && at - announced < DENIAL_LOG_INTERVAL_MS) return;
     shared.denialAnnouncedAt.set(connection.id, at);
@@ -419,7 +415,7 @@ export function createDeploymentsMirror(
       const client = await octokitFor(connection);
       if (!client) return 'skipped';
       const logUrl = snapshot.publicUrl
-        ? `${snapshot.publicUrl}/apps/${deployment.appId}?deployment=${deployment.id}`
+        ? deploymentLogUrl(snapshot.publicUrl, deployment.appId, deployment.id)
         : undefined;
       try {
         await call(

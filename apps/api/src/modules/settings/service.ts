@@ -32,6 +32,9 @@ const WRITABLE_KEYS = [
   'previewBaseDomain',
   'previewMaxPerApp',
   'previewMaxTotal',
+  'checkMemoryMb',
+  'checkCpus',
+  'checkPidsLimit',
 ] as const satisfies readonly (keyof UpdateSettingsInput & keyof SettingsRow)[];
 
 export interface SettingsService {
@@ -79,6 +82,9 @@ export function createSettingsService(
       previewBaseDomain: row.previewBaseDomain,
       previewMaxPerApp: row.previewMaxPerApp,
       previewMaxTotal: row.previewMaxTotal,
+      checkMemoryMb: row.checkMemoryMb,
+      checkCpus: row.checkCpus,
+      checkPidsLimit: row.checkPidsLimit,
       updatedAt: row.updatedAt.toISOString(),
     };
   }

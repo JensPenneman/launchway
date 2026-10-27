@@ -1,4 +1,11 @@
-import type { AppId, AppPreviewSettings, GitHubConnectionId, NodeId } from '@launchway/contracts';
+import {
+  type AppChecksSettings,
+  type AppId,
+  type AppPreviewSettings,
+  DEFAULT_APP_CHECKS_SETTINGS,
+  type GitHubConnectionId,
+  type NodeId,
+} from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { boolean, check, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
 import { idColumn, timestamps } from '../../db/columns.js';
@@ -50,6 +57,11 @@ export const apps = pgTable(
       .default(
         sql`'{"enabled":false,"skipBots":true,"requireLabel":null,"hostTemplate":"{slug}-pr-{number}.{base}","envOverrides":{},"composeFiles":null}'::jsonb`,
       ),
+    /** `AppChecksSettings` (ADR 0020): the configured checks and when webhooks run them. */
+    checks: jsonb('checks')
+      .$type<AppChecksSettings>()
+      .notNull()
+      .default(sql.raw(`'${JSON.stringify(DEFAULT_APP_CHECKS_SETTINGS)}'::jsonb`)),
     ...timestamps(),
   },
   (t) => [

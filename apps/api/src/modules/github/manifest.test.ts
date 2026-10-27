@@ -30,10 +30,22 @@ describe('GitHub App manifest', () => {
         metadata: 'read',
         deployments: 'write',
         pull_requests: 'read',
+        statuses: 'write',
       },
       default_events: ['release', 'push', 'pull_request'],
       public: false,
     });
+    // Exactly these: nothing beyond what the deployment mirror and the checks need.
+    expect(manifest.default_permissions).toEqual({
+      contents: 'read',
+      metadata: 'read',
+      deployments: 'write',
+      pull_requests: 'read',
+      statuses: 'write',
+    });
+    expect(manifest.description).toBe(
+      'Deploys your repositories with Launchway and reports deployments and checks to GitHub.',
+    );
   });
 
   it('names the app after the public host within GitHub limits', () => {

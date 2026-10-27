@@ -1,5 +1,7 @@
 import type {
   AppLogLine,
+  CheckRunId,
+  CheckRunPayload,
   DeploymentId,
   DeployPayload,
   NodeId,
@@ -25,6 +27,19 @@ export class FakeAgentGateway implements AgentGateway {
   deployError: Error | undefined;
   /** Error thrown by `cancelDeployment` once (e.g. a `not-found` reply or a timeout). */
   cancelError: Error | undefined;
+  /** Check runs sent with `runCheck`, in order. */
+  readonly checkRuns: { nodeId: NodeId; payload: CheckRunPayload }[] = [];
+  /** Check runs cancelled with `cancelCheck`, in order. */
+  readonly checkCancels: { nodeId: NodeId; runId: CheckRunId }[] = [];
+  /** Error thrown by `runCheck` once (e.g. an acknowledgement timeout). */
+  runCheckError: Error | undefined;
+  /** Error thrown by `cancelCheck` once (e.g. a `not-found` reply). */
+  cancelCheckError: Error | undefined;
+  /**
+   * Plays the agent after a recorded `cancelCheck` (e.g. delivers the `cancelled` result to the
+   * check sink); awaited before `cancelCheck` resolves, like the real gateway.
+   */
+  onCancelCheck: ((nodeId: NodeId, runId: CheckRunId) => Promise<void>) | undefined;
 
   connect(nodeId: NodeId): void {
     this.online.add(nodeId);
@@ -56,6 +71,23 @@ export class FakeAgentGateway implements AgentGateway {
     this.cancelError = undefined;
     if (error) throw error;
     this.cancelled.push({ nodeId, deploymentId });
+  }
+
+  async runCheck(nodeId: NodeId, payload: CheckRunPayload): Promise<void> {
+    this.require(nodeId);
+    const error = this.runCheckError;
+    this.runCheckError = undefined;
+    if (error) throw error;
+    this.checkRuns.push({ nodeId, payload });
+  }
+
+  async cancelCheck(nodeId: NodeId, runId: CheckRunId): Promise<void> {
+    this.require(nodeId);
+    const error = this.cancelCheckError;
+    this.cancelCheckError = undefined;
+    if (error) throw error;
+    this.checkCancels.push({ nodeId, runId });
+    await this.onCancelCheck?.(nodeId, runId);
   }
 
   async stopApp(nodeId: NodeId, app: AppTarget): Promise<ServiceStatus[]> {

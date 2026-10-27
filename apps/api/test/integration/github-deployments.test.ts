@@ -21,7 +21,13 @@ import { FakeAgentGateway } from '../support/fake-agent-gateway.js';
 import { type FakeApp, FakeGitHub, sha, testPrivateKey } from '../support/fake-github.js';
 
 const PUBLIC_URL = 'https://deploy.example.com';
-const FULL = { contents: 'read', metadata: 'read', deployments: 'write', pull_requests: 'read' };
+const FULL = {
+  contents: 'read',
+  metadata: 'read',
+  deployments: 'write',
+  pull_requests: 'read',
+  statuses: 'write',
+};
 const json = (method: string, body?: unknown) => ({
   method,
   headers: { 'content-type': 'application/json' },
@@ -111,12 +117,20 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
       kind: 'app',
       deployments: false,
       pullRequests: false,
+      statuses: false,
       events: ['release'],
-      missing: ['deployments: write', 'pull_requests: read', 'event: push', 'event: pull_request'],
+      missing: [
+        'deployments: write',
+        'pull_requests: read',
+        'statuses: write',
+        'event: push',
+        'event: pull_request',
+      ],
       pendingApproval: false,
       settingsUrl: `https://github.com/settings/apps/${fakeApp.slug}/permissions`,
       installationSettingsUrl: `https://github.com/settings/installations/${installationId}`,
       lastDeniedAt: null,
+      lastStatusDeniedAt: null,
     });
 
     // The owner updates the app; the installation has not approved it yet. Cached until refresh.
@@ -137,6 +151,7 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
     expect(await capabilities(connectionId, true)).toMatchObject({
       deployments: true,
       pullRequests: true,
+      statuses: true,
       events: ['pull_request', 'push', 'release'],
       missing: [],
       pendingApproval: false,
@@ -204,7 +219,7 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
       {
         state: 'success',
         description: 'Running',
-        log_url: `${PUBLIC_URL}/apps/${app.id}?deployment=${deployment.id}`,
+        log_url: `${PUBLIC_URL}/apps/${app.id}?tab=deployments&deployment=${deployment.id}`,
       },
     ]);
 
@@ -330,17 +345,29 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
       kind: 'pat',
       deployments: true,
       pullRequests: true,
+      statuses: true,
       events: [],
       missing: [],
       settingsUrl: 'https://github.com/settings/personal-access-tokens',
       installationSettingsUrl: null,
+      lastStatusDeniedAt: null,
     });
     expect((await capabilities(pat.id)).probedRepository).toMatch(/^octo\//);
+
+    // A token without access to commit statuses cannot report checks.
+    github.denyStatuses = true;
+    expect(await capabilities(pat.id, true)).toMatchObject({
+      deployments: true,
+      statuses: false,
+      missing: ['statuses: write'],
+    });
+    github.denyStatuses = false;
 
     github.patScopes.set(token, 'read:org');
     expect(await capabilities(pat.id, true)).toMatchObject({
       deployments: false,
-      missing: ['deployments: write'],
+      statuses: false,
+      missing: ['deployments: write', 'statuses: write'],
     });
   });
 });

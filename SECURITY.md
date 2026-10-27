@@ -52,8 +52,10 @@ This is a summary of the security requirements in section 14 of
   `no-new-privileges` and is the first the kernel kills when memory runs out,
   and one check runs per node at a time. Check containers can still reach the
   network, including ports the node publishes (on Docker Desktop also the
-  host through `host.docker.internal`), and builds run in BuildKit without the
-  service limits and share its cache and cache mounts with deployments; put
+  host through `host.docker.internal`). Their image builds run in a BuildKit
+  of their own with the same memory, CPU and process limits, their own cache
+  and cache mounts and their own network; that BuildKit runs privileged in its
+  container, as buildx's `docker-container` builders do. Put
   services on the node behind authentication and turn checks on only for
   repositories whose writers you trust with that (ADR 0020). A member can also
   start a run by hand for any commit GitHub serves for the repository, heads

@@ -456,7 +456,9 @@ images.
      (1-120, default 30) and, optionally, a Compose file of its own.
 3. **Limits** (admins): **Settings → Platform → Checks** sets the memory,
    CPUs and processes every service of a check gets (`checkMemoryMb`,
-   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096). The
+   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096) and how many
+   checks may wait (`checkMaxQueuedPerApp`, `checkMaxQueuedPerNode`; defaults
+   30 and 100). The
    memory limit applies to every service of a check, so a dev container with
    a database may use twice as much; the card shows the total.
 
@@ -505,6 +507,16 @@ dependencies first.
   exists on the node, such as another app's build, and cannot mount images.
   Builds and Compose of checks do not see the agent's proxy variables; a node
   behind a proxy needs it in Docker's own configuration.
+- **A builder of its own.** Images of checks are built by a BuildKit of
+  their own, not by the engine's builder that deployments use: a buildx
+  `docker-container` builder named after the limits
+  (`launchway-check-build-2048m-2c`), with the memory (no swap), CPUs and
+  processes of a check service, its own cache and cache mounts and its own
+  network `launchway-check-build`, which reaches the internet but no other
+  container. The agent creates it with the first build, keeps it and its
+  cache (at most 5000 MB) between runs, and replaces it when the limits
+  change. A build step that needs more memory fails with "cannot allocate
+  memory".
 - **Its own, short-lived project.** Every run is the Compose project
   `launchway-check_<slug>_<run>`: published ports, fixed container names,
   restart policies, `ulimits` and network subnets are removed, container logs
@@ -514,8 +526,15 @@ dependencies first.
   service, and later builds reuse their layers.
 - **One at a time.** A node runs one check at a time, oldest first across
   its apps. A newer push to a branch cancels the queued checks of older
-  commits of that branch; a push and a pull request of the same commit run
-  once.
+  commits of that branch, whichever commit it is (a force-push back to a
+  commit runs its checks again); a push and a pull request of the same commit
+  run once.
+- **A bounded queue.** An app may have at most `checkMaxQueuedPerApp` (30)
+  checks waiting and a node at most `checkMaxQueuedPerNode` (100). The checks
+  of a push beyond that end at once with *error*, reason `queue-full`, and
+  GitHub shows "Not run: the app already has 30 queued checks (at most 30);
+  run it again later"; pushing the commit again or **Re-run** queues them once
+  there is room. Running checks by hand is refused instead (409).
 - **Logs** stream to the run's drawer on the **Checks** tab and
   `GET /api/v1/checks/{id}/logs?follow=true`, at most 20 000 lines or 16 MiB
   per run, and are deleted after 30 days. The runs stay listed.
@@ -544,10 +563,28 @@ separately, so a check of Trail (`dev` and `db`) may take up to twice
   development container), which fits.
 - 4096 processes per service are plenty for Node and Chromium and stop a
   runaway fork.
-- Disk: runs remove their volumes and checkouts; images and the build cache
-  stay. `docker system df` shows them, `docker image ls 'launchway-check/*'`
-  the images of checks, and `docker builder prune --filter until=168h`
-  removes build cache older than a week (of deployments too).
+- The check builder counts as one more service: its builds get at most
+  `checkMemoryMb` and `checkCpus` while a check builds, before its own
+  services start. On Docker Desktop for Windows it is the container
+  `buildx_buildkit_launchway-check-build-<memory>m-<cpus>c0` in WSL 2 (it
+  restarts with Docker Desktop), and the first check build pulls its BuildKit
+  image `moby/buildkit` from Docker Hub (about 80 MB).
+- Disk: runs remove their volumes and checkouts; images of checks
+  (`docker image ls 'launchway-check/*'`) and the check builder's cache stay.
+  The cache is pruned to 5000 MB after every run. To see it or free it now,
+  ask the agent's buildx, which keeps its records in the agent's volume:
+
+  ```sh
+  docker exec -e BUILDX_CONFIG=/var/lib/launchway/agent/buildx launchway-launchway-agent-1 \
+    docker buildx du --builder launchway-check-build-2048m-2c
+  docker exec -e BUILDX_CONFIG=/var/lib/launchway/agent/buildx launchway-launchway-agent-1 \
+    docker buildx prune --builder launchway-check-build-2048m-2c --force
+  ```
+
+  Removing the builder altogether (`docker rm -f` of its container and
+  `docker volume rm` of its `…0_state` volume) is safe: the next check build
+  creates it again. The engine's own build cache (`docker builder prune`)
+  belongs to deployments; checks no longer add to it.
 
 ### Require checks in branch protection
 
@@ -583,6 +620,13 @@ is fixed.
   own Compose file instead of using one that only exists on the node.
 - **Checks stay queued.** One check runs per node at a time. Checks of a node
   that is offline for 10 minutes end with *error*.
+- **"Not run: … queued checks".** The queue of the app or its node was full
+  (reason `queue-full`). Wait for the queue to drain, then push again or
+  **Re-run**, or raise the limits under **Settings → Platform → Checks**.
+- **A build fails with "cannot allocate memory" or "Could not start the check
+  builder".** Builds of checks get the memory of one check service; raise
+  `checkMemoryMb`, or check that the node can pull `moby/buildkit` from Docker
+  Hub.
 - **No status on GitHub.** Grant the permission (above). Statuses are posted
   best effort; after a restart the API posts those of the last seven days
   that GitHub does not show yet.
@@ -850,6 +894,8 @@ worked with an earlier agent fails with reason `policy` if its Compose files:
 - use YAML tags other than `!reset`, `!override` and the standard ones, keys
   that are not plain scalars, duplicate keys, or exceed 4 MiB per file;
 - run privileged `post_start` or `pre_stop` hooks;
+- forward an SSH agent to a build (`build.ssh: [default]`): nodes have none,
+  so such builds failed anyway; name a key file inside the repository;
 - use an image in the `launchway-check/` namespace, which belongs to checks.
 
 Compose's error output in deployment logs now masks quoted text, and the node

@@ -158,7 +158,31 @@ shape the design:
   permission. Without it checks still run and show in Launchway.
 - Checks compete with production for the node. The caps, one check per node
   and the OOM preference bound that, and the operations guide sizes them for a
-  16 GB node. Images and BuildKit cache of checks stay on the node.
+  16 GB node. Images of checks and the check builder's cache stay on the node.
+- Builds of checks (follow-up of this decision) run in a buildx
+  `docker-container` builder of their own, named after the limits
+  (`launchway-check-build-<memory>m-<cpus>c`): the memory without swap, CPUs
+  and processes of a check service, its own BuildKit cache and cache mounts
+  (bounded to 5000 MB by BuildKit's garbage collection and a prune after
+  every run), and its own bridge network, which reaches the internet but no
+  other container. The agent creates it with the first build of a check
+  (`docker compose build --builder`, buildx records in the agent's volume),
+  keeps it between runs and replaces it when the limits change; deployments
+  keep the engine's builder. Its BuildKit image is pinned by digest. As with
+  every `docker-container` builder, BuildKit runs privileged in that
+  container and buildx allows it the `network.host` entitlement; build steps
+  stay in BuildKit's sandbox, checks never request the entitlement (the
+  policy refuses `network: host` and entitlements), and that network would be
+  the builder's own.
+- The queue is bounded (follow-up of this decision): an app may hold at most
+  `checkMaxQueuedPerApp` queued runs (default 30) and a node
+  `checkMaxQueuedPerNode` (default 100), platform settings. A push or pull
+  request whose runs would exceed either bound gets them at once as `errored`
+  with reason `queue-full`, so GitHub shows a clear error instead of a
+  pending status that may never move; manual runs and re-runs are refused
+  (409). Runs that never ran (`superseded`, `queue-full`) do not count for
+  the deduplication, so pushing such a commit again runs it, and the newest
+  push of a branch supersedes the queued runs of every other commit of it.
 - The Compose file preflight applies to deployments as well: `include`,
   `extends.file`, `env_file` and `label_file` must stay inside the repository
   there too, and remote includes are refused, which closes the same way of
@@ -168,15 +192,14 @@ shape the design:
   deployments that worked before may now meet (*Upgrade*).
 - Risks that remain: checks have outbound network access (installing
   dependencies needs it) and can reach ports the node publishes, the
-  Launchway API's port 3000 included; build steps run in BuildKit without the
-  service limits, and they share the node's BuildKit cache, cache mounts
-  (`RUN --mount=type=cache`) included, with the builds of deployments; images
-  the node's Docker client may pull with stored registry credentials can be
-  pulled by checks as well; the policy is a deny-list, so a new Compose
+  Launchway API's port 3000 included; images the node's Docker client may
+  pull with stored registry credentials can be pulled by checks as well; the
+  check builder's BuildKit runs privileged in its container (see above) and
+  its pinned image is not updated by Dependabot; the policy is a deny-list, so a new Compose
   feature that reaches outside the project is not refused until it is known;
   repository code is isolated by the container runtime only.
-- Follow-ups: an allow-list of Compose keys for checks; a BuildKit builder of
-  their own for checks (separate cache and cache mounts) and pruning it; binding the API's port to loopback (or a firewall rule)
+- Follow-ups: an allow-list of Compose keys for checks; a rootless BuildKit
+  for the check builder; binding the API's port to loopback (or a firewall rule)
   once the platform domain works, so job containers cannot reach it; cache
   volumes per app (package managers) to speed up runs; more than one check
   per node; `include` support for checks.

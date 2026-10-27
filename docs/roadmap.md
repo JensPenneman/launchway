@@ -101,9 +101,9 @@ features that are deliberately out of scope for v0.1 are listed in
   closed. Check containers reach the network, including the node's published
   ports (the API's port 3000 until it is bound to loopback, and on Docker
   Desktop the host through `host.docker.internal`); an egress policy per check
-  would close that. Build steps run in BuildKit without the service limits
-  and share the node's BuildKit cache and cache mounts with deployments (a
-  builder of their own would separate them); the BuildKit cache and the
+  would close that. The check builder's BuildKit runs privileged (a rootless
+  BuildKit would not), and its image is pinned in the agent
+  (`CHECK_BUILDER_IMAGE`), where Dependabot does not update it. The
   `launchway-check/*` images of checks are not pruned automatically. If the
   agent's Docker client holds registry credentials, checks can pull those
   private images too.

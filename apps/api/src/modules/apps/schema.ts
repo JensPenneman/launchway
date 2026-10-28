@@ -67,6 +67,8 @@ export const apps = pgTable(
      * after it run, each once.
      */
     checksLastSlot: tz('checks_last_slot'),
+    /** Why the schedule's last slot queued no runs; null once a slot queues runs. */
+    checksScheduleNote: text('checks_schedule_note'),
     ...timestamps(),
   },
   (t) => [

@@ -32,6 +32,11 @@ export interface GitProvider {
   commitTree(owner: string, repo: string, sha: string): Promise<string>;
   /** The repository's default branch. */
   defaultBranch(owner: string, repo: string): Promise<string>;
+  /**
+   * Numbers of the open pull requests from a branch of the repository itself (not a fork) whose
+   * head is the commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`).
+   */
+  openPullRequestsWithHead(owner: string, repo: string, sha: string): Promise<number[]>;
 }
 
 /** What previews need to know about a pull request. */
@@ -182,6 +187,14 @@ const RawCommit = z.object({
   tree: z.object({ sha: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/) }),
 });
 const RawRepository = z.object({ default_branch: z.string().min(1) });
+const RawCommitPulls = z.array(
+  z.object({
+    number: z.number().int().positive(),
+    state: z.string(),
+    head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }),
+    base: z.object({ repo: z.object({ full_name: z.string() }) }),
+  }),
+);
 
 const RawPullRequest = z.object({
   number: z.number().int().positive(),
@@ -415,6 +428,22 @@ function createGitHubProvider(
           ...requestOptions(),
         });
         return RawRepository.parse(res.data).default_branch;
+      }),
+
+    openPullRequestsWithHead: (owner, repo, sha) =>
+      call(async () => {
+        const res = await client(await token()).request(
+          'GET /repos/{owner}/{repo}/commits/{commit_sha}/pulls',
+          { owner, repo, commit_sha: sha, per_page: 100, ...requestOptions() },
+        );
+        return RawCommitPulls.parse(res.data)
+          .filter(
+            (pr) =>
+              pr.state === 'open' &&
+              pr.head.sha === sha &&
+              pr.head.repo?.full_name.toLowerCase() === pr.base.repo.full_name.toLowerCase(),
+          )
+          .map((pr) => pr.number);
       }),
   };
 }

@@ -17,6 +17,10 @@ export type CheckRunRow = typeof checkRuns.$inferSelect;
 
 /** GitHub's description of the runs a closed or merged pull request cancelled. */
 export const PULL_REQUEST_CLOSED_DESCRIPTION = 'Pull request closed';
+/** GitHub's description of the runs a deleted branch cancelled. */
+export const BRANCH_DELETED_DESCRIPTION = 'Branch deleted';
+/** Start of the status message of runs a deleted branch cancelled. */
+export const BRANCH_DELETED_PREFIX = 'Cancelled: branch ';
 /** Status message of a run whose node went (or stayed) offline. */
 export const NODE_OFFLINE_MESSAGE = 'The node went offline';
 /** Status message of runs of a node whose agent does not run checks. */

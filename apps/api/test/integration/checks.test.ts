@@ -210,7 +210,14 @@ describe('checks against PostgreSQL', () => {
     action: string,
     number: number,
     head: string,
-    options: { base?: string; headRef?: string; fork?: boolean; author?: typeof human } = {},
+    options: {
+      base?: string;
+      headRef?: string;
+      fork?: boolean;
+      author?: typeof human;
+      merged?: boolean;
+      closedAt?: string;
+    } = {},
   ) {
     const fullName = `octo/${repo}`;
     return {
@@ -219,6 +226,8 @@ describe('checks against PostgreSQL', () => {
       pull_request: {
         title: `Change ${number}`,
         state: action === 'closed' ? 'closed' : 'open',
+        ...(options.merged === undefined ? {} : { merged: options.merged }),
+        ...(options.closedAt === undefined ? {} : { closed_at: options.closedAt }),
         user: options.author ?? human,
         labels: [],
         head: {
@@ -1345,10 +1354,7 @@ describe('checks against PostgreSQL', () => {
     return found;
   };
 
-  /**
-   * Sends the node's next run if it is free, as the dispatcher's pass every 15 s would: a claim
-   * skips a run whose row the commit status mirror holds at that moment.
-   */
+  /** Sends the node's next run if it is free, as the dispatcher's pass every 15 s would. */
   const nudge = (node: NodeId) => createCheckDispatcher(deps).dispatchNode(node);
 
   /** A push whose head commit names its tree, as GitHub's push events do. */
@@ -1679,7 +1685,6 @@ describe('checks against PostgreSQL', () => {
         startedAt: new Date(Date.now() - 1_000),
         finishedAt: new Date(),
       });
-      // The mirror's status update locks the run, which a claim skips: let it finish first.
       await mirror.idle();
       gateway.connect(node);
       await createCheckDispatcher(deps).dispatchNode(node);
@@ -1787,6 +1792,294 @@ describe('checks against PostgreSQL', () => {
     await runningRun(first.app.id, node);
     const one = (await (await api.request(`/api/v1/checks/${behind?.id}`)).json()) as CheckRun;
     expect(one.queuedBehind).toBe(3);
+  });
+  it("never cancels a branch's push runs or the default branch's runs when a pull request closes", async () => {
+    const node = await newNode(false);
+    // Push first: main's push run of C, then pull request 20 from main into production for C.
+    const first = await createTestApp(node, { enabled: true, items: [quality] });
+    const c = sha(`${first.repo}-c`);
+    await deliver('push', push(first.repo, 'main', c));
+    await deliver(
+      'pull_request',
+      pullRequest(first.repo, 'opened', 20, c, { headRef: 'main', base: 'production' }),
+    );
+    await deliver(
+      'pull_request',
+      pullRequest(first.repo, 'closed', 20, c, {
+        headRef: 'main',
+        base: 'production',
+        merged: true,
+      }),
+    );
+    expect((await runsOf(first.app.id)).map((r) => [r.status, r.trigger, r.prNumber])).toEqual([
+      ['queued', 'push', 20],
+    ]);
+
+    // The pull request first: the push of its own branch makes its run a push run.
+    const second = await createTestApp(node, { enabled: true, items: [quality] });
+    const d = sha(`${second.repo}-d`);
+    await deliver('pull_request', pullRequest(second.repo, 'opened', 21, d, { headRef: 'dev' }));
+    await deliver('push', push(second.repo, 'dev', d));
+    await deliver('pull_request', pullRequest(second.repo, 'closed', 21, d, { headRef: 'dev' }));
+    expect((await runsOf(second.app.id)).map((r) => [r.status, r.trigger, r.prNumber])).toEqual([
+      ['queued', 'push', 21],
+    ]);
+
+    // A pull request from the default branch: its runs are main's, whatever started them.
+    const third = await createTestApp(node, { enabled: true, items: [quality], branches: null });
+    const e = sha(`${third.repo}-e`);
+    await deliver(
+      'pull_request',
+      pullRequest(third.repo, 'opened', 22, e, { headRef: 'main', base: 'production' }),
+    );
+    await deliver(
+      'pull_request',
+      pullRequest(third.repo, 'closed', 22, e, { headRef: 'main', base: 'production' }),
+    );
+    expect((await runsOf(third.app.id)).map((r) => [r.status, r.trigger])).toEqual([
+      ['queued', 'pull_request'],
+    ]);
+  });
+
+  it('keeps the runs of a closed pull request that another open one with the same head needs', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const head = sha(`${repo}-shared`);
+    fakeRepo(repo).pulls = {
+      30: { title: 'Into main', headRef: 'feature/shared', headSha: head, state: 'open' },
+      31: { title: 'Into release', headRef: 'feature/shared', headSha: head, state: 'open' },
+    };
+    const open = (number: number, base: string) =>
+      pullRequest(repo, 'opened', number, head, { headRef: 'feature/shared', base });
+    await deliver('pull_request', open(30, 'main'));
+    await deliver('pull_request', open(31, 'release'));
+    const pulls = fakeRepo(repo).pulls ?? {};
+    const close = async (number: number) => {
+      const pull = pulls[number];
+      if (pull) pull.state = 'closed';
+      await deliver(
+        'pull_request',
+        pullRequest(repo, 'closed', number, head, { headRef: 'feature/shared' }),
+      );
+    };
+    await close(30);
+    // Pull request 31 still waits for them: they are its runs now.
+    expect((await runsOf(app.id)).map((r) => [r.status, r.prNumber])).toEqual([['queued', 31]]);
+    await close(31);
+    expect((await runsOf(app.id)).map((r) => [r.status, r.reason])).toEqual([
+      ['cancelled', 'closed'],
+    ]);
+  });
+
+  it('keeps runs queued after the close, such as those of a reopen delivered first', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const head = sha(`${repo}-reopened`);
+    await deliver('pull_request', pullRequest(repo, 'reopened', 40, head));
+    const closedAt = new Date(Date.now() - 60_000).toISOString();
+    await deliver('pull_request', pullRequest(repo, 'closed', 40, head, { closedAt }));
+    expect((await runsOf(app.id)).map((r) => r.status)).toEqual(['queued']);
+  });
+
+  it('cancels the queued runs of a deleted branch, never those of the default branch', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(false);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+      const head = sha(`${repo}-gone`);
+      const main = sha(`${repo}-main-2`);
+      await deliver('push', push(repo, 'feature/gone', head));
+      await deliver('push', push(repo, 'main', main));
+      const deletion = (branch: string, before: string) => ({
+        ref: `refs/heads/${branch}`,
+        before,
+        after: '0'.repeat(40),
+        deleted: true,
+        sender: human,
+        repository: { ...repository(repo), default_branch: 'main' },
+      });
+      await deliver('push', deletion('feature/gone', head));
+      await deliver('push', deletion('main', main));
+      const runs = await runsOf(app.id);
+      expect(runs.map((r) => [r.ref, r.status, r.reason, r.statusMessage])).toEqual([
+        ['feature/gone', 'cancelled', 'closed', 'Cancelled: branch feature/gone was deleted'],
+        ['main', 'queued', null, null],
+      ]);
+      await mirror.idle();
+      expect(
+        github.commitStatuses.filter((s) => s.repo === `octo/${repo}` && s.sha === head).at(-1)
+          ?.body,
+      ).toMatchObject({ state: 'error', description: 'Branch deleted' });
+    } finally {
+      stop();
+    }
+  });
+
+  it('reports scheduled runs apart and never queues errored runs at a full queue', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(true);
+      const sink = createCheckSink(deps);
+      const scheduler = createCheckScheduler(deps);
+      const { app, repo, mainSha } = await createTestApp(node, {
+        enabled: true,
+        items: [quality],
+        schedule: '0 6 * * 1',
+      });
+      await db
+        .update(apps)
+        .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+        .where(eq(apps.id, app.id));
+      await scheduler.tick(new Date('2026-11-02T06:00:30Z'));
+      const [scheduled] = await runsOf(app.id);
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === scheduled?.id);
+      });
+      await sink.onResult(node, {
+        runId: scheduled?.id as CheckRunId,
+        reason: 'exit',
+        exitCode: 1,
+      });
+      await mirror.idle();
+      // Its own context: the verdict of main's push (launchway/quality) stays as it is.
+      const onMain = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+      );
+      expect(new Set(onMain.map((s) => s.body.context))).toEqual(
+        new Set(['launchway/quality/schedule']),
+      );
+      expect(onMain.at(-1)?.body.state).toBe('failure');
+
+      // A full queue: the slot is used, nothing is queued, the Checks tab says why.
+      const limits = await api.request(
+        '/api/v1/settings',
+        json('PATCH', { checkMaxQueuedPerApp: 10, checkMaxQueuedPerNode: 100 }),
+      );
+      expect(limits.status).toBe(200);
+      try {
+        gateway.disconnect(node);
+        for (let index = 0; index < 10; index += 1) {
+          await deliver('push', push(repo, `feature/${index}`, sha(`${repo}-full-${index}`)));
+        }
+        expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(10);
+        const before = (await runsOf(app.id)).length;
+        const posted = github.commitStatuses.filter(
+          (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+        ).length;
+        await scheduler.tick(new Date('2026-11-09T06:00:30Z'));
+        expect(await runsOf(app.id)).toHaveLength(before);
+        const [row] = await db.select().from(apps).where(eq(apps.id, app.id));
+        expect(row?.checksLastSlot).toEqual(new Date('2026-11-09T06:00:00Z'));
+        const shown = (await (await api.request(`/api/v1/apps/${app.id}`)).json()) as App;
+        expect(shown.checksScheduleNote).toBe(
+          "Not queued for 2026-11-09 06:00 UTC: 10 queued and 1 new check would exceed the app's limit of 10",
+        );
+        await mirror.idle();
+        // No errored run, so nothing new on the default branch's head.
+        expect(
+          github.commitStatuses.filter((s) => s.repo === `octo/${repo}` && s.sha === mainSha),
+        ).toHaveLength(posted);
+      } finally {
+        await api.request(
+          '/api/v1/settings',
+          json('PATCH', { checkMaxQueuedPerApp: 30, checkMaxQueuedPerNode: 100 }),
+        );
+      }
+    } finally {
+      stop();
+    }
+  });
+
+  it('backs off a slot whose GitHub lookups fail, then uses it without runs', async () => {
+    const node = await newNode(false);
+    const scheduler = createCheckScheduler(deps);
+    const { app } = await createTestApp(node, { items: [quality], schedule: '0 6 * * 1' });
+    await db
+      .update(apps)
+      .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+      .where(eq(apps.id, app.id));
+    const slot = new Date('2026-11-02T06:00:00Z');
+    const at = (minutes: number) => new Date(slot.getTime() + minutes * 60_000 + 10_000);
+    const repoCalls = () => github.calls.filter((call) => call.startsWith('GET /repos/')).length;
+    github.failRepoRequests = 1000;
+    try {
+      // Tries after 0, 1, 3, 7 and 15 minutes; passes in between ask GitHub nothing.
+      for (const [minutes, asks] of [
+        [0, true],
+        [0.5, false],
+        [1, true],
+        [2, false],
+        [3, true],
+        [7, true],
+        [14, false],
+      ] as const) {
+        const calls = repoCalls();
+        await scheduler.tick(at(minutes));
+        expect([minutes, repoCalls() > calls]).toEqual([minutes, asks]);
+        expect(
+          (await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksScheduleNote,
+        ).toBeNull();
+      }
+      await scheduler.tick(at(15));
+    } finally {
+      github.failRepoRequests = 0;
+    }
+    const [row] = await db.select().from(apps).where(eq(apps.id, app.id));
+    expect(row?.checksLastSlot).toEqual(slot);
+    expect(row?.checksScheduleNote).toMatch(/^Not queued for 2026-11-02 06:00 UTC: 5 tries failed/);
+    expect(await runsOf(app.id)).toEqual([]);
+    // The next slot runs again, and the note goes.
+    await scheduler.tick(new Date('2026-11-09T06:00:30Z'));
+    expect((await runsOf(app.id)).map((r) => r.trigger)).toEqual(['schedule']);
+    expect(
+      (await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksScheduleNote,
+    ).toBeNull();
+  });
+
+  it('sends the oldest queued run even while another statement holds its row', async () => {
+    const node = await newNode(false);
+    const { app } = await createTestApp(node, { items: [quality, lint] });
+    const created = await createRuns(app.id, { ref: 'main' });
+    expect(created).toHaveLength(2);
+    // The dispatcher's order.
+    const [oldest] = await db
+      .select()
+      .from(checkRuns)
+      .where(eq(checkRuns.appId, app.id))
+      .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
+      .limit(1);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked = () => {};
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    // Holds the oldest run's row, as the commit status mirror or a cancel does for a moment.
+    const holding = db.transaction(async (tx) => {
+      await tx
+        .select({ id: checkRuns.id })
+        .from(checkRuns)
+        .where(eq(checkRuns.id, oldest?.id as CheckRunId))
+        .for('update');
+      locked();
+      await held;
+    });
+    await isLocked;
+    gateway.connect(node);
+    const dispatching = nudge(node);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(gateway.checkRuns.some((r) => r.nodeId === node)).toBe(false);
+    release();
+    await holding;
+    await dispatching;
+    expect(gateway.checkRuns.filter((r) => r.nodeId === node).map((r) => r.payload.runId)).toEqual([
+      oldest?.id,
+    ]);
   });
 });
 

@@ -25,7 +25,13 @@ import {
   githubConnectionState,
 } from '../github/state.js';
 import { createSettingsService } from '../settings/service.js';
-import { type CheckRunRow, formatDuration, PULL_REQUEST_CLOSED_DESCRIPTION } from './model.js';
+import {
+  BRANCH_DELETED_DESCRIPTION,
+  BRANCH_DELETED_PREFIX,
+  type CheckRunRow,
+  formatDuration,
+  PULL_REQUEST_CLOSED_DESCRIPTION,
+} from './model.js';
 import { checkRuns } from './schema.js';
 
 /** The run fields a commit status is derived from. */
@@ -34,6 +40,7 @@ export type StatusRun = Pick<
   | 'id'
   | 'appId'
   | 'name'
+  | 'trigger'
   | 'commitSha'
   | 'status'
   | 'reason'
@@ -146,7 +153,10 @@ function describe(run: StatusRun): string {
       return `Error: ${first || run.reason || 'unknown'}`;
     case 'cancelled':
       if (run.reason === 'superseded') return 'Superseded by a newer commit';
-      return run.reason === 'closed' ? PULL_REQUEST_CLOSED_DESCRIPTION : 'Cancelled';
+      if (run.reason !== 'closed') return 'Cancelled';
+      return run.statusMessage?.startsWith(BRANCH_DELETED_PREFIX)
+        ? BRANCH_DELETED_DESCRIPTION
+        : PULL_REQUEST_CLOSED_DESCRIPTION;
   }
 }
 
@@ -278,7 +288,8 @@ export function createChecksMirror(
           sha: run.commitSha,
           state: status.state,
           description: status.description,
-          context: checkStatusContext(run.name),
+          // Scheduled runs report apart (`launchway/<name>/schedule`): never over a push verdict.
+          context: checkStatusContext(run.name, run.trigger),
           ...(snapshot.publicUrl
             ? { target_url: checkTargetUrl(snapshot.publicUrl, run.appId, run.id) }
             : {}),

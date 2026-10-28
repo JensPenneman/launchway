@@ -29,6 +29,7 @@ function runOf(fields: Partial<StatusRun> = {}): StatusRun {
     id: 'chk_01' as CheckRunId,
     appId: 'app_01' as AppId,
     name: 'quality',
+    trigger: 'push',
     commitSha: 'a'.repeat(40),
     status: 'queued',
     reason: null,
@@ -111,6 +112,15 @@ describe('commitStatusOf', () => {
         }),
       ),
     ).toEqual({ state: 'error', description: 'Pull request closed' });
+    expect(
+      commitStatusOf(
+        runOf({
+          status: 'cancelled',
+          reason: 'closed',
+          statusMessage: 'Cancelled: branch feature/x was deleted',
+        }),
+      ),
+    ).toEqual({ state: 'error', description: 'Branch deleted' });
   });
 
   it('tells a superseded run from a cancelled one', () => {

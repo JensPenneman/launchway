@@ -462,6 +462,26 @@ export class FakeGitHub {
         base: { ref: 'main', repo: { full_name: fullName } },
       });
     }
+    r = /^commits\/([0-9a-f]{40})\/pulls$/.exec(rest);
+    if (r) {
+      const commit = r[1] ?? '';
+      const fullName = `${repo.owner}/${repo.name}`;
+      return json(
+        200,
+        Object.entries(repo.pulls ?? {})
+          .filter(([, pull]) => pull.headSha === commit)
+          .map(([number, pull]) => ({
+            number: Number(number),
+            state: pull.state ?? 'open',
+            head: {
+              ref: pull.headRef,
+              sha: pull.headSha,
+              repo: { full_name: pull.fromFork ? `forker/${repo.name}` : fullName },
+            },
+            base: { ref: 'main', repo: { full_name: fullName } },
+          })),
+      );
+    }
     r = /^git\/commits\/([0-9a-f]{40})$/.exec(rest);
     if (r) {
       const commit = r[1] ?? '';

@@ -57,7 +57,12 @@ const Account = z.object({ login: z.string(), type: z.string() });
 
 const Label = z.object({ name: z.string() });
 
-const Repository = z.object({ name: z.string(), owner: z.object({ login: z.string() }) });
+const Repository = z.object({
+  name: z.string(),
+  owner: z.object({ login: z.string() }),
+  /** Checks of the default branch are never cancelled by a closed pull request. */
+  default_branch: z.string().nullish(),
+});
 
 const ReleaseEvent = z.object({
   action: z.string(),
@@ -77,6 +82,8 @@ type ReleaseEvent = z.infer<typeof ReleaseEvent>;
 
 const PushEvent = z.object({
   ref: z.string(),
+  /** The commit the branch pointed at before the push (the deleted head for deletions). */
+  before: z.string().optional(),
   after: z.string(),
   deleted: z.boolean().optional(),
   /** The pushed head commit; `tree_id` is its tree (same-tree copies of the checks). */
@@ -104,6 +111,17 @@ export function releasePublication(
     event.action === 'released' ||
     (event.action === 'edited' && event.changes?.draft?.from === true);
   return publishes ? { tag: event.release.tag_name, prerelease: event.release.prerelease } : null;
+}
+
+/** The branch a push event deletes and the commit it pointed at, or null for other pushes. */
+export function deletedBranch(
+  event: z.infer<typeof PushEvent>,
+): { name: string; headSha: string } | null {
+  if (!event.deleted || !event.ref.startsWith(BRANCH_REF_PREFIX)) return null;
+  const name = GitRef.safeParse(event.ref.slice(BRANCH_REF_PREFIX.length));
+  const headSha = CommitSha.safeParse(event.before);
+  if (!name.success || !headSha.success || /^0+$/.test(headSha.data)) return null;
+  return { name: name.data, headSha: headSha.data };
 }
 
 /**
@@ -137,6 +155,8 @@ const PullRequestEvent = z.object({
     title: z.string(),
     state: z.string().optional(),
     merged: z.boolean().nullish(),
+    /** When it was closed: runs queued later (a reopen delivered first) are not cancelled. */
+    closed_at: z.string().nullish(),
     user: Account.nullish(),
     labels: z.array(Label).nullish(),
     head: z.object({
@@ -453,10 +473,13 @@ export function createWebhookHandler(deps: Deps) {
     let handled = false;
     let retry = false;
     if (!head.success) return { handled, retry };
+    const closedAt = event.pull_request.closed_at ? new Date(event.pull_request.closed_at) : null;
     const pr = {
       number: event.number,
       headRef: head.data,
       merged: event.pull_request.merged === true,
+      closedAt: closedAt && !Number.isNaN(closedAt.getTime()) ? closedAt : new Date(),
+      defaultBranch: event.repository.default_branch ?? null,
     };
     for (const app of targets) {
       try {
@@ -538,9 +561,48 @@ export function createWebhookHandler(deps: Deps) {
     return 'processed';
   }
 
+  /** A deleted branch cancels its queued checks in every app of the repository. */
+  async function onBranchDeleted(
+    connection: ConnectionRow,
+    event: z.infer<typeof PushEvent>,
+    branch: { name: string; headSha: string },
+  ): Promise<WebhookOutcome> {
+    const targets = await appsOf(connection, event.repository);
+    let handled = false;
+    let retry = false;
+    for (const app of targets) {
+      try {
+        const cancelled = await checks.closeBranch(
+          app,
+          { ...branch, defaultBranch: event.repository.default_branch ?? null },
+          actor,
+        );
+        handled ||= cancelled.length > 0;
+      } catch (error) {
+        logger.warn(
+          {
+            appId: app.id,
+            branch: branch.name,
+            reason: error instanceof Error ? error.message : 'unknown',
+          },
+          'cancelling the checks of a deleted branch failed',
+        );
+        retry ||= needsRedelivery(error);
+      }
+    }
+    if (retry) {
+      throw redeliver(
+        'Cancelling the checks of a deleted branch failed for at least one app; redeliver to retry',
+      );
+    }
+    return handled ? 'processed' : 'ignored';
+  }
+
   /** Pushes to a branch auto-deploy (`autoDeployBranch`) and run the checks of the commit. */
   async function onPush(connection: ConnectionRow, payload: unknown): Promise<WebhookOutcome> {
     const event = PushEvent.parse(payload);
+    const deleted = deletedBranch(event);
+    if (deleted) return onBranchDeleted(connection, event, deleted);
     const pushed = pushedBranch(event);
     if (!pushed) return 'ignored';
     const deployTargets = await appsOf(

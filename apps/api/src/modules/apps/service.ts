@@ -90,6 +90,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     proxyServices: row.proxyServices,
     previews: { ...DEFAULT_APP_PREVIEW_SETTINGS, ...row.previews },
     checks: { ...DEFAULT_APP_CHECKS_SETTINGS, ...row.checks },
+    checksScheduleNote: row.checksScheduleNote,
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
@@ -426,7 +427,10 @@ export function createAppsService(deps: Deps): AppsService {
             }
             if (JSON.stringify(next) !== JSON.stringify(current)) patch.checks = next;
             // A new schedule runs from its next slot on, never for one that already passed.
-            if (next.schedule !== current.schedule) patch.checksLastSlot = new Date();
+            if (next.schedule !== current.schedule) {
+              patch.checksLastSlot = new Date();
+              patch.checksScheduleNote = null;
+            }
           }
           if (patch.nodeId !== undefined && patch.nodeId !== before.nodeId) {
             const [busy] = await tx

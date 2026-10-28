@@ -2,6 +2,7 @@ import { DEFAULT_APP_CHECKS_SETTINGS } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
 import {
   checkTrigger,
+  deletedBranch,
   pullRequestPreviewAction,
   pushedBranch,
   releasePublication,
@@ -84,6 +85,32 @@ describe('pushedBranch', () => {
     expect(pushedBranch(push('refs/heads/main', '0'.repeat(40)))).toBeNull();
     expect(pushedBranch(push('refs/heads/main', 'not-a-sha'))).toBeNull();
     expect(pushedBranch(push('refs/heads/-x'))).toBeNull();
+  });
+});
+
+describe('deletedBranch', () => {
+  const sha = 'a'.repeat(40);
+  const zero = '0'.repeat(40);
+  const deletion = (ref: string, before = sha) => ({
+    ref,
+    before,
+    after: zero,
+    deleted: true,
+    repository,
+  });
+
+  it('returns the deleted branch and the commit it pointed at', () => {
+    expect(deletedBranch(deletion('refs/heads/feature/x'))).toEqual({
+      name: 'feature/x',
+      headSha: sha,
+    });
+  });
+
+  it('ignores pushes, tags and invalid input', () => {
+    expect(deletedBranch({ ...deletion('refs/heads/main'), deleted: false })).toBeNull();
+    expect(deletedBranch(deletion('refs/tags/v1.0.0'))).toBeNull();
+    expect(deletedBranch(deletion('refs/heads/main', zero))).toBeNull();
+    expect(deletedBranch(deletion('refs/heads/-x'))).toBeNull();
   });
 });
 

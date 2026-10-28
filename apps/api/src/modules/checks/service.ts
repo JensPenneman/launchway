@@ -53,6 +53,7 @@ import { createCheckDispatcher } from './dispatcher.js';
 import {
   announceCreated,
   announceStatus,
+  BRANCH_DELETED_PREFIX,
   type CheckRunRow,
   checkLogHub,
   checksSettingsOf,
@@ -88,6 +89,32 @@ export interface ClosedPullRequest {
   /** Its head branch: the ref its runs carry. */
   readonly headRef: string;
   readonly merged: boolean;
+  /** GitHub's `closed_at`: runs queued later (after a reopen) are not its closed runs. */
+  readonly closedAt: Date;
+  /** The repository's default branch from the event; read from GitHub when null. */
+  readonly defaultBranch: string | null;
+}
+
+/** A branch of the app's repository that was deleted. */
+export interface DeletedBranch {
+  readonly name: string;
+  /** The commit the branch pointed at (`before` of the push event). */
+  readonly headSha: string;
+  /** The repository's default branch from the event; read from GitHub when null. */
+  readonly defaultBranch: string | null;
+}
+
+/** What a slot of the check schedule did. */
+export type ScheduledOutcome =
+  | { readonly kind: 'queued'; readonly runs: CheckRun[] }
+  /** Nothing queued: the slot ran already, the schedule changed, or the checks still run. */
+  | { readonly kind: 'none' }
+  /** Nothing queued for a reason the app's Checks tab shows (`checksScheduleNote`). */
+  | { readonly kind: 'skipped'; readonly note: string };
+
+/** `2026-11-02 06:00` (UTC), how notes about a slot name it. */
+export function slotLabel(slot: Date): string {
+  return `${slot.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 export interface ChecksService {
@@ -110,16 +137,27 @@ export interface ChecksService {
    */
   queueForCommit(app: AppRow, commit: CommitTarget, actor: RequestActor): Promise<CheckRun[]>;
   /**
-   * Webhooks: a pull request was closed or merged. Its queued runs are cancelled (reason
-   * `closed`); running ones finish, so a merged pull request's result can still serve the merge
-   * commit of the same tree. Runs that also serve a push of another branch stay. Returns them.
+   * Webhooks: a pull request was closed or merged. The queued runs it started (trigger
+   * `pull_request`, its number, its head branch, queued before `closed_at`) are cancelled
+   * (reason `closed`), unless they also serve a push, another open pull request has the same
+   * head, or the head branch is the default branch. Running runs finish, so a merged pull
+   * request's result can still serve the merge commit of the same tree. Returns them.
    */
   closePullRequest(app: AppRow, pr: ClosedPullRequest, actor: RequestActor): Promise<CheckRun[]>;
   /**
-   * The check schedule: queues the checks for the head of the default branch for the slot, once
-   * per slot (a slot at or before the app's last one, or a changed schedule, queues nothing).
+   * Webhooks: a branch was deleted. The queued runs of the branch for the commit it pointed at
+   * are cancelled (reason `closed`), unless they also serve another branch's push; the default
+   * branch is never touched. Returns them.
    */
-  queueScheduled(app: AppRow, slot: Date, schedule: string): Promise<CheckRun[]>;
+  closeBranch(app: AppRow, branch: DeletedBranch, actor: RequestActor): Promise<CheckRun[]>;
+  /**
+   * The check schedule: queues the checks for the head of the default branch for the slot, once
+   * per slot (a slot at or before the app's last one, or a changed schedule, queues nothing). A
+   * full queue uses the slot without queueing; the note says why.
+   */
+  queueScheduled(app: AppRow, slot: Date, schedule: string): Promise<ScheduledOutcome>;
+  /** Uses a slot of the check schedule without queueing anything, noting why. */
+  skipScheduled(app: AppRow, slot: Date, schedule: string, note: string): Promise<void>;
   /** Cancels a queued run at once, a running one through its node; answers the run. */
   cancel(id: CheckRunId, actor: RequestActor): Promise<CheckRun>;
   /** A new run of a finished run's check for the same commit, with the check's current config. */
@@ -298,6 +336,45 @@ export function createChecksService(deps: Deps): ChecksService {
     }
   }
 
+  /** The repository's default branch, or null when GitHub cannot tell (then nothing is cancelled). */
+  async function defaultBranchOf(app: AppRow): Promise<string | null> {
+    try {
+      const connection = await getConnection(deps.db, app.connectionId);
+      return await providerFor(deps, connection).defaultBranch(app.repoOwner, app.repoName);
+    } catch (error) {
+      logger.warn(
+        { appId: app.id, reason: messageOf(error) },
+        'could not read the default branch; no checks are cancelled',
+      );
+      return null;
+    }
+  }
+
+  /** Open pull requests of the repository with this head, or null when GitHub cannot tell. */
+  async function openPullRequestsWithHead(app: AppRow, sha: string): Promise<number[] | null> {
+    try {
+      const connection = await getConnection(deps.db, app.connectionId);
+      return await providerFor(deps, connection).openPullRequestsWithHead(
+        app.repoOwner,
+        app.repoName,
+        sha,
+      );
+    } catch (error) {
+      logger.warn(
+        { appId: app.id, commitSha: sha, reason: messageOf(error) },
+        'could not list the pull requests of a commit; its queued checks stay',
+      );
+      return null;
+    }
+  }
+
+  /** Scheduler state of the app, not a change of it: its updatedAt stays. */
+  async function markSlot(tx: Executor, appId: AppId, slot: Date, note: string | null) {
+    await tx.execute(
+      sql`UPDATE apps SET checks_last_slot = ${slot}, checks_schedule_note = ${note} WHERE id = ${appId}`,
+    );
+  }
+
   /**
    * How many runs of their node are running or queued before each queued run (the dispatcher
    * sends the oldest first), for the runs given.
@@ -338,8 +415,9 @@ export function createChecksService(deps: Deps): ChecksService {
   /**
    * A push or pull request of a commit whose checks ran or run already: those runs serve it too,
    * and say so. A push of another branch becomes the run's `alsoRef` (so neither closing its pull
-   * request nor a newer commit of its own branch cancels what that branch needs), a pull request
-   * the run's `prNumber` when it has none. Returns the runs changed (publish after commit).
+   * request nor a newer commit of its own branch cancels what that branch needs), a push of a
+   * pull request run's own branch makes it a push run, and a pull request becomes the run's
+   * `prNumber` when it has none. Returns the runs changed (publish after commit).
    */
   async function serveExisting(
     tx: Executor,
@@ -351,9 +429,12 @@ export function createChecksService(deps: Deps): ChecksService {
       const set =
         commit.trigger === 'push' && row.ref !== commit.ref && row.alsoRef === null
           ? { alsoRef: commit.ref }
-          : commit.trigger === 'pull_request' && row.prNumber === null
-            ? { prNumber: commit.prNumber }
-            : null;
+          : commit.trigger === 'push' && row.ref === commit.ref && row.trigger === 'pull_request'
+            ? // The push of its own branch: closing the pull request no longer cancels it.
+              { trigger: 'push' as const }
+            : commit.trigger === 'pull_request' && row.prNumber === null
+              ? { prNumber: commit.prNumber }
+              : null;
       if (!set) continue;
       const [updated] = await tx
         .update(checkRuns)
@@ -752,29 +833,100 @@ export function createChecksService(deps: Deps): ChecksService {
     },
 
     async closePullRequest(app, pr, actor) {
+      // The default branch always needs its checks.
+      const defaultBranch = pr.defaultBranch ?? (await defaultBranchOf(app));
+      if (defaultBranch === null || pr.headRef === defaultBranch) return [];
+      // The runs the pull request started: a run that a push of its branch also uses became a
+      // push run, one that serves another branch's push has `alsoRef`, and runs queued after it
+      // closed (a reopen, delivered before the close) are not its closed runs.
+      const own = and(
+        eq(checkRuns.appId, app.id),
+        eq(checkRuns.trigger, 'pull_request'),
+        eq(checkRuns.prNumber, pr.number),
+        eq(checkRuns.ref, pr.headRef),
+        isNull(checkRuns.alsoRef),
+        lt(checkRuns.createdAt, pr.closedAt),
+      );
+      const candidates = await deps.db
+        .selectDistinct({ commitSha: checkRuns.commitSha })
+        .from(checkRuns)
+        .where(and(own, eq(checkRuns.status, 'queued')));
+      // Another open pull request with the same head still needs them (one branch, two bases):
+      // they become its runs, so closing that one cancels them. When GitHub cannot tell, they stay.
+      const kept: string[] = [];
+      const handedOver = new Map<string, number>();
+      for (const { commitSha } of candidates) {
+        const open = await openPullRequestsWithHead(app, commitSha);
+        const others = (open ?? []).filter((number) => number !== pr.number).sort((a, b) => a - b);
+        if (open === null || others.length > 0) kept.push(commitSha);
+        if (others[0] !== undefined) handedOver.set(commitSha, others[0]);
+      }
+      if (kept.length === candidates.length && handedOver.size === 0) return [];
       const message = `Cancelled: pull request #${pr.number} was ${pr.merged ? 'merged' : 'closed'}`;
+      const { cancelled, moved } = await deps.db.transaction(async (tx) => {
+        await lockApp(tx, app.id);
+        const moved: CheckRunRow[] = [];
+        for (const [commitSha, number] of handedOver) {
+          moved.push(
+            ...(await tx
+              .update(checkRuns)
+              .set({ prNumber: number })
+              .where(and(own, eq(checkRuns.status, 'queued'), eq(checkRuns.commitSha, commitSha)))
+              .returning()),
+          );
+        }
+        if (kept.length === candidates.length) return { cancelled: [], moved };
+        const cancelled = await cancelQueued(
+          tx,
+          and(own, kept.length === 0 ? undefined : notInArray(checkRuns.commitSha, kept)),
+          { reason: 'closed', message, summary: { prNumber: pr.number, merged: pr.merged } },
+          actor,
+        );
+        return { cancelled, moved };
+      });
+      for (const row of moved) {
+        deps.events.publish({
+          topic: 'checks',
+          action: 'updated',
+          resourceId: row.id,
+          data: { appId: row.appId },
+        });
+      }
+      for (const row of cancelled) announceStatus(deps, row);
+      if (cancelled.length > 0) {
+        logger.info(
+          { appId: app.id, prNumber: pr.number, merged: pr.merged, cancelled: cancelled.length },
+          'queued checks of a closed pull request cancelled',
+        );
+      }
+      return cancelled.map((row) => toCheckRun(row));
+    },
+
+    async closeBranch(app, branch, actor) {
+      const defaultBranch = branch.defaultBranch ?? (await defaultBranchOf(app));
+      if (defaultBranch === null || branch.name === defaultBranch) return [];
+      const message = `${BRANCH_DELETED_PREFIX}${branch.name} was deleted`;
       const cancelled = await deps.db.transaction(async (tx) => {
         await lockApp(tx, app.id);
-        // The pull request's own runs: its number on runs of its head branch (a push of that
-        // branch deduplicated with it counts too). Manual runs and re-runs stay.
+        // Only the commit the branch pointed at: a branch created again meanwhile has others.
         return cancelQueued(
           tx,
           and(
             eq(checkRuns.appId, app.id),
-            eq(checkRuns.prNumber, pr.number),
-            eq(checkRuns.ref, pr.headRef),
+            eq(checkRuns.ref, branch.name),
+            eq(checkRuns.commitSha, branch.headSha),
             isNull(checkRuns.alsoRef),
             inArray(checkRuns.trigger, COPYABLE_TRIGGERS),
           ),
-          { reason: 'closed', message, summary: { prNumber: pr.number, merged: pr.merged } },
+          { reason: 'closed', message, summary: { branch: branch.name } },
           actor,
         );
       });
       for (const row of cancelled) announceStatus(deps, row);
       if (cancelled.length > 0) {
         logger.info(
-          { appId: app.id, prNumber: pr.number, merged: pr.merged, cancelled: cancelled.length },
-          'queued checks of a closed pull request cancelled',
+          { appId: app.id, branch: branch.name, cancelled: cancelled.length },
+          'queued checks of a deleted branch cancelled',
         );
       }
       return cancelled.map((row) => toCheckRun(row));
@@ -800,17 +952,31 @@ export function createChecksService(deps: Deps): ChecksService {
         // Changed or turned off meanwhile, or this slot queued already (by another pass).
         const last = locked.checksLastSlot;
         if (settings.schedule !== schedule || (last !== null && slot <= last)) return null;
-        // Scheduler state, not a change of the app: its updatedAt stays.
-        await tx.execute(sql`UPDATE apps SET checks_last_slot = ${slot} WHERE id = ${app.id}`);
         const busy = await activeNames(tx, app.id, sha);
         const items = settings.items.filter((item) => !busy.has(item.name));
         const full = items.length === 0 ? null : await queueFull(tx, locked, items.length, limits);
+        // A full queue: the slot is used, nothing is queued (no errored runs on the branch).
+        const note = full ? `Not queued for ${slotLabel(slot)}: ${full}` : null;
+        await markSlot(tx, app.id, slot, note);
+        if (note) return { rows: [], nodeId: locked.nodeId, note, changed: true };
         const commit = { sha, ref: branch, prNumber: null, trigger: 'schedule' as const, treeSha };
         const summary = { schedule, slot: slot.toISOString() };
-        const rows = await insertRuns(tx, locked, settings, items, commit, actor, summary, full);
-        return { rows, nodeId: locked.nodeId };
+        const rows = await insertRuns(tx, locked, settings, items, commit, actor, summary);
+        return { rows, nodeId: locked.nodeId, note, changed: locked.checksScheduleNote !== null };
       });
-      if (!result) return [];
+      if (!result) return { kind: 'none' };
+      // The note shows in the app's Checks tab.
+      if (result.changed) {
+        deps.events.publish({ topic: 'apps', action: 'updated', resourceId: app.id });
+      }
+      if (result.note) {
+        logger.warn(
+          { appId: app.id, slot: slot.toISOString(), note: result.note },
+          'scheduled checks not queued',
+        );
+        return { kind: 'skipped', note: result.note };
+      }
+      if (result.rows.length === 0) return { kind: 'none' };
       logger.info(
         {
           appId: app.id,
@@ -821,7 +987,22 @@ export function createChecksService(deps: Deps): ChecksService {
         'scheduled checks queued',
       );
       queued(result.rows, result.nodeId);
-      return result.rows.map((row) => toCheckRun(row));
+      return { kind: 'queued', runs: result.rows.map((row) => toCheckRun(row)) };
+    },
+
+    async skipScheduled(app, slot, schedule, note) {
+      const marked = await deps.db.transaction(async (tx) => {
+        const locked = await lockApp(tx, app.id);
+        const last = locked.checksLastSlot;
+        if (checksSettingsOf(locked).schedule !== schedule || (last !== null && slot <= last)) {
+          return false;
+        }
+        await markSlot(tx, app.id, slot, note);
+        return true;
+      });
+      if (!marked) return;
+      deps.events.publish({ topic: 'apps', action: 'updated', resourceId: app.id });
+      logger.warn({ appId: app.id, slot: slot.toISOString(), note }, 'scheduled checks not queued');
     },
 
     async cancel(id, actor) {

@@ -59,8 +59,10 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
 
   /**
    * Marks the oldest queued run of the node `running` when none runs there, or ends it as a copy
-   * when a run of the same tree and check finished meanwhile (same-tree copies). Concurrent claims
-   * of one node meet at the partial unique index (one running run per node): the loser stops.
+   * when a run of the same tree and check finished meanwhile (same-tree copies). The claim waits
+   * for a row another statement holds for a moment (the commit status mirror, a cancel) instead
+   * of skipping it, so the oldest run goes first. Concurrent claims of one node meet at that row
+   * or at the partial unique index (one running run per node): the loser stops.
    */
   async function claim(nodeId: NodeId): Promise<Claim | null> {
     try {
@@ -77,7 +79,7 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
           .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')))
           .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
           .limit(1)
-          .for('update', { skipLocked: true });
+          .for('update');
         if (!next) return null;
         if ((COPYABLE_TRIGGERS as readonly string[]).includes(next.trigger)) {
           const source = await findCopySource(tx, next);

@@ -746,6 +746,16 @@ describe('CheckManager', () => {
     expect(build.entered()).toBe(1);
     expect(callsOf('docker update')).toHaveLength(1);
     expect(callsOf('compose config')).toHaveLength(2);
+    // The run that waits says so: its time as running includes the wait.
+    const waiting = (id: string) =>
+      linesOf(id).some(
+        (l) =>
+          l.stream === 'system' &&
+          l.line === 'waiting for the check builder: another check is building',
+      );
+    // Log lines go out in batches.
+    await waitFor(() => waiting('req-a') || waiting('req-b'));
+    expect([waiting('req-a'), waiting('req-b')].filter(Boolean)).toHaveLength(1);
     build.release();
     await waitFor(() => callsOf('compose run').length === 2);
     expect(build.entered()).toBe(2);
@@ -782,17 +792,20 @@ describe('CheckManager', () => {
     await waitFor(() => callsOf('compose run').length === 1);
     checks.run('req-b', b);
     await waitFor(() => build.entered() === 1);
-    // a ends while b builds: a removes its own, but its prunes wait for b's build (which loads
-    // its image, untagged for a moment, and uses the builder's cache mounts).
+    // a ends while b builds: a removes its containers, volumes and networks, but untagging its
+    // image and the prunes wait for b's build (which loads its image, untagged for a moment and
+    // maybe the same one, and uses the builder's cache mounts).
     commands.release();
-    await waitFor(() => resultOf('req-a') !== undefined && callsOf('docker image rm').length > 0);
+    await waitFor(() => resultOf('req-a') !== undefined && callsOf('docker network ls').length > 0);
     await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(callsOf('docker image rm')).toHaveLength(0);
     expect(callsOf('docker image prune')).toHaveLength(0);
     expect(pruned()).toBe(0);
     build.release();
     await waitFor(() => results().length === 2);
     await cleanedUp(a);
     await cleanedUp(b);
+    expect(callsOf('docker image rm')).toHaveLength(2);
     expect(callsOf('docker image prune')).toHaveLength(2);
     expect(pruned()).toBe(2);
   });
@@ -1077,6 +1090,16 @@ describe('CheckManager', () => {
     for (const run of [a, b]) {
       await expect(stat(join(root, 'checks', run.app.id, run.runId))).rejects.toThrow();
     }
+    // The images of the runs go too, but not the prunes of the check builder: the grace is short,
+    // and the next build empties the cache mounts first. Only the builds emptied them here.
+    expect(
+      callsOf('docker image rm')
+        .map((call) => call.args.at(-1))
+        .sort(),
+    ).toEqual([a, b].map((run) => checkImageName('trail', 'dev', run.runId)).sort());
+    const prunes = callsOf('docker buildx').filter((call) => call.args.includes('prune'));
+    expect(prunes.filter((call) => call.args.includes('--max-used-space'))).toEqual([]);
+    expect(prunes).toHaveLength(2);
     const c = payload();
     checks.run('req-c', c);
     expect(resultOf('req-c')).toEqual({

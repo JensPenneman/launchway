@@ -527,7 +527,10 @@ dependencies first.
   change, and removes it after a day without check builds. Checks that run
   at once take turns to build in it (their commands then run side by side),
   so every build starts with empty cache mounts that no other build writes
-  to. A build step that needs more memory fails with "cannot allocate
+  to. A check that waits for its turn logs "waiting for the check builder:
+  another check is building"; the wait counts as running time (the check
+  shows *running* and its duration includes the wait), while the time limit
+  of its command starts with the command. A build step that needs more memory fails with "cannot allocate
   memory". Run one agent per Docker daemon: an agent removes the check
   builders it does not know.
 - **What builds reach.** Build steps resolve names through Docker's DNS and
@@ -982,6 +985,10 @@ the UI shows those nodes with an error until they are upgraded.
 - **Check images.** Images built for checks are now tagged per run and
   removed with it. The agent removes the per-app images earlier versions
   kept (`launchway-check/<slug>-<service>`) when it starts.
+- **Going back.** Migration 0008 has no down path: restore the backup taken
+  before the upgrade. An older API started on this schema loses the unique
+  index that kept one check running per node, which is harmless while its
+  agent serialises the runs, as agents before 0.7.0 do.
 
 ### Upgrading to 0.6.0
 

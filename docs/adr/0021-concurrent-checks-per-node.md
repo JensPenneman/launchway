@@ -50,13 +50,15 @@ removes every check project it finds.
    image. Cleanup only names the run's own label, project, volumes, networks,
    images and directory, besides the app's dangling check images, which no
    run uses. Cancelling stops one run; shutting down stops all of them and
-   gives their cleanups the grace period side by side.
+   gives their cleanups the grace period side by side, without the prunes
+   of the check builder (the next build empties its cache mounts first).
 4. **One build at a time in the check builder.** Builds of checks take turns
-   in the check builder, and so do the prunes after each run (of the builder,
-   and of the app's dangling check images, which must not meet an image that
-   a build is loading): every build still starts with empty cache mounts that
-   no build of another run writes to meanwhile. The commands run side by
-   side. Sweeps (at start) run alone:
+   in the check builder, and so do the prunes after each run and the
+   untagging of its images (neither may meet an image that a build is
+   loading): every build still starts with empty cache mounts that no build
+   of another run writes to meanwhile. A run that waits for its turn says so
+   in its log, and the wait counts as its running time. The commands run
+   side by side. Sweeps (at start) run alone:
    they wait for the runs before them and hold back the runs after them, and
    they remove every image of the check namespace, the per-app tags of
    earlier agents included.
@@ -85,3 +87,10 @@ removes every check project it finds.
   setting before upgrading the agent makes runs wait on the node instead of
   in the queue, still in order.
 - The sweep at start assumes, as before, one agent per Docker daemon.
+- Follow-up: same-tree copies of a queued run are made when it is queued,
+  when a run of its tree ends and when the claim takes it, and they need a
+  run that has ended. With two or more checks at once, the claim can start a
+  queued run while a run of the same check and tree is still running on the
+  node, so both run where one check at a time would have copied the result.
+  The claim should pass over such a run (it becomes a copy when the running
+  one ends) and take the next queued one.

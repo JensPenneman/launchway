@@ -11,8 +11,9 @@ import {
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import type { CheckSink } from '../../lib/agent-gateway.js';
-import { agentActor } from '../../lib/auth-context.js';
+import { agentActor, systemActor } from '../../lib/auth-context.js';
 import { recordAudit } from '../audit/service.js';
+import { copyQueuedRuns } from './copies.js';
 import { createCheckDispatcher } from './dispatcher.js';
 import {
   announceStatus,
@@ -122,6 +123,7 @@ export function createCheckSink(deps: Deps): CheckSink {
   const dispatcher = createCheckDispatcher(deps);
   const hub = checkLogHub(deps.events);
   const state = checkNodeState(deps.events);
+  const copyActor = systemActor('check-copies');
   /** Per-run queue so log batches get gap-free, ordered sequence numbers. */
   const chains = new Map<CheckRunId, Promise<void>>();
   const nextSeq = new Map<CheckRunId, number>();
@@ -264,7 +266,7 @@ export function createCheckSink(deps: Deps): CheckSink {
         return;
       }
       const outcome = checkResultOutcome(row, payload);
-      const updated = await deps.db.transaction(async (tx) => {
+      const settled = await deps.db.transaction(async (tx) => {
         const [changed] = await tx
           .update(checkRuns)
           .set({ ...outcome, finishedAt: new Date() })
@@ -282,15 +284,25 @@ export function createCheckSink(deps: Deps): CheckSink {
             ...(outcome.exitCode === null ? {} : { exitCode: outcome.exitCode }),
           },
         });
-        return changed;
+        // Queued runs of the same tree and check would only repeat this one.
+        const copies = await copyQueuedRuns(tx, changed, copyActor);
+        return { updated: changed, copies };
       });
       forget(row.id);
-      if (!updated) return;
+      if (!settled) return;
+      const { updated, copies } = settled;
       logger.info(
-        { runId: row.id, appId: row.appId, status: updated.status, reason: updated.reason },
+        {
+          runId: row.id,
+          appId: row.appId,
+          status: updated.status,
+          reason: updated.reason,
+          ...(copies.length > 0 ? { copiedTo: copies.map((copy) => copy.id) } : {}),
+        },
         'check run finished',
       );
       announceStatus(deps, updated);
+      for (const copy of copies) announceStatus(deps, copy);
       // Not awaited: dispatching waits for the agent's acknowledgement on this same connection.
       void dispatcher.dispatchNode(nodeId);
     },

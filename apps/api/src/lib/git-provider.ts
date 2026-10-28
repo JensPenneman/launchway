@@ -28,6 +28,10 @@ export interface GitProvider {
   cloneCredentials(owner: string, repo: string): Promise<CloneCredentials>;
   /** One pull request with its head; `not-found` when the repository has no such number. */
   getPullRequest(owner: string, repo: string, number: number): Promise<PullRequestInfo>;
+  /** The tree (content) of a commit, given by its full SHA. */
+  commitTree(owner: string, repo: string, sha: string): Promise<string>;
+  /** The repository's default branch. */
+  defaultBranch(owner: string, repo: string): Promise<string>;
 }
 
 /** What previews need to know about a pull request. */
@@ -173,6 +177,11 @@ const RawRelease = z.object({
   body: z.string().nullable().optional(),
   target_commitish: z.string(),
 });
+
+const RawCommit = z.object({
+  tree: z.object({ sha: z.string().regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/) }),
+});
+const RawRepository = z.object({ default_branch: z.string().min(1) });
 
 const RawPullRequest = z.object({
   number: z.number().int().positive(),
@@ -387,6 +396,25 @@ function createGitHubProvider(
           headRepoFullName: pr.head.repo?.full_name ?? null,
           baseRepoFullName: pr.base.repo.full_name,
         };
+      }),
+
+    commitTree: (owner, repo, sha) =>
+      call(async () => {
+        const res = await client(await token()).request(
+          'GET /repos/{owner}/{repo}/git/commits/{commit_sha}',
+          { owner, repo, commit_sha: sha, ...requestOptions() },
+        );
+        return RawCommit.parse(res.data).tree.sha;
+      }),
+
+    defaultBranch: (owner, repo) =>
+      call(async () => {
+        const res = await client(await token()).request('GET /repos/{owner}/{repo}', {
+          owner,
+          repo,
+          ...requestOptions(),
+        });
+        return RawRepository.parse(res.data).default_branch;
       }),
   };
 }

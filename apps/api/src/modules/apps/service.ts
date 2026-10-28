@@ -425,6 +425,8 @@ export function createAppsService(deps: Deps): AppsService {
               next.items = input.checks.items.map((item) => CheckItem.parse(item));
             }
             if (JSON.stringify(next) !== JSON.stringify(current)) patch.checks = next;
+            // A new schedule runs from its next slot on, never for one that already passed.
+            if (next.schedule !== current.schedule) patch.checksLastSlot = new Date();
           }
           if (patch.nodeId !== undefined && patch.nodeId !== before.nodeId) {
             const [busy] = await tx

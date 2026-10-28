@@ -29,6 +29,15 @@ export interface FakeRepo {
   releases?: FakeRelease[];
   /** Pull requests by number. */
   pulls?: Record<number, FakePull>;
+  /** Trees of commits (`git/commits/{sha}`); others get a tree of their own. */
+  trees?: Record<string, string>;
+  /** `default_branch`; main when unset. */
+  defaultBranch?: string;
+}
+
+/** The tree of a commit the test did not give one: different for every commit. */
+export function ownTree(commit: string): string {
+  return sha(`tree-${commit.slice(0, 15)}`);
 }
 
 export interface FakeApp {
@@ -171,7 +180,7 @@ export class FakeGitHub {
       full_name: `${repo.owner}/${repo.name}`,
       owner: { login: repo.owner },
       private: true,
-      default_branch: 'main',
+      default_branch: repo.defaultBranch ?? 'main',
       description: null,
       html_url: `https://github.com/${repo.owner}/${repo.name}`,
       pushed_at: '2026-10-01T10:00:00Z',
@@ -372,6 +381,12 @@ export class FakeGitHub {
       this.failRepoRequests -= 1;
       return json(502, { message: 'Server Error' });
     }
+    m = /^\/repos\/([^/]+)\/([^/]+)$/.exec(path);
+    if (method === 'GET' && m) {
+      const index = this.repos.findIndex((r) => r === this.repo(m?.[1] ?? '', m?.[2] ?? ''));
+      const found = this.repos[index];
+      return found ? json(200, this.repoJson(found, index)) : json(404, { message: 'Not Found' });
+    }
     m = /^\/repos\/([^/]+)\/([^/]+)\/(.+)$/.exec(path);
     const repo = m ? this.repo(m[1] ?? '', m[2] ?? '') : undefined;
     if (!m || !repo) return json(404, { message: 'Not Found' });
@@ -446,6 +461,11 @@ export class FakeGitHub {
         },
         base: { ref: 'main', repo: { full_name: fullName } },
       });
+    }
+    r = /^git\/commits\/([0-9a-f]{40})$/.exec(rest);
+    if (r) {
+      const commit = r[1] ?? '';
+      return json(200, { sha: commit, tree: { sha: repo.trees?.[commit] ?? ownTree(commit) } });
     }
     r = /^commits\/([0-9a-f]{7,64})$/.exec(rest);
     if (r) {

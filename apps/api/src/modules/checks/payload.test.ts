@@ -88,6 +88,7 @@ describe('run snapshot', () => {
       branches: null,
       skipBots: false,
       items: [],
+      schedule: null,
     },
   });
 
@@ -115,6 +116,7 @@ describe('run snapshot', () => {
       branches: null,
       skipBots: false,
       items: [],
+      schedule: null,
     });
   });
 });

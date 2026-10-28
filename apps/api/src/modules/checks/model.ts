@@ -15,6 +15,8 @@ import type { checkRuns } from './schema.js';
 
 export type CheckRunRow = typeof checkRuns.$inferSelect;
 
+/** GitHub's description of the runs a closed or merged pull request cancelled. */
+export const PULL_REQUEST_CLOSED_DESCRIPTION = 'Pull request closed';
 /** Status message of a run whose node went (or stayed) offline. */
 export const NODE_OFFLINE_MESSAGE = 'The node went offline';
 /** Status message of runs of a node whose agent does not run checks. */
@@ -46,7 +48,8 @@ export function checkNodeState(events: EventBus): CheckNodeState {
   return state;
 }
 
-export function toCheckRun(row: CheckRunRow): CheckRun {
+/** The API shape of a run; `queuedBehind` is the run's place in its node's queue (queued only). */
+export function toCheckRun(row: CheckRunRow, queuedBehind: number | null = null): CheckRun {
   return {
     id: row.id,
     appId: row.appId,
@@ -66,11 +69,25 @@ export function toCheckRun(row: CheckRunRow): CheckRun {
     statusMessage: row.statusMessage,
     githubState: row.githubState,
     triggeredBy: row.triggeredById,
+    treeSha: row.treeSha,
+    copiedFrom: row.copiedFromId,
+    alsoRef: row.alsoRef,
+    queuedBehind: row.status === 'queued' ? queuedBehind : null,
     createdAt: row.createdAt.toISOString(),
     startedAt: row.startedAt?.toISOString() ?? null,
     finishedAt: row.finishedAt?.toISOString() ?? null,
     updatedAt: row.updatedAt.toISOString(),
   };
+}
+
+/** `45s`, `3m 20s`, `2h 5m`. */
+export function formatDuration(ms: number): string {
+  const seconds = Math.max(0, Math.round(ms / 1000));
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return seconds % 60 === 0 ? `${minutes}m` : `${minutes}m ${seconds % 60}s`;
+  const hours = Math.floor(minutes / 60);
+  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
 }
 
 /** The check settings of an app row; keys stored before they existed get their defaults. */

@@ -5,6 +5,7 @@ import {
   CommitSha,
   DEFAULT_APP_PREVIEW_SETTINGS,
   GitRef,
+  TreeSha,
 } from '@launchway/contracts';
 import { and, eq, type SQL, sql } from 'drizzle-orm';
 import { z } from 'zod';
@@ -78,6 +79,8 @@ const PushEvent = z.object({
   ref: z.string(),
   after: z.string(),
   deleted: z.boolean().optional(),
+  /** The pushed head commit; `tree_id` is its tree (same-tree copies of the checks). */
+  head_commit: z.object({ id: z.string(), tree_id: z.string() }).nullish(),
   /** Who pushed (skipBots of the checks). */
   sender: Account.nullish(),
   repository: Repository,
@@ -103,16 +106,26 @@ export function releasePublication(
   return publishes ? { tag: event.release.tag_name, prerelease: event.release.prerelease } : null;
 }
 
-/** The branch and commit a push event deploys, or null (tags, deleted branches, bad input). */
+/**
+ * The branch and commit a push event deploys, or null (tags, deleted branches, bad input), with
+ * the commit's tree when the event's head commit is that commit.
+ */
 export function pushedBranch(event: z.infer<typeof PushEvent>): {
   branch: string;
   commitSha: string;
+  treeSha: string | undefined;
 } | null {
   if (event.deleted || !event.ref.startsWith(BRANCH_REF_PREFIX)) return null;
   const branch = GitRef.safeParse(event.ref.slice(BRANCH_REF_PREFIX.length));
   const commitSha = CommitSha.safeParse(event.after);
   if (!branch.success || !commitSha.success || /^0+$/.test(commitSha.data)) return null;
-  return { branch: branch.data, commitSha: commitSha.data };
+  const head = event.head_commit;
+  const tree = head?.id === commitSha.data ? TreeSha.safeParse(head.tree_id) : null;
+  return {
+    branch: branch.data,
+    commitSha: commitSha.data,
+    treeSha: tree?.success ? tree.data : undefined,
+  };
 }
 
 const PullRequestEvent = z.object({
@@ -396,13 +409,16 @@ export function createWebhookHandler(deps: Deps) {
         retry ||= needsRedelivery(error);
       }
     }
-    const checked = await pullRequestChecks(event, targets);
+    const checked =
+      event.action === 'closed'
+        ? await closedPullRequestChecks(event, targets)
+        : await pullRequestChecks(event, targets);
     if (retry) {
       throw redeliver('Updating a preview failed for at least one app; redeliver to retry');
     }
     if (checked.retry) {
       throw redeliver(
-        'Queueing the checks of a pull request failed for at least one app; redeliver to retry',
+        'Updating the checks of a pull request failed for at least one app; redeliver to retry',
       );
     }
     return handled || checked.handled ? 'processed' : 'ignored';
@@ -425,6 +441,40 @@ export function createWebhookHandler(deps: Deps) {
       { sha: pr.head.sha, ref: head.data, prNumber: event.number, trigger: 'pull_request' },
       { kind: 'pull_request', baseBranch: pr.base.ref ?? null, author: pr.user },
     );
+  }
+
+  /**
+   * A closed or merged pull request cancels its queued checks in every app of the repository
+   * (the apps the delivery's connection links to the event's repository, so a delivery of one
+   * repository never touches the runs of another). Runs also serving a push stay.
+   */
+  async function closedPullRequestChecks(event: PullRequestEvent, targets: readonly AppRow[]) {
+    const head = GitRef.safeParse(event.pull_request.head.ref);
+    let handled = false;
+    let retry = false;
+    if (!head.success) return { handled, retry };
+    const pr = {
+      number: event.number,
+      headRef: head.data,
+      merged: event.pull_request.merged === true,
+    };
+    for (const app of targets) {
+      try {
+        const cancelled = await checks.closePullRequest(app, pr, actor);
+        handled ||= cancelled.length > 0;
+      } catch (error) {
+        logger.warn(
+          {
+            appId: app.id,
+            prNumber: event.number,
+            reason: error instanceof Error ? error.message : 'unknown',
+          },
+          'cancelling the checks of a closed pull request failed',
+        );
+        retry ||= needsRedelivery(error);
+      }
+    }
+    return { handled, retry };
   }
 
   /** Apps of the connection linked to the event's repository (case-insensitive, like GitHub). */
@@ -508,7 +558,13 @@ export function createWebhookHandler(deps: Deps) {
           );
     const checked = await queueChecks(
       checkTargets,
-      { sha: pushed.commitSha, ref: pushed.branch, prNumber: null, trigger: 'push' },
+      {
+        sha: pushed.commitSha,
+        ref: pushed.branch,
+        prNumber: null,
+        trigger: 'push',
+        ...(pushed.treeSha === undefined ? {} : { treeSha: pushed.treeSha }),
+      },
       { kind: 'push', branch: pushed.branch, sender: event.sender },
     );
     if (deployed.retry) throw deployFailed('push');

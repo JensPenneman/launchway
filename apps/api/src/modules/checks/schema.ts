@@ -9,7 +9,16 @@ import {
   type UserId,
 } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { bigint, index, integer, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  type AnyPgColumn,
+  bigint,
+  index,
+  integer,
+  pgEnum,
+  pgTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { apps } from '../apps/schema.js';
 import { logStream } from '../deployments/schema.js';
@@ -56,6 +65,14 @@ export const checkRuns = pgTable(
     triggeredById: text('triggered_by_id')
       .$type<UserId>()
       .references(() => users.id, { onDelete: 'set null' }),
+    /** The commit's tree, read from GitHub when the run was queued; null when it could not be. */
+    treeSha: text('tree_sha'),
+    /** Reason `same-tree`: the finished run of the same check and tree whose result was reused. */
+    copiedFromId: text('copied_from_id')
+      .$type<CheckRunId>()
+      .references((): AnyPgColumn => checkRuns.id, { onDelete: 'set null' }),
+    /** Another branch whose push of the same commit this run serves (deduplicated into it). */
+    alsoRef: text('also_ref'),
     /** When the run was sent to its node. */
     startedAt: tz('started_at'),
     finishedAt: tz('finished_at'),
@@ -65,6 +82,9 @@ export const checkRuns = pgTable(
     index('check_runs_app_id_created_at_idx').on(t.appId, t.createdAt.desc()),
     index('check_runs_node_id_status_idx').on(t.nodeId, t.status),
     index('check_runs_app_id_commit_sha_idx').on(t.appId, t.commitSha),
+    index('check_runs_app_id_tree_sha_idx')
+      .on(t.appId, t.treeSha)
+      .where(sql`${t.treeSha} IS NOT NULL`),
     uniqueIndex('check_runs_one_running_per_node').on(t.nodeId).where(sql`${t.status} = 'running'`),
   ],
 );

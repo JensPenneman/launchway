@@ -64,6 +64,20 @@ describe('pushedBranch', () => {
     });
   });
 
+  it("takes the commit's tree from the head commit, when that is the pushed commit", () => {
+    const tree = 'b'.repeat(40);
+    const pushed = (id: string, tree_id: string) => ({
+      ...push('refs/heads/main'),
+      head_commit: { id, tree_id },
+    });
+    expect(pushedBranch(pushed(sha, tree))?.treeSha).toBe(tree);
+    expect(pushedBranch(pushed('c'.repeat(40), tree))?.treeSha).toBeUndefined();
+    expect(pushedBranch(pushed(sha, 'not-a-tree'))?.treeSha).toBeUndefined();
+    expect(
+      pushedBranch({ ...push('refs/heads/main'), head_commit: null })?.treeSha,
+    ).toBeUndefined();
+  });
+
   it('ignores tags, deletions and invalid input', () => {
     expect(pushedBranch(push('refs/tags/v1.0.0'))).toBeNull();
     expect(pushedBranch(push('refs/heads/main', '0'.repeat(40), true))).toBeNull();

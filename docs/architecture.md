@@ -284,8 +284,9 @@ reported to GitHub as commit statuses that branch protection can require
 - **Settings.** `App.checks`: `enabled`, `composeFiles` (default
   `.devcontainer/compose.yaml`, the app's development container), `branches`
   (exact names; pushes to them and pull requests into them run the checks;
-  `null` = every branch), `skipBots` and up to ten `items` `{ name, command,
-  service (default dev), composeFile?, timeoutMinutes (1-120, default 30) }`.
+  `null` = every branch), `skipBots`, `schedule` (cron in UTC, at most hourly,
+  or null) and up to ten `items` `{ name, command, service (default dev),
+  composeFile?, timeoutMinutes (1-120, default 30) }`.
   Members change them with `PATCH /apps/{id}`; the limits every service of a
   check gets are platform settings (`checkMemoryMb`, `checkCpus`,
   `checkPidsLimit`; defaults 2048, 2, 4096), and so are the bounds of the
@@ -295,13 +296,22 @@ reported to GitHub as commit statuses that branch protection can require
   `pull_request` `opened` / `reopened` / `synchronize` from the same
   repository queue one run per item for the head commit; fork pull requests
   never run. Runs are deduplicated per app, commit and name (runs that never
-  ran do not count: `superseded`, `queue-full`, and `offline` before a node
-  took them), a newer push of a branch cancels the queued runs of the
+  ran do not count: `superseded`, `queue-full`, `closed`, and `offline`
+  before a node took them; a push of another branch deduplicated into a run
+  is its `alsoRef`), a newer push of a branch cancels the queued runs of the
   other commits of that branch, and runs beyond the queue bounds end at once
-  as `errored` (`queue-full`).
+  as `errored` (`queue-full`). `pull_request` `closed` cancels the pull
+  request's queued runs (`closed`). A push or pull request run whose commit
+  has the tree (`treeSha`, from the push event or `GET
+  /repos/{owner}/{repo}/git/commits/{sha}`) of a run of the same app and
+  check snapshot that exited within seven days ends as its copy (`same-tree`,
+  `copiedFrom`), when queued, when that run ends or when the dispatcher takes
+  it. The schedule pass (every minute) queues the default branch's head once
+  per slot (`schedule`, `apps.checks_last_slot`).
   `POST /apps/{id}/checks` `{ ref, names? }` runs them by hand (the only
-  trigger for token connections); `POST /checks/{id}/rerun` and `POST
-  /checks/{id}/cancel` act on one run.
+  webhook-free trigger besides the schedule for token connections); `POST
+  /checks/{id}/rerun` and `POST /checks/{id}/cancel` act on one run. Queued
+  runs carry their place in the node's queue (`queuedBehind`).
 - **Lifecycle.** `queued → running → succeeded | failed | errored`, or
   `cancelled`. One check runs per node at a time (a partial unique index),
   oldest first across the node's apps. `failed` means the command exited

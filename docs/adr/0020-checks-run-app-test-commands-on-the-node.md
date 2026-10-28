@@ -224,6 +224,43 @@ shape the design:
   not count for the deduplication, so pushing such a commit again runs it,
   and the newest push of a branch supersedes the queued runs of every other
   commit of it.
+- Queue hygiene (follow-up of this decision), since one node runs one check
+  at a time and its queue reached 90 minutes of work:
+  - A `pull_request` `closed` event (merged or not) cancels the pull
+    request's queued runs (reason `closed`; GitHub: error, "Pull request
+    closed"): the runs of its number on its head branch, in the apps the
+    delivery's connection links to the delivery's repository, so a delivery
+    for one repository never cancels another's runs. Running runs finish: a
+    merged pull request's result can still serve the merge commit (next
+    point), and cancelling would throw away work already done. Runs that also
+    serve a push of another branch (`alsoRef`, set when a push of the same
+    commit is deduplicated into a run of another branch) stay, so a
+    fast-forward merge keeps its checks; manual runs and re-runs stay.
+    Cancelled runs never ran, so they do not count for the deduplication.
+  - Same-tree copies: a push or pull request run whose commit has the tree of
+    a commit for which the same check ran and exited within seven days ends
+    at once as a copy of that run (status and exit code, reason `same-tree`,
+    `copiedFrom`), and GitHub gets the status on the new commit ("Same tree
+    as 3f78685, passed in 4m 18s"), so a release workflow waiting for the
+    statuses is never left without them. Runs store their commit's tree,
+    from the signed push event (`head_commit.tree_id`) or GitHub's API, never
+    from the agent or the repository's content. A copy needs the same app
+    (an app cannot change its repository, so also the same repository) and
+    the same snapshot of the check (name, command, service, Compose files,
+    timeout); only runs that exited count, not timeouts (they may be the
+    node's load), errors or cancellations; copies are never sources. Copies
+    are made when a run is queued, when a run of the tree ends (for runs
+    queued meanwhile) and when the dispatcher takes a queued run. Manual
+    runs, re-runs and scheduled runs always run.
+  - A per-app schedule (`checks.schedule`, cron in UTC, one minute so at most
+    hourly, off by default) queues the checks for the head of the default
+    branch (trigger `schedule`) once per slot: the app's last slot is stored
+    (`checks_last_slot`, also set when the schedule changes, so a new
+    schedule starts with its next slot), and the slot is claimed under the
+    app row lock together with the runs. It runs whether or not webhooks run
+    the checks, and counts against the queue bounds.
+  - The API reports a queued run's place in its node's queue (`queuedBehind`),
+    which the Checks tab shows with the copy provenance.
 - The Compose file preflight applies to deployments as well: `include`,
   `extends.file`, `env_file` and `label_file` must stay inside the repository
   there too, and remote includes are refused, which closes the same way of
@@ -237,9 +274,12 @@ shape the design:
   pull with stored registry credentials can be pulled by checks as well; the
   check builder's BuildKit runs privileged in its container (see above), and
   one build can fill the node's disk while it runs; the branches of one app
-  share its cached build steps; the policy is a deny-list, so a new Compose
-  feature that reaches outside the project is not refused until it is known;
-  repository code is isolated by the container runtime only.
+  share its cached build steps; a same-tree copy takes the verdict of another
+  commit as it was, so a command that depends on `LAUNCHWAY_REF` or
+  `LAUNCHWAY_COMMIT_SHA`, on the platform limits or on what changed upstream
+  in the last seven days is not run again; the policy is a deny-list, so a
+  new Compose feature that reaches outside the project is not refused until
+  it is known; repository code is isolated by the container runtime only.
 - Follow-ups: an allow-list of Compose keys for checks; a rootless BuildKit
   for the check builder; binding the API's port to loopback (or a firewall
   rule) once the platform domain works, so job containers cannot reach it on

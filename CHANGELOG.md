@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.6.0](https://github.com/JensPenneman/launchway/compare/v0.5.0...v0.6.0) (2026-10-28)
+
+
+### Features
+
+* keep the check queue for work that matters: closed PRs, same-tree copies, schedules ([#19](https://github.com/JensPenneman/launchway/issues/19)) ([c3b574b](https://github.com/JensPenneman/launchway/commit/c3b574b8017464ca27d285fcd56ed8ef4025888f))
+
 ## [0.5.0](https://github.com/JensPenneman/launchway/compare/v0.4.0...v0.5.0) (2026-10-27)
 
 

@@ -383,13 +383,15 @@ export function createChecksService(deps: Deps): ChecksService {
   }
 
   /**
-   * How many runs of their node are running or queued before each queued run (the dispatcher
-   * sends the oldest first), for the runs given.
+   * How many runs of their node have to end before each queued run starts: the dispatcher sends
+   * the oldest first, while fewer than `checkConcurrency` run (ADR 0021). With one check at a
+   * time that is every running and older queued run of the node.
    */
   async function queuePositions(rows: readonly CheckRunRow[]): Promise<Map<CheckRunId, number>> {
     const positions = new Map<CheckRunId, number>();
     const queued = rows.filter((row) => row.status === 'queued');
     if (queued.length === 0) return positions;
+    const { checkConcurrency } = await platform.get();
     const active = await deps.db
       .select({ id: checkRuns.id, nodeId: checkRuns.nodeId, status: checkRuns.status })
       .from(checkRuns)
@@ -400,7 +402,7 @@ export function createChecksService(deps: Deps): ChecksService {
         ),
       )
       .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id));
-    // A running run is ahead of every queued one; queued ones go oldest first.
+    // Running runs are ahead of every queued one; queued ones go oldest first.
     const ahead = new Map<NodeId, number>();
     for (const run of active) {
       if (run.status === 'running') ahead.set(run.nodeId, (ahead.get(run.nodeId) ?? 0) + 1);
@@ -408,7 +410,8 @@ export function createChecksService(deps: Deps): ChecksService {
     for (const run of active) {
       if (run.status !== 'queued') continue;
       const before = ahead.get(run.nodeId) ?? 0;
-      positions.set(run.id, before);
+      // A free slot takes the run at once; otherwise every run ahead but the full slots' worth.
+      positions.set(run.id, Math.max(0, before - checkConcurrency + 1));
       ahead.set(run.nodeId, before + 1);
     }
     return positions;

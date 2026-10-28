@@ -601,6 +601,21 @@ describe('DeploymentManager', () => {
 });
 
 describe('Semaphore', () => {
+  it('tells whether every slot is taken', async () => {
+    const slots = new Semaphore(1);
+    expect(slots.full).toBe(false);
+    let release = () => {};
+    const holder = slots.use(() => new Promise<void>((resolve) => (release = resolve)));
+    expect(slots.full).toBe(true);
+    const waiting = slots.use(() => Promise.resolve());
+    release();
+    await holder;
+    // The freed slot went to the waiter.
+    expect(slots.full).toBe(true);
+    await waiting;
+    expect(slots.full).toBe(false);
+  });
+
   it('lets a waiter leave the queue when its signal aborts', async () => {
     const slots = new Semaphore(1);
     let release = () => {};

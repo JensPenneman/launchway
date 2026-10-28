@@ -35,8 +35,8 @@ test('lists the check runs of an app page by page and filters them', async ({ pa
 test('shows where queued runs wait and which result a same-tree run reused', async ({ page }) => {
   await page.goto(`/apps/${TRAIL_APP_ID}?tab=checks`);
   await expect(page.getByText(/^Schedule: Not queued for 2026-10-26 06:00 UTC/)).toBeVisible();
-  await expect(runRow(page, 'test', 'PR #42')).toContainText('behind 1 run');
-  await expect(runRow(page, 'e2e', 'PR #42')).toContainText('behind 2 runs');
+  await expect(runRow(page, 'test', 'PR #42')).toContainText('starts after 1 run ends');
+  await expect(runRow(page, 'e2e', 'PR #42')).toContainText('starts after 2 runs end');
   const copy = runRow(page, 'test', 'main').filter({ hasText: 'same tree' }).first();
   await copy.getByRole('button', { name: 'Logs' }).click();
   const drawer = page.getByRole('dialog', { name: /Check test/ });
@@ -191,6 +191,13 @@ test('saves the platform limits of checks', async ({ page }) => {
   await cpus.fill('1.5');
   await page.getByLabel('Memory (MiB)').fill('8192');
   await expect(page.getByText('2 services × 8.0 GiB = 16 GiB')).toBeVisible();
+  // Every check a node runs at once gets the limits: the node needs them that many times.
+  const atOnce = page.getByLabel('At once per node');
+  await expect(atOnce).toHaveValue('1');
+  await atOnce.fill('9');
+  await expect(page.getByText('Must be at most 8')).toBeVisible();
+  await atOnce.fill('2');
+  await expect(page.getByText('32 GiB for 2 at once')).toBeVisible();
   const perApp = page.getByLabel('Queued per app');
   await expect(perApp).toHaveValue('30');
   await expect(page.getByLabel('Queued per node')).toHaveValue('100');

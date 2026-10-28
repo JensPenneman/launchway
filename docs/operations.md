@@ -461,11 +461,15 @@ images.
      (1-120, default 30) and, optionally, a Compose file of its own.
 3. **Limits** (admins): **Settings → Platform → Checks** sets the memory,
    CPUs and processes every service of a check gets (`checkMemoryMb`,
-   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096) and how many
-   checks may wait (`checkMaxQueuedPerApp`, `checkMaxQueuedPerNode`; defaults
-   30 and 100). The
-   memory limit applies to every service of a check, so a dev container with
-   a database may use twice as much; the card shows the total.
+   `checkCpus`, `checkPidsLimit`; defaults 2048 MiB, 2 and 4096), how many
+   checks a node runs at once (`checkConcurrency`, **At once per node**; 1 to
+   8, default 1) and how many checks may wait (`checkMaxQueuedPerApp`,
+   `checkMaxQueuedPerNode`; defaults 30 and 100). The limits apply to every
+   service of every check, so a dev container with a database may use twice
+   as much, and a node that runs two such checks at once four times as much:
+   the memory and CPUs a node gives checks are *`checkConcurrency` × services
+   × limits*. The card shows the totals; size them with *Resources on a 16 GB
+   node* below.
 
 Trail, whose development container has a `dev` service with Node and
 Chromium and a `db` service, runs the jobs of its CI workflow like this:
@@ -520,9 +524,15 @@ dependencies first.
   and processes of a check service, on its own network
   `launchway-check-build`. The agent creates it with the first build, keeps
   it and its cache between runs, replaces it when the limits or its settings
-  change, and removes it after a day without check builds. A build step that
-  needs more memory fails with "cannot allocate memory". Run one agent per
-  Docker daemon: an agent removes the check builders it does not know.
+  change, and removes it after a day without check builds. Checks that run
+  at once take turns to build in it (their commands then run side by side),
+  so every build starts with empty cache mounts that no other build writes
+  to. A check that waits for its turn logs "waiting for the check builder:
+  another check is building"; the wait counts as running time (the check
+  shows *running* and its duration includes the wait), while the time limit
+  of its command starts with the command. A build step that needs more memory fails with "cannot allocate
+  memory". Run one agent per Docker daemon: an agent removes the check
+  builders it does not know.
 - **What builds reach.** Build steps resolve names through Docker's DNS and
   reach the internet, but not the containers of the default bridge or of
   other networks. Like check containers, they do reach the ports the node
@@ -541,12 +551,15 @@ dependencies first.
   `launchway-check_<slug>_<run>`: published ports, fixed container names,
   restart policies, `ulimits` and network subnets are removed, container logs
   rotate (at most 30 MB per container), nothing joins the proxy network, and its
-  containers, volumes and networks are removed when it ends. Images built for
-  checks are kept as `launchway-check/<slug>-<service>`, one per app and
-  service, and later builds reuse their layers.
-- **One at a time.** A node runs one check at a time, oldest first across
-  its apps; the **Checks** tab shows a queued run's place ("behind 3 runs":
-  running and queued runs of the node, every app's). A newer push to a
+  containers, volumes and networks are removed when it ends. Since nothing
+  is published on the host, checks of one app can run at once without
+  colliding on a port. Images built for checks are tagged with the run
+  (`launchway-check/<slug>-<service>:<run>`) and removed with it; later
+  builds reuse the check builder's cache.
+- **Several at once.** A node runs up to `checkConcurrency` checks at once
+  (default 1), oldest first across its apps; the **Checks** tab shows a
+  queued run's place ("starts after 3 runs end": the runs of the node, every
+  app's, that have to end before it starts). A newer push to a
   branch cancels the queued checks of older commits of that branch,
   whichever commit it is (a force-push back to a commit runs its checks
   again); a push and a pull request of the same commit run once, and the run
@@ -611,27 +624,38 @@ Docker Desktop for Windows runs every container in WSL 2, which gets half of
 the machine's memory by default: about 8 GB of a 16 GB laptop (`docker info`
 shows it as *Total Memory*). Production apps, the platform itself (at most
 2.3 GB: 512 MB each for the API and the agent, 256 MB for Caddy, 1 GB for
-PostgreSQL) and one check share it. Every service of a check is capped
+PostgreSQL) and the checks share it. Every service of a check is capped
 separately, so a check of Trail (`dev` and `db`) may take up to twice
-`checkMemoryMb`.
+`checkMemoryMb`, and the checks of a node up to `checkConcurrency` times
+that: *`checkConcurrency` × services × `checkMemoryMb`* of memory and
+*`checkConcurrency` × services × `checkCpus`* CPUs.
 
-- Size the limit so that production plus *services × `checkMemoryMb`* fits:
-  the default of 2048 MiB lets a two-service check take 4 GiB, which fits
-  WSL's default 8 GB with production at about 3 GB. For heavier suites give
-  WSL 12 GB (`%UserProfile%\.wslconfig`: `[wsl2]` and `memory=12GB`, then
-  `wsl --shutdown`, and Docker Desktop restarts) and raise the limit to
-  4096 MiB. Swap is off for checks.
+- Size the limits so that production plus *`checkConcurrency` × services ×
+  `checkMemoryMb`* fits in WSL:
+  - one check at a time (the default) with 2048 MiB lets a two-service check
+    take 4 GiB, which fits WSL's default 8 GB with production at about 3 GB;
+  - two at once (`checkConcurrency` 2) with 2048 MiB take up to 8 GiB: give
+    WSL 12 GB (`%UserProfile%\.wslconfig`: `[wsl2]` and `memory=12GB`, then
+    `wsl --shutdown`, and Docker Desktop restarts), which leaves Windows 4 GB
+    of a 16 GB laptop;
+  - heavier suites (4096 MiB per service) want WSL 12 GB one at a time; two
+    of them at once (16 GiB) do not fit a 16 GB laptop, so keep
+    `checkConcurrency` at 1 for them or lower `checkMemoryMb`.
+
+  Swap is off for checks.
 - If memory runs out anyway, the kernel kills check processes first
   (`oom_score_adj` 1000). A check that hits its own limit fails with
   "(out of memory)" in its message.
-- 2 CPUs per service leave most of a 12-thread laptop to production. Trail's
-  end-to-end suite uses one Playwright worker (`E2E_WORKERS: "1"` in its
-  development container), which fits.
+- 2 CPUs per service leave most of a 12-thread laptop to production with
+  one check at a time; two checks of Trail at once may take 8 of its 12
+  threads (CPUs are shared, not reserved, so production slows down rather
+  than fails). Trail's end-to-end suite uses one Playwright worker
+  (`E2E_WORKERS: "1"` in its development container), which fits.
 - 4096 processes per service are plenty for Node and Chromium and stop a
   runaway fork.
 - The check builder counts as one more service: its builds get at most
   `checkMemoryMb` and `checkCpus` while a check builds, before its own
-  services start. On Docker Desktop for Windows it is the container
+  services start, and builds one check at a time however many run. On Docker Desktop for Windows it is the container
   `buildx_buildkit_launchway-check-build-<memory>m-<cpus>c-<hash>0` in WSL 2
   (it restarts with Docker Desktop), and the first check build pulls its
   BuildKit image `moby/buildkit` from Docker Hub (about 110 MB).
@@ -690,8 +714,9 @@ is fixed.
 - **A check errors with reason `build` while pulling.** Images that a check
   does not build must exist in their registry; build the image in the check's
   own Compose file instead of using one that only exists on the node.
-- **Checks stay queued.** One check runs per node at a time; the **Checks**
-  tab shows how many runs are ahead. Checks of a node that is offline for 10
+- **Checks stay queued.** A node runs `checkConcurrency` checks at once
+  (**Settings → Platform → Checks**, default 1); the **Checks** tab shows how
+  many runs have to end first. Checks of a node that is offline for 10
   minutes end with *error*.
 - **A check says "Same tree as …" but should run.** Its result came from a
   commit with the same files (reason `same-tree`); **Re-run** runs it.
@@ -949,6 +974,21 @@ docker compose -f compose.agent.yaml up -d
 
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
+
+### Upgrading to 0.7.0
+
+- **Checks at once.** Nodes keep running one check at a time until an admin
+  raises `checkConcurrency` (**Settings → Platform → Checks → At once per
+  node**); size WSL first (*Resources on a 16 GB node*). Upgrade the agent
+  of a node before raising it: an older agent runs the checks it gets one
+  after the other.
+- **Check images.** Images built for checks are now tagged per run and
+  removed with it. The agent removes the per-app images earlier versions
+  kept (`launchway-check/<slug>-<service>`) when it starts.
+- **Going back.** Migration 0008 has no down path: restore the backup taken
+  before the upgrade. An older API started on this schema loses the unique
+  index that kept one check running per node, which is harmless while its
+  agent serialises the runs, as agents before 0.7.0 do.
 
 ### Upgrading to 0.6.0
 

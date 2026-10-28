@@ -4,7 +4,8 @@ Date: 2026-10-27
 
 ## Status
 
-Accepted
+Accepted. One check per node at a time is amended by
+[ADR 0021](0021-concurrent-checks-per-node.md) (concurrent checks per node).
 
 ## Context
 

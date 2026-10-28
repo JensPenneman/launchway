@@ -2,6 +2,7 @@ import {
   type CHECK_ENV_KEYS,
   CHECK_LABEL,
   type CheckLimits,
+  type CheckRunId,
   type CheckRunPayload,
   checkImageName,
 } from '@launchway/contracts';
@@ -62,7 +63,7 @@ export interface CheckDocumentInput {
   project: string;
   appId: string;
   slug: string;
-  runId: string;
+  runId: CheckRunId;
   /** The service the check's command runs in. */
   service: string;
   env: CheckEnv;
@@ -215,8 +216,8 @@ export function checkSourcePaths(config: ComposeConfig, projectDir: string): str
  *   deploy, scale, restart policy, logging driver or develop section; its own resource settings
  *   replaced by the check limits (memory without swap, CPUs, processes, oom_score_adj 1000);
  *   no-new-privileges.
- * - built services: tagged `launchway-check/<slug>-<service>` (never an image of the project's
- *   choosing), no extra tags, no cache export, no local cache import, image label
+ * - built services: tagged `launchway-check/<slug>-<service>:<run id suffix>` (never an image of
+ *   the project's choosing; one per run, so runs at once never retag each other's), no extra tags, no cache export, no local cache import, image label
  *   `launchway.check=<slug>`, never pulled.
  * - bind mounts (all inside the checkout): read-only binds of small text files become configs
  *   with inline content; directories (missing ones are created, as Docker would), writable,
@@ -323,7 +324,7 @@ export function buildCheckDocument(
         if (source) buildSecrets.add(source);
       }
       service.build = build;
-      service.image = checkImageName(input.slug, name);
+      service.image = checkImageName(input.slug, name, input.runId);
       service.pull_policy = 'never';
     }
 

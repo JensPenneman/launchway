@@ -272,6 +272,21 @@ describe('checks against PostgreSQL', () => {
     return ((await res.json()) as CheckRunList).items;
   }
 
+  /** Sets `checkConcurrency` through the API for `test`, then back to one check at a time. */
+  async function withConcurrency(limit: number, test: () => Promise<void>): Promise<void> {
+    const set = async (value: number) => {
+      const res = await api.request('/api/v1/settings', json('PATCH', { checkConcurrency: value }));
+      expect(res.status).toBe(200);
+      expect(await res.json()).toMatchObject({ checkConcurrency: value });
+    };
+    await set(limit);
+    try {
+      await test();
+    } finally {
+      await set(1);
+    }
+  }
+
   /** A run inserted as `running` on `nodeId` (the agent's side is played by the test). */
   async function runningRun(appId: App['id'], nodeId: NodeId, startedAt = new Date()) {
     const [row] = await db
@@ -315,6 +330,7 @@ describe('checks against PostgreSQL', () => {
       checkMemoryMb: current?.checkMemoryMb ?? 4096,
       checkCpus: current?.checkCpus ?? 2,
       checkPidsLimit: current?.checkPidsLimit ?? 4096,
+      checkConcurrency: current?.checkConcurrency ?? 1,
       checkMaxQueuedPerApp: current?.checkMaxQueuedPerApp ?? 30,
       checkMaxQueuedPerNode: current?.checkMaxQueuedPerNode ?? 100,
     };
@@ -862,7 +878,7 @@ describe('checks against PostgreSQL', () => {
     });
   });
 
-  it('claims at most one run per node, also when dispatches race', async () => {
+  it('claims at most one run per node by default, also when dispatches race', async () => {
     const node = await newNode(false);
     const { app } = await createTestApp(node, {
       items: [quality, lint, { name: 'unit', command: 'npm run unit' }],
@@ -874,6 +890,84 @@ describe('checks against PostgreSQL', () => {
     const statuses = (await runsOf(app.id)).map((r) => r.status).sort();
     expect(statuses).toEqual(['queued', 'queued', 'running']);
     expect(gateway.checkRuns.filter((r) => r.nodeId === node)).toHaveLength(1);
+  });
+
+  it('claims up to checkConcurrency runs per node, oldest first, also when dispatches race', async () => {
+    const node = await newNode(false);
+    const { app } = await createTestApp(node, {
+      items: [quality, lint, { name: 'unit', command: 'npm run unit' }],
+    });
+    const { app: other } = await createTestApp(node, { items: [quality] });
+    await createRuns(app.id, { ref: 'main' });
+    await createRuns(other.id, { ref: 'main' });
+    const sent = () =>
+      gateway.checkRuns.filter((r) => r.nodeId === node).map((r) => r.payload.runId);
+    await withConcurrency(2, async () => {
+      gateway.connect(node);
+      const dispatcher = createCheckDispatcher(deps);
+      await Promise.all([1, 2, 3, 4].map(() => dispatcher.dispatchNode(node)));
+      // The dispatcher's order: the two oldest runs of the node, whatever their app.
+      const rows = await db
+        .select()
+        .from(checkRuns)
+        .where(eq(checkRuns.nodeId, node))
+        .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id));
+      expect(rows.map((r) => r.status)).toEqual(['running', 'running', 'queued', 'queued']);
+      expect(sent().sort()).toEqual([rows[0]?.id, rows[1]?.id].sort());
+      // Full: another pass claims nothing.
+      await dispatcher.dispatchNode(node);
+      expect(sent()).toHaveLength(2);
+      // A run ends: its slot goes to the oldest queued run, and only that one.
+      await createCheckSink(deps).onResult(node, {
+        runId: rows[1]?.id as CheckRunId,
+        reason: 'exit',
+        exitCode: 0,
+      });
+      await until(() => sent().includes(rows[2]?.id as CheckRunId));
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(sent()).toHaveLength(3);
+      expect((await runRow(rows[3]?.id ?? '')).status).toBe('queued');
+    });
+  });
+
+  it("serializes the claims of a node on the node's advisory lock, not those of other nodes", async () => {
+    const node = await newNode(false);
+    const elsewhere = await newNode(false);
+    const { app } = await createTestApp(node, { items: [quality, lint] });
+    const { app: away } = await createTestApp(elsewhere, { items: [quality] });
+    await createRuns(app.id, { ref: 'main' });
+    await createRuns(away.id, { ref: 'main' });
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked = () => {};
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    await withConcurrency(2, async () => {
+      // Holds the node's lock, as the claim of another dispatch does while it counts and claims.
+      const holding = db.transaction(async (tx) => {
+        await tx.execute(
+          sql`select pg_advisory_xact_lock(hashtext('launchway.checks.node:' || ${node}))`,
+        );
+        locked();
+        await held;
+      });
+      await isLocked;
+      gateway.connect(node);
+      gateway.connect(elsewhere);
+      const dispatcher = createCheckDispatcher(deps);
+      const dispatching = dispatcher.dispatchNode(node);
+      await dispatcher.dispatchNode(elsewhere);
+      expect(gateway.checkRuns.filter((r) => r.nodeId === elsewhere)).toHaveLength(1);
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(gateway.checkRuns.some((r) => r.nodeId === node)).toBe(false);
+      release();
+      await holding;
+      await dispatching;
+      expect(gateway.checkRuns.filter((r) => r.nodeId === node)).toHaveLength(2);
+    });
   });
 
   it('settles every kind of result', async () => {
@@ -1792,6 +1886,27 @@ describe('checks against PostgreSQL', () => {
     await runningRun(first.app.id, node);
     const one = (await (await api.request(`/api/v1/checks/${behind?.id}`)).json()) as CheckRun;
     expect(one.queuedBehind).toBe(3);
+  });
+
+  it('counts the free slots of the node in the place of its queued runs', async () => {
+    const node = await newNode(false);
+    const first = await createTestApp(node, { items: [quality, lint] });
+    const second = await createTestApp(node, { items: [quality] });
+    await createRuns(first.app.id, { ref: 'main' });
+    const [behind] = await createRuns(second.app.id, { ref: 'main' });
+    const page = async (appId: string) =>
+      ((await (await api.request(`/api/v1/apps/${appId}/checks`)).json()) as CheckRunPage).items;
+    const place = async () =>
+      ((await (await api.request(`/api/v1/checks/${behind?.id}`)).json()) as CheckRun).queuedBehind;
+    await withConcurrency(2, async () => {
+      // Two slots: the two oldest go next, the third once one run has ended.
+      expect((await page(first.app.id)).map((r) => r.queuedBehind).sort()).toEqual([0, 0]);
+      expect(await place()).toBe(1);
+      await runningRun(first.app.id, node);
+      const queued = (await page(first.app.id)).filter((r) => r.status === 'queued');
+      expect(queued.map((r) => r.queuedBehind).sort()).toEqual([0, 1]);
+      expect(await place()).toBe(2);
+    });
   });
   it("never cancels a branch's push runs or the default branch's runs when a pull request closes", async () => {
     const node = await newNode(false);

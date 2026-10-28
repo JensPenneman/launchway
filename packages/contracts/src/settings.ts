@@ -1,4 +1,10 @@
-import { CheckCpus, CheckMemoryMb, CheckPidsLimit, CheckQueueLimit } from './checks.js';
+import {
+  CheckConcurrency,
+  CheckCpus,
+  CheckMemoryMb,
+  CheckPidsLimit,
+  CheckQueueLimit,
+} from './checks.js';
 import {
   Email,
   Hostname,
@@ -77,6 +83,7 @@ export const Settings = z
     checkMemoryMb: CheckMemoryMb,
     checkCpus: CheckCpus,
     checkPidsLimit: CheckPidsLimit,
+    checkConcurrency: CheckConcurrency,
     checkMaxQueuedPerApp: CheckQueueLimit.openapi({
       description:
         'Queued check runs an app may hold; runs beyond it end at once with error, reason queue-full',
@@ -108,6 +115,7 @@ export const UpdateSettingsInput = z
     checkMemoryMb: CheckMemoryMb.optional(),
     checkCpus: CheckCpus.optional(),
     checkPidsLimit: CheckPidsLimit.optional(),
+    checkConcurrency: CheckConcurrency.optional(),
     checkMaxQueuedPerApp: CheckQueueLimit.optional(),
     checkMaxQueuedPerNode: CheckQueueLimit.optional(),
   })

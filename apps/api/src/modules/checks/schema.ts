@@ -30,7 +30,8 @@ export const checkRunTrigger = pgEnum('check_run_trigger', CHECK_RUN_TRIGGERS);
 
 /**
  * One run of one configured check for one commit (ADR 0020). The check's configuration is a
- * snapshot taken when the run was queued; at most one run per node is `running` at a time.
+ * snapshot taken when the run was queued; a node runs up to `settings.check_concurrency` of them at
+ * once (the dispatcher counts them under a lock of the node, ADR 0021).
  */
 export const checkRuns = pgTable(
   'check_runs',
@@ -85,7 +86,6 @@ export const checkRuns = pgTable(
     index('check_runs_app_id_tree_sha_idx')
       .on(t.appId, t.treeSha)
       .where(sql`${t.treeSha} IS NOT NULL`),
-    uniqueIndex('check_runs_one_running_per_node').on(t.nodeId).where(sql`${t.status} = 'running'`),
   ],
 );
 

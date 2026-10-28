@@ -102,6 +102,10 @@ export class Semaphore {
   constructor(slots: number) {
     this.#free = slots;
   }
+  /** True while every slot is taken, so `use` would wait. */
+  get full(): boolean {
+    return this.#free === 0;
+  }
   /** Runs `fn` in a slot; an abort while waiting leaves the queue and rejects at once. */
   async use<T>(fn: () => Promise<T>, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted();

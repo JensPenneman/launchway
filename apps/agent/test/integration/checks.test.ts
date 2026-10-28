@@ -120,6 +120,9 @@ services:
   sidecar:
     image: busybox
     command: ["httpd", "-f", "-p", "8080", "-h", "/www"]
+    # A fixed host port, as a developer's own Compose file may have: runs at once would collide
+    # on it if checks published ports.
+    ports: ["127.0.0.1:47123:8080"]
     volumes:
       - ../config/sidecar.txt:/www/config.txt:ro
     healthcheck:
@@ -324,6 +327,9 @@ async function expectCleanedUp(runId: string, app = { id: appId, slug }): Promis
   }, 60_000);
   const project = checkProjectName(app.slug, runId as `chk_${string}`);
   expect(await docker('volume', 'ls', '--quiet', '--filter', `name=${project}`)).toBe('');
+  // The image the run built is tagged with the run and removed with it.
+  const image = checkImageName(app.slug, 'dev', runId as `chk_${string}`);
+  expect(await docker('image', 'ls', '--quiet', image)).toBe('');
 }
 
 /** What the command of a run printed: stdout after its `docker compose run` (builds print too). */
@@ -365,12 +371,12 @@ async function cleanupDocker(): Promise<void> {
     await docker('volume', 'rm', '--force', `${project}_source`).catch(() => '');
     const networks = await docker('network', 'ls', '--quiet', '--filter', filter).catch(() => '');
     if (networks) await docker('network', 'rm', ...networks.split('\n')).catch(() => '');
+    const image = checkImageName(slug, 'dev', runId as `chk_${string}`);
+    await docker('image', 'rm', '--force', image).catch(() => '');
   }
   await docker('rm', '--force', `${leftover}-check`).catch(() => '');
   await docker('volume', 'rm', '--force', `${leftover}_source`).catch(() => '');
   await docker('network', 'rm', `${leftover}_default`).catch(() => '');
-  await docker('image', 'rm', '--force', checkImageName(slug, 'dev')).catch(() => '');
-  await docker('image', 'rm', '--force', checkImageName(other.slug, 'dev')).catch(() => '');
   await docker('rm', '--force', server).catch(() => '');
   // The check builder the runs created (named after LIMITS) and its network, if nothing else uses it.
   if (workspace) {
@@ -566,6 +572,48 @@ describe('check runs against Docker', () => {
     expect(result.payload).toEqual({ runId: payload.runId, reason: 'cancelled', exitCode: null });
     expect(repliesTo('cancel-1')).toEqual([]);
     await expectCleanedUp(payload.runId);
+  });
+
+  it('runs two checks of one app at once, in projects of their own, and cancels one alone', async () => {
+    const command = 'echo started; sleep 15; wget -qO- http://sidecar:8080/config.txt';
+    const [first, second, third] = [
+      checkPayload('good', command),
+      checkPayload('good', command),
+      checkPayload('good', 'echo started; sleep 60'),
+    ];
+    request({ id: 'run-both-1', type: 'check.run', payload: first });
+    request({ id: 'run-both-2', type: 'check.run', payload: second });
+    request({ id: 'run-both-3', type: 'check.run', payload: third });
+    await waitFor(() => logLinesOf('run-both-3').some((l) => l.line === 'started'));
+    request({ id: 'cancel-both-3', type: 'check.cancel', payload: { runId: third.runId } });
+    const resultOf = (id: string) =>
+      waitFor(() => repliesTo(id).find((m) => m.type === 'check.result'));
+    const results = await Promise.all(['run-both-1', 'run-both-2', 'run-both-3'].map(resultOf));
+    expect(results[2]?.payload).toEqual({
+      runId: third.runId,
+      reason: 'cancelled',
+      exitCode: null,
+    });
+    for (const [index, payload] of [first, second].entries()) {
+      const result = results[index];
+      if (result?.type !== 'check.result' || result.payload.exitCode !== 0) {
+        const lines = logLinesOf(`run-both-${index + 1}`).map((l) => l.line);
+        throw new Error(`check failed: ${JSON.stringify(result)}\n${lines.join('\n')}`);
+      }
+      expect(result.payload).toEqual({ runId: payload.runId, reason: 'exit', exitCode: 0 });
+      expect(commandOutputOf(`run-both-${index + 1}`)).toContain('sidecar config costs $5');
+    }
+    // The commands ran at the same time.
+    const span = (id: string) => {
+      const lines = logLinesOf(id);
+      const at = (prefix: string) =>
+        Date.parse(lines.find((l) => l.line.startsWith(prefix))?.timestamp ?? '');
+      return { start: at('Running the check'), end: at('exited with code') };
+    };
+    const [a, b] = [span('run-both-1'), span('run-both-2')];
+    expect(a.start).toBeLessThan(b.end);
+    expect(b.start).toBeLessThan(a.end);
+    for (const payload of [first, second, third]) await expectCleanedUp(payload.runId);
   });
 
   it('refuses a Compose file that binds a path outside the repository', async () => {

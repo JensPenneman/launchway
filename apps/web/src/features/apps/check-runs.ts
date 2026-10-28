@@ -50,11 +50,14 @@ export function checkRunOutcome(
   }
 }
 
-/** Where a queued run waits: "next on its node" or "behind 3 runs"; null for other runs. */
+/**
+ * Where a queued run waits: "next on its node", or "starts after 3 runs end" (the runs of its
+ * node that have to end first, with as many running at once as the node may); null for others.
+ */
 export function checkRunQueueLabel(run: Pick<CheckRun, 'status' | 'queuedBehind'>): string | null {
   if (run.status !== 'queued' || run.queuedBehind === null) return null;
   if (run.queuedBehind === 0) return 'next on its node';
-  return `behind ${run.queuedBehind} ${run.queuedBehind === 1 ? 'run' : 'runs'}`;
+  return `starts after ${run.queuedBehind} ${run.queuedBehind === 1 ? 'run ends' : 'runs end'}`;
 }
 
 /** "3 minutes ago" once sent to the node; "queued 3 minutes ago" before; "not started" if never. */
@@ -77,7 +80,7 @@ export function checkLogEmptyText(status: CheckRunStatus, reason?: CheckRunReaso
   }
   switch (status) {
     case 'queued':
-      return 'Queued: the check starts once its node is free (a node runs one check at a time).';
+      return 'Queued: the check starts once its node has room (it runs as many checks at once as the platform allows).';
     case 'running':
       return 'No output yet.';
     default:

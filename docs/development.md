@@ -341,9 +341,9 @@ Add or change the schema in `packages/contracts/src/<module>.ts` (exported throu
 - The runtime lives in `apps/agent/src/runtime`: checkout, Compose file resolution, the YAML
   preflight of Compose files (`compose-preflight.ts`), the policy (`compose-policy.ts`, with a
   checks mode), the `compose.launchway.yaml` override, the per-app deployment queue, the check
-  runner (`checks.ts`, one check at a time) with its resolved document (`check-document.ts`), log
-  streams and the outbox that re-sends results after a reconnect. Deployments and checks share
-  the node's build slots.
+  runner (`checks.ts`: runs side by side, sweeps alone, `work-queue.ts`) with its resolved
+  document (`check-document.ts`), log streams and the outbox that re-sends results after a
+  reconnect. Deployments and checks share the node's build slots.
 - Every Docker resource a check creates carries the label `launchway.check`; cleanup and the
   start-up sweep only touch resources with that label and the `launchway-check_` project prefix.
 - Protocol changes start in `packages/contracts/src/agent`. Breaking changes bump

@@ -57,6 +57,13 @@
       "when": 1793157581781,
       "tag": "0007_checks_queue_hygiene",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1793200262019,
+      "tag": "0008_check_concurrency",
+      "breakpoints": true
     }
   ]
 }

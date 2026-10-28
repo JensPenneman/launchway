@@ -1,5 +1,6 @@
 -- Every statement may run again: a development database that applied an earlier draft of this
--- migration (before checks_schedule_note) applies it once more.
+-- migration (before checks_schedule_note) applies it once more. Released databases (0.5.0)
+-- never had the draft.
 ALTER TYPE "public"."check_run_trigger" ADD VALUE IF NOT EXISTS 'schedule';--> statement-breakpoint
 ALTER TABLE "apps" ALTER COLUMN "checks" SET DEFAULT '{"enabled":false,"composeFiles":[".devcontainer/compose.yaml"],"branches":null,"skipBots":false,"items":[],"schedule":null}'::jsonb;--> statement-breakpoint
 ALTER TABLE "apps" ADD COLUMN IF NOT EXISTS "checks_last_slot" timestamp with time zone;--> statement-breakpoint

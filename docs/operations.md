@@ -450,6 +450,11 @@ images.
      run the checks;
    - **Skip bots**: off by default. Pull requests of Dependabot need the
      checks too when branch protection requires them;
+   - **Schedule (UTC)**: optional, a cron expression (`minute hour
+     day-of-month month day-of-week`, in UTC, one minute, so at most once an
+     hour) on which the checks also run for the head of the default branch,
+     for example `0 6 * * 1` on Mondays at 06:00 UTC (*On a schedule*,
+     below);
    - the checks themselves, at most ten: a **name** (lowercase letters,
      digits and dashes; it becomes `launchway/<name>`), the **command**,
      the **service** it runs in (default `dev`), the **timeout** in minutes
@@ -474,6 +479,7 @@ curl -fsS -X PATCH "https://deploy.example.com/api/v1/apps/<app id>" \
       "composeFiles": [".devcontainer/compose.yaml"],
       "branches": ["main"],
       "skipBots": false,
+      "schedule": "0 6 * * 1",
       "items": [
         { "name": "quality", "command": "npm ci --no-audit --no-fund && npm run check", "timeoutMinutes": 20 },
         { "name": "integration", "command": "npm ci --no-audit --no-fund && npm run test:integration", "timeoutMinutes": 20 },
@@ -539,10 +545,54 @@ dependencies first.
   checks are kept as `launchway-check/<slug>-<service>`, one per app and
   service, and later builds reuse their layers.
 - **One at a time.** A node runs one check at a time, oldest first across
-  its apps. A newer push to a branch cancels the queued checks of older
-  commits of that branch, whichever commit it is (a force-push back to a
-  commit runs its checks again); a push and a pull request of the same commit
-  run once.
+  its apps; the **Checks** tab shows a queued run's place ("behind 3 runs":
+  running and queued runs of the node, every app's). A newer push to a
+  branch cancels the queued checks of older commits of that branch,
+  whichever commit it is (a force-push back to a commit runs its checks
+  again); a push and a pull request of the same commit run once, and the run
+  shows both (a pull request's run that a push to `main` uses too says "also
+  main"; a pull request's run that the push of its own branch uses becomes a
+  push run).
+- **Closed pull requests and deleted branches.** When a pull request is
+  closed or merged, the queued checks it started (trigger *pull request*,
+  queued before it closed) end at once with *cancelled*, reason `closed`,
+  and GitHub shows "Pull request closed" on its head commit. A check that
+  already runs finishes: the merge commit of an up-to-date pull request has
+  the same files and gets its result (next point). These stay: push runs
+  (also those a pull request shares), runs of the default branch, runs that
+  another open pull request with the same head still needs (they become its
+  runs), runs that serve a push of another branch, and runs started by hand.
+  When a branch is deleted, its queued checks of the commit it pointed at
+  end the same way, with "Branch deleted" on GitHub, unless an open pull
+  request from another branch at that commit needs them (they become its
+  checks); the default branch's never do.
+- **Same files, same result.** A push or pull request whose commit has the
+  same tree (the same files) as a commit the same check ran and exited for
+  in the last seven days does not run that check again: the run ends at once
+  with that run's verdict, reason `same-tree`, and GitHub shows the status on
+  the new commit, for example "Same tree as 3f78685, passed in 4m 18s". This
+  covers the merge commit of an up-to-date pull request and a release commit
+  of the same files. A queued run of such a commit gets the verdict as soon
+  as the run of the other commit ends. Only runs of the same app, with the
+  same command, service, Compose files and timeout count, and only verdicts
+  of commands that exited: a timeout, an error or a cancellation runs again.
+  Runs by hand, re-runs and scheduled runs always run. A command that
+  behaves differently per branch or commit (`LAUNCHWAY_REF`,
+  `LAUNCHWAY_COMMIT_SHA`) is not run for the second commit; run it by hand
+  if that matters.
+- **On a schedule.** With a schedule, the checks also run for the head of
+  the repository's default branch at each slot (trigger `schedule`), whether
+  or not pushes run them. GitHub shows them as `launchway/<name>/schedule`,
+  so they never replace the verdict of the push (`launchway/<name>`) that
+  branch protection and release workflows read, nor hold it at pending
+  while they wait. Each slot runs once; slots missed while the control
+  plane was down run once, late; a check that is still queued or running
+  for that commit is not queued again. **Re-run** of a scheduled run reports
+  under `/schedule` as well. Changing the schedule starts it from
+  its next slot. When the queue is full at a slot, nothing is queued (no
+  *error* on the branch): the slot is used and the **Checks** tab says why,
+  until a slot queues runs again. A slot whose GitHub lookups fail is tried
+  again after 1, 2, 4 and 8 minutes, then used without runs, with a note.
 - **A bounded queue.** An app may have at most `checkMaxQueuedPerApp` (30)
   checks waiting and a node at most `checkMaxQueuedPerNode` (100); both are
   at least 10, since a commit queues all its checks or none. The checks of a
@@ -640,8 +690,14 @@ is fixed.
 - **A check errors with reason `build` while pulling.** Images that a check
   does not build must exist in their registry; build the image in the check's
   own Compose file instead of using one that only exists on the node.
-- **Checks stay queued.** One check runs per node at a time. Checks of a node
-  that is offline for 10 minutes end with *error*.
+- **Checks stay queued.** One check runs per node at a time; the **Checks**
+  tab shows how many runs are ahead. Checks of a node that is offline for 10
+  minutes end with *error*.
+- **A check says "Same tree as …" but should run.** Its result came from a
+  commit with the same files (reason `same-tree`); **Re-run** runs it.
+- **"Schedule: Not queued for …" on the Checks tab.** The last slot of the
+  schedule queued nothing: the queue was full, or GitHub did not answer. The
+  next slot tries again; **Run checks** runs them now.
 - **"Not run: … would exceed the app's limit".** The queue of the app or
   its node was full (reason `queue-full`). Wait for the queue to drain, then
   push again or **Re-run**, or raise the limits under **Settings → Platform →
@@ -893,6 +949,20 @@ docker compose -f compose.agent.yaml up -d
 
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
+
+### Upgrading to 0.6.0
+
+- **Closed pull requests** cancel their queued checks, and **same-tree
+  copies** reuse verdicts of the last seven days for pushes and pull
+  requests (*What a check runs with*). Runs from before the upgrade have no
+  tree, so they are never reused.
+- **Schedules** are off until an app sets one; scheduled runs report as
+  `launchway/<name>/schedule`, so branch protection keeps requiring the
+  contexts it requires now.
+- Nothing changes for GitHub Apps: the tree of a commit is read with the
+  *Contents* permission that clones use already, and the open pull requests
+  of a commit with *Pull requests: Read*, which Launchway's GitHub App has
+  for previews.
 
 ### Upgrading to 0.5.0
 

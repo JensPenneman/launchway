@@ -22,6 +22,7 @@ import { afterAll, beforeAll, describe, expect, inject, it, vi } from 'vitest';
 import { createApp } from '../../src/app.js';
 import { createDatabase, type Database } from '../../src/db/client.js';
 import {
+  apps,
   auditEvents,
   checkLogLines,
   checkRuns,
@@ -43,6 +44,7 @@ import {
 } from '../../src/modules/checks/dispatcher.js';
 import { createChecksMirror } from '../../src/modules/checks/mirror.js';
 import { NODE_OFFLINE_MESSAGE, UNSUPPORTED_AGENT_MESSAGE } from '../../src/modules/checks/model.js';
+import { createCheckScheduler } from '../../src/modules/checks/scheduler.js';
 import {
   APP_DELETED_MESSAGE,
   APP_MOVED_MESSAGE,
@@ -208,7 +210,14 @@ describe('checks against PostgreSQL', () => {
     action: string,
     number: number,
     head: string,
-    options: { base?: string; headRef?: string; fork?: boolean; author?: typeof human } = {},
+    options: {
+      base?: string;
+      headRef?: string;
+      fork?: boolean;
+      author?: typeof human;
+      merged?: boolean;
+      closedAt?: string;
+    } = {},
   ) {
     const fullName = `octo/${repo}`;
     return {
@@ -217,6 +226,8 @@ describe('checks against PostgreSQL', () => {
       pull_request: {
         title: `Change ${number}`,
         state: action === 'closed' ? 'closed' : 'open',
+        ...(options.merged === undefined ? {} : { merged: options.merged }),
+        ...(options.closedAt === undefined ? {} : { closed_at: options.closedAt }),
         user: options.author ?? human,
         labels: [],
         head: {
@@ -350,6 +361,7 @@ describe('checks against PostgreSQL', () => {
       branches: null,
       skipBots: false,
       items: [],
+      schedule: null,
     });
     const patch = async (checks: unknown) => {
       const res = await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { checks }));
@@ -377,6 +389,7 @@ describe('checks against PostgreSQL', () => {
           timeoutMinutes: 10,
         },
       ],
+      schedule: null,
     });
     // Omitted fields keep their value; items replace the list.
     const second = await patch({ branches: ['main'], items: [lint] });
@@ -1331,6 +1344,816 @@ describe('checks against PostgreSQL', () => {
     gateway.disconnect(node);
     const offline = await api.request(`/api/v1/checks/${fourth?.id}/cancel`, json('POST'));
     expect(await offline.json()).toMatchObject({ status: 'cancelled', statusMessage: 'Cancelled' });
+  });
+  // --- Queue hygiene: closed pull requests, same-tree copies, schedules ---------------------
+
+  /** The fake repository of an app, to give its commits trees. */
+  const fakeRepo = (repo: string) => {
+    const found = github.repos.find((r) => r.name === repo);
+    if (!found) throw new Error(`no fake repository ${repo}`);
+    return found;
+  };
+
+  /** Sends the node's next run if it is free, as the dispatcher's pass every 15 s would. */
+  const nudge = (node: NodeId) => createCheckDispatcher(deps).dispatchNode(node);
+
+  /** A push whose head commit names its tree, as GitHub's push events do. */
+  const pushWithTree = (repo: string, branch: string, after: string, tree: string) => ({
+    ...push(repo, branch, after),
+    head_commit: { id: after, tree_id: tree },
+  });
+
+  it('cancels the queued runs of a closed or merged pull request, in its repository only', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      // An offline node: the runs stay queued.
+      const node = await newNode(false);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality, lint] });
+      const other = await createTestApp(node, { enabled: true, items: [quality] });
+      const head = sha(`${repo}-pr-7`);
+      const otherHead = sha(`${other.repo}-pr-7`);
+      await deliver('pull_request', pullRequest(repo, 'opened', 7, head));
+      await deliver('pull_request', pullRequest(other.repo, 'opened', 7, otherHead));
+      const merged = { ...pullRequest(other.repo, 'closed', 7, otherHead) };
+      merged.pull_request = { ...merged.pull_request, merged: true } as typeof merged.pull_request;
+      await deliver('pull_request', merged);
+      // The other repository's pull request 7 closed: these runs are not its runs.
+      expect((await runsOf(app.id)).map((r) => r.status)).toEqual(['queued', 'queued']);
+      expect(
+        (await runsOf(other.app.id)).map((r) => [r.status, r.reason, r.statusMessage]),
+      ).toEqual([['cancelled', 'closed', 'Cancelled: pull request #7 was merged']]);
+
+      await deliver('pull_request', pullRequest(repo, 'closed', 7, head));
+      const closed = await runsOf(app.id);
+      expect(closed.map((r) => [r.status, r.reason, r.statusMessage])).toEqual([
+        ['cancelled', 'closed', 'Cancelled: pull request #7 was closed'],
+        ['cancelled', 'closed', 'Cancelled: pull request #7 was closed'],
+      ]);
+      expect((await auditsOf(closed[0]?.id ?? '')).at(-1)).toMatchObject({
+        action: 'check.cancel',
+        summary: expect.objectContaining({ prNumber: 7, merged: false }),
+      });
+      await mirror.idle();
+      const statuses = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === head,
+      );
+      expect(statuses.at(-1)?.body).toMatchObject({
+        state: 'error',
+        description: 'Pull request closed',
+      });
+
+      // They never ran: the same commit pushed to a branch queues its checks again.
+      await deliver('push', push(repo, 'main', head));
+      expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(2);
+    } finally {
+      stop();
+    }
+  });
+
+  it('lets running runs of a closed pull request finish and keeps runs that serve a push', async () => {
+    const node = await newNode(true);
+    const sink = createCheckSink(deps);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality, lint] });
+    const head = sha(`${repo}-pr-8`);
+    await deliver('pull_request', pullRequest(repo, 'opened', 8, head));
+    await until(async () => (await runsOf(app.id)).some((r) => r.status === 'running'));
+    const running = (await runsOf(app.id)).find((r) => r.status === 'running');
+    // The second pull request's head is pushed to main as it is (a fast-forward merge).
+    const head9 = sha(`${repo}-pr-9`);
+    await deliver('pull_request', pullRequest(repo, 'opened', 9, head9));
+    await deliver('push', push(repo, 'main', head9));
+    const runs9 = (await runsOf(app.id)).filter((r) => r.commitSha === head9);
+    expect(runs9.map((r) => [r.status, r.trigger, r.prNumber, r.alsoRef])).toEqual([
+      ['queued', 'pull_request', 9, 'main'],
+      ['queued', 'pull_request', 9, 'main'],
+    ]);
+    const listed = (await (
+      await api.request(`/api/v1/apps/${app.id}/checks?commitSha=${head9}`)
+    ).json()) as CheckRunPage;
+    expect(listed.items.map((r) => r.alsoRef)).toEqual(['main', 'main']);
+
+    const closed8 = pullRequest(repo, 'closed', 8, head);
+    closed8.pull_request = { ...closed8.pull_request, merged: true } as typeof closed8.pull_request;
+    await deliver('pull_request', closed8);
+    const closed9 = pullRequest(repo, 'closed', 9, head9);
+    closed9.pull_request = { ...closed9.pull_request, merged: true } as typeof closed9.pull_request;
+    await deliver('pull_request', closed9);
+    const after = await runsOf(app.id);
+    // Pull request 8: the running run finishes, the queued one is cancelled.
+    expect(after.filter((r) => r.commitSha === head).map((r) => [r.name, r.status])).toEqual(
+      expect.arrayContaining([
+        [running?.name, 'running'],
+        [running?.name === 'lint' ? 'quality' : 'lint', 'cancelled'],
+      ]),
+    );
+    // Pull request 9's runs serve main as well: they stay queued.
+    expect(after.filter((r) => r.commitSha === head9).map((r) => r.status)).toEqual([
+      'queued',
+      'queued',
+    ]);
+    await sink.onResult(node, { runId: running?.id as CheckRunId, reason: 'exit', exitCode: 0 });
+    expect((await runRow(running?.id ?? '')).status).toBe('succeeded');
+  });
+
+  it('posts the verdict of a run of the same tree on a new commit instead of running again', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(true);
+      const sink = createCheckSink(deps);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality, lint] });
+      const tree = sha(`${repo}-tree`);
+      const head = sha(`${repo}-pr-5`);
+      const merge = sha(`${repo}-merge-5`);
+      fakeRepo(repo).trees = { [head]: tree, [merge]: tree };
+      /** Lets the node run the app's runs of a commit, one after the other (lint fails). */
+      const finish = async (commit: string, appId: string) => {
+        const ofCommit = async (statuses: string[]) =>
+          (await runsOf(appId)).filter(
+            (r) => r.commitSha === commit && statuses.includes(r.status),
+          );
+        while ((await ofCommit(['queued', 'running'])).length > 0) {
+          await until(async () => {
+            await nudge(node);
+            const active = await ofCommit(['queued', 'running']);
+            return active.length === 0 || active.some((r) => r.status === 'running');
+          });
+          const [running] = await ofCommit(['running']);
+          if (!running) continue;
+          const exitCode = running.name === 'lint' ? 1 : 0;
+          await sink.onResult(node, { runId: running.id, reason: 'exit', exitCode });
+        }
+      };
+      await deliver('pull_request', pullRequest(repo, 'opened', 5, head));
+      await finish(head, app.id);
+      const ran = await runsOf(app.id);
+      const qualityRun = ran.find((r) => r.name === 'quality');
+      const lintRun = ran.find((r) => r.name === 'lint');
+      expect(qualityRun).toMatchObject({ status: 'succeeded', reason: 'exit', treeSha: tree });
+      expect(lintRun).toMatchObject({ status: 'failed', reason: 'exit', exitCode: 1 });
+      // Another app of the same repository: it never gets this app's verdicts.
+      const sibling = await createTestApp(node, { enabled: true, items: [quality] }, { repo });
+      const dispatched = gateway.checkRuns.length;
+
+      // The merge commit has the same tree: its runs end at once with the pull request's verdicts.
+      await deliver('push', pushWithTree(repo, 'main', merge, tree));
+      const copies = (await runsOf(app.id)).filter((r) => r.commitSha === merge);
+      const short = head.slice(0, 7);
+      expect(
+        copies.map((r) => [r.name, r.status, r.reason, r.copiedFromId, r.statusMessage]),
+      ).toEqual(
+        expect.arrayContaining([
+          [
+            'quality',
+            'succeeded',
+            'same-tree',
+            qualityRun?.id,
+            expect.stringMatching(new RegExp(`^Same tree as ${short}, passed in \\d+s$`)),
+          ],
+          [
+            'lint',
+            'failed',
+            'same-tree',
+            lintRun?.id,
+            expect.stringMatching(
+              new RegExp(`^Same tree as ${short}, failed: exit code 1 after \\d+s$`),
+            ),
+          ],
+        ]),
+      );
+      expect(copies).toHaveLength(2);
+      const fetched = (await (
+        await api.request(`/api/v1/checks/${copies[0]?.id}`)
+      ).json()) as CheckRun;
+      expect(fetched).toMatchObject({ reason: 'same-tree', treeSha: tree, queuedBehind: null });
+      expect(fetched.copiedFrom).toBe(copies[0]?.copiedFromId);
+      // The sibling app's run of the merge commit runs: no run of its own had that tree.
+      expect((await runsOf(sibling.app.id)).filter((r) => r.commitSha === merge)).toMatchObject([
+        { reason: null, copiedFromId: null },
+      ]);
+      // GitHub gets the statuses on the merge commit, which Trail's release workflow waits for.
+      await mirror.idle();
+      const onMerge = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === merge,
+      );
+      expect(onMerge.map((s) => [s.body.context, s.body.state])).toEqual(
+        expect.arrayContaining([
+          ['launchway/quality', 'success'],
+          ['launchway/lint', 'failure'],
+        ]),
+      );
+      expect(
+        onMerge.filter((s) => s.body.state === 'success').map((s) => s.body.description),
+      ).toContainEqual(expect.stringMatching(/^Same tree as [0-9a-f]{7}, passed in \d+s$/));
+      await finish(merge, sibling.app.id);
+      // Only the sibling's run went to the node.
+      expect(
+        gateway.checkRuns.slice(dispatched).every((r) => r.payload.app.id === sibling.app.id),
+      ).toBe(true);
+
+      // A changed command is another check: quality runs again, lint (unchanged) is copied.
+      const patched = await api.request(
+        `/api/v1/apps/${app.id}`,
+        json('PATCH', { checks: { items: [{ ...quality, command: 'npm test' }, lint] } }),
+      );
+      expect(patched.status).toBe(200);
+      const release = sha(`${repo}-release`);
+      await deliver('push', pushWithTree(repo, 'release', release, tree));
+      const releaseRuns = (await runsOf(app.id)).filter((r) => r.commitSha === release);
+      expect(releaseRuns.map((r) => [r.name, r.reason])).toEqual(
+        expect.arrayContaining([
+          ['quality', null],
+          ['lint', 'same-tree'],
+        ]),
+      );
+      await finish(release, app.id);
+
+      // Runs by hand always run.
+      const manual = await createRuns(app.id, { ref: 'main', names: ['lint'] });
+      expect(manual.map((r) => [r.trigger, r.reason])).toEqual([['manual', null]]);
+      await finish(manual[0]?.commitSha ?? '', app.id);
+    } finally {
+      stop();
+    }
+  });
+
+  it('copies only verdicts of runs that exited, within a week', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const timedOutTree = sha(`${repo}-tree-timeout`);
+    const oldTree = sha(`${repo}-tree-old`);
+    const source = (tree: string, fields: Partial<typeof checkRuns.$inferInsert>) => ({
+      appId: app.id,
+      nodeId: node,
+      name: 'quality',
+      command: 'npm ci && npm run check',
+      service: 'dev',
+      composeFiles: ['.devcontainer/compose.yaml'],
+      timeoutMinutes: 30,
+      commitSha: sha(unique('source')),
+      ref: 'main',
+      trigger: 'push' as const,
+      treeSha: tree,
+      startedAt: new Date(Date.now() - 60_000),
+      finishedAt: new Date(),
+      ...fields,
+    });
+    await db.insert(checkRuns).values([
+      source(timedOutTree, { status: 'failed', reason: 'timeout' }),
+      source(oldTree, {
+        status: 'succeeded',
+        reason: 'exit',
+        exitCode: 0,
+        startedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000 - 60_000),
+        finishedAt: new Date(Date.now() - 8 * 24 * 60 * 60 * 1000),
+      }),
+    ]);
+    const a = sha(`${repo}-a`);
+    const b = sha(`${repo}-b`);
+    await deliver('push', pushWithTree(repo, 'feature/a', a, timedOutTree));
+    await deliver('push', pushWithTree(repo, 'feature/b', b, oldTree));
+    const runs = (await runsOf(app.id)).filter((r) => r.commitSha === a || r.commitSha === b);
+    expect(runs.map((r) => [r.status, r.reason])).toEqual([
+      ['queued', null],
+      ['queued', null],
+    ]);
+  });
+
+  it('turns queued runs of a tree into copies once a run of the tree exits', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(true);
+      const sink = createCheckSink(deps);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+      const tree = sha(`${repo}-tree`);
+      const head = sha(`${repo}-pr-6`);
+      const merge = sha(`${repo}-merge-6`);
+      fakeRepo(repo).trees = { [head]: tree };
+      await deliver('pull_request', pullRequest(repo, 'opened', 6, head));
+      const [prRun] = await runsOf(app.id);
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === prRun?.id);
+      });
+      // Merged while it runs: the merge commit's run waits behind it.
+      await deliver('push', pushWithTree(repo, 'main', merge, tree));
+      const [waiting] = (await runsOf(app.id)).filter((r) => r.commitSha === merge);
+      expect(waiting).toMatchObject({ status: 'queued', treeSha: tree });
+      const listed = (await (
+        await api.request(`/api/v1/apps/${app.id}/checks?commitSha=${merge}`)
+      ).json()) as CheckRunPage;
+      expect(listed.items[0]?.queuedBehind).toBe(1);
+
+      await sink.onResult(node, { runId: prRun?.id as CheckRunId, reason: 'exit', exitCode: 0 });
+      expect(await runRow(waiting?.id ?? '')).toMatchObject({
+        status: 'succeeded',
+        reason: 'same-tree',
+        copiedFromId: prRun?.id,
+        startedAt: null,
+      });
+      expect(gateway.checkRuns.some((r) => r.payload.runId === waiting?.id)).toBe(false);
+      await mirror.idle();
+      expect(
+        github.commitStatuses.filter((s) => s.repo === `octo/${repo}` && s.sha === merge).at(-1)
+          ?.body,
+      ).toMatchObject({ state: 'success', context: 'launchway/quality' });
+
+      // A verdict that turns up while a run waits: the dispatcher copies instead of sending it.
+      const late = sha(`${repo}-late`);
+      const lateTree = sha(`${repo}-tree-late`);
+      gateway.disconnect(node);
+      await deliver('push', pushWithTree(repo, 'feature/late', late, lateTree));
+      const [lateRun] = (await runsOf(app.id)).filter((r) => r.commitSha === late);
+      expect(lateRun?.status).toBe('queued');
+      await db.insert(checkRuns).values({
+        appId: app.id,
+        nodeId: node,
+        name: 'quality',
+        command: lateRun?.command ?? '',
+        service: 'dev',
+        composeFiles: ['.devcontainer/compose.yaml'],
+        timeoutMinutes: 30,
+        commitSha: sha(unique('late-source')),
+        ref: 'main',
+        trigger: 'manual',
+        status: 'failed',
+        reason: 'exit',
+        exitCode: 2,
+        treeSha: lateTree,
+        startedAt: new Date(Date.now() - 1_000),
+        finishedAt: new Date(),
+      });
+      await mirror.idle();
+      gateway.connect(node);
+      await createCheckDispatcher(deps).dispatchNode(node);
+      expect(await runRow(lateRun?.id ?? '')).toMatchObject({
+        status: 'failed',
+        reason: 'same-tree',
+        exitCode: 2,
+      });
+      expect(gateway.checkRuns.some((r) => r.payload.runId === lateRun?.id)).toBe(false);
+    } finally {
+      stop();
+    }
+  });
+
+  it('runs the checks on their schedule for the head of the default branch, once per slot', async () => {
+    const node = await newNode(false);
+    const scheduler = createCheckScheduler(deps);
+    const { app, mainSha } = await createTestApp(node, { items: [quality] });
+    expect(
+      (
+        await api.request(
+          `/api/v1/apps/${app.id}`,
+          json('PATCH', { checks: { schedule: '*/5 * * * *' } }),
+        )
+      ).status,
+    ).toBe(400);
+    const set = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { schedule: '0 6 * * 1' } }),
+    );
+    expect(((await set.json()) as App).checks.schedule).toBe('0 6 * * 1');
+    const [row] = await db.select().from(apps).where(eq(apps.id, app.id));
+    expect(row?.checksLastSlot?.getTime()).toBeGreaterThan(Date.now() - 60_000);
+
+    // Monday 2 November 2026, 06:00 UTC, came after the schedule was set; a pass a minute later
+    // queues the checks. Slots before the schedule was set never run.
+    const monday = new Date('2026-11-02T06:00:00Z');
+    await db
+      .update(apps)
+      .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+      .where(eq(apps.id, app.id));
+    const updatedAt = (await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.updatedAt;
+    await scheduler.tick(new Date('2026-11-01T23:00:00Z'));
+    expect(await runsOf(app.id)).toEqual([]);
+    await scheduler.tick(new Date('2026-11-02T06:00:40Z'));
+    await scheduler.tick(new Date('2026-11-02T06:01:40Z'));
+    const runs = await runsOf(app.id);
+    expect(runs.map((r) => [r.trigger, r.ref, r.commitSha, r.status])).toEqual([
+      ['schedule', 'main', mainSha, 'queued'],
+    ]);
+    expect(runs[0]?.treeSha).toMatch(/^[0-9a-f]{40}$/);
+    const after = (await db.select().from(apps).where(eq(apps.id, app.id)))[0];
+    expect(after?.checksLastSlot).toEqual(monday);
+    // Scheduler state is no change of the app.
+    expect(after?.updatedAt).toEqual(updatedAt);
+
+    // The next Monday: the scheduled run still waits, so nothing new queues, but the slot is used.
+    await scheduler.tick(new Date('2026-11-09T06:00:10Z'));
+    expect(await runsOf(app.id)).toHaveLength(1);
+    expect((await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksLastSlot).toEqual(
+      new Date('2026-11-09T06:00:00Z'),
+    );
+    // Missed slots (the API was down for two weeks) run once.
+    await db
+      .update(checkRuns)
+      .set({ status: 'cancelled', reason: 'cancelled', finishedAt: new Date() })
+      .where(eq(checkRuns.appId, app.id));
+    await scheduler.tick(new Date('2026-11-25T10:00:00Z'));
+    await scheduler.tick(new Date('2026-11-25T10:01:00Z'));
+    expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(1);
+
+    // A schedule without a starting point (set by an older version, say) starts now.
+    await db.update(apps).set({ checksLastSlot: null }).where(eq(apps.id, app.id));
+    await db
+      .update(checkRuns)
+      .set({ status: 'cancelled', reason: 'cancelled', finishedAt: new Date() })
+      .where(eq(checkRuns.appId, app.id));
+    const start = new Date('2026-11-30T06:30:00Z');
+    await scheduler.tick(start);
+    expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(0);
+    expect((await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksLastSlot).toEqual(
+      start,
+    );
+
+    // Turned off: nothing more.
+    await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { checks: { schedule: null } }));
+    await db
+      .update(checkRuns)
+      .set({ status: 'cancelled', reason: 'cancelled', finishedAt: new Date() })
+      .where(eq(checkRuns.appId, app.id));
+    await scheduler.tick(new Date('2026-12-07T06:05:00Z'));
+    expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(0);
+  });
+
+  it('tells queued runs how many runs of their node are ahead of them', async () => {
+    const node = await newNode(false);
+    const first = await createTestApp(node, { items: [quality, lint] });
+    const second = await createTestApp(node, { items: [quality] });
+    await createRuns(first.app.id, { ref: 'main' });
+    const [behind] = await createRuns(second.app.id, { ref: 'main' });
+    const page = async (appId: string) =>
+      ((await (await api.request(`/api/v1/apps/${appId}/checks`)).json()) as CheckRunPage).items;
+    expect((await page(first.app.id)).map((r) => r.queuedBehind).sort()).toEqual([0, 1]);
+    expect((await page(second.app.id)).map((r) => r.queuedBehind)).toEqual([2]);
+    await runningRun(first.app.id, node);
+    const one = (await (await api.request(`/api/v1/checks/${behind?.id}`)).json()) as CheckRun;
+    expect(one.queuedBehind).toBe(3);
+  });
+  it("never cancels a branch's push runs or the default branch's runs when a pull request closes", async () => {
+    const node = await newNode(false);
+    // Push first: main's push run of C, then pull request 20 from main into production for C.
+    const first = await createTestApp(node, { enabled: true, items: [quality] });
+    const c = sha(`${first.repo}-c`);
+    await deliver('push', push(first.repo, 'main', c));
+    await deliver(
+      'pull_request',
+      pullRequest(first.repo, 'opened', 20, c, { headRef: 'main', base: 'production' }),
+    );
+    await deliver(
+      'pull_request',
+      pullRequest(first.repo, 'closed', 20, c, {
+        headRef: 'main',
+        base: 'production',
+        merged: true,
+      }),
+    );
+    expect((await runsOf(first.app.id)).map((r) => [r.status, r.trigger, r.prNumber])).toEqual([
+      ['queued', 'push', 20],
+    ]);
+
+    // The pull request first: the push of its own branch makes its run a push run.
+    const second = await createTestApp(node, { enabled: true, items: [quality] });
+    const d = sha(`${second.repo}-d`);
+    await deliver('pull_request', pullRequest(second.repo, 'opened', 21, d, { headRef: 'dev' }));
+    await deliver('push', push(second.repo, 'dev', d));
+    await deliver('pull_request', pullRequest(second.repo, 'closed', 21, d, { headRef: 'dev' }));
+    expect((await runsOf(second.app.id)).map((r) => [r.status, r.trigger, r.prNumber])).toEqual([
+      ['queued', 'push', 21],
+    ]);
+
+    // A pull request from the default branch: its runs are main's, whatever started them.
+    const third = await createTestApp(node, { enabled: true, items: [quality], branches: null });
+    const e = sha(`${third.repo}-e`);
+    await deliver(
+      'pull_request',
+      pullRequest(third.repo, 'opened', 22, e, { headRef: 'main', base: 'production' }),
+    );
+    await deliver(
+      'pull_request',
+      pullRequest(third.repo, 'closed', 22, e, { headRef: 'main', base: 'production' }),
+    );
+    expect((await runsOf(third.app.id)).map((r) => [r.status, r.trigger])).toEqual([
+      ['queued', 'pull_request'],
+    ]);
+  });
+
+  it('keeps the runs of a closed pull request that another open one with the same head needs', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const head = sha(`${repo}-shared`);
+    fakeRepo(repo).pulls = {
+      30: { title: 'Into main', headRef: 'feature/shared', headSha: head, state: 'open' },
+      31: { title: 'Into release', headRef: 'feature/shared', headSha: head, state: 'open' },
+    };
+    const open = (number: number, base: string) =>
+      pullRequest(repo, 'opened', number, head, { headRef: 'feature/shared', base });
+    await deliver('pull_request', open(30, 'main'));
+    await deliver('pull_request', open(31, 'release'));
+    const pulls = fakeRepo(repo).pulls ?? {};
+    const close = async (number: number) => {
+      const pull = pulls[number];
+      if (pull) pull.state = 'closed';
+      await deliver(
+        'pull_request',
+        pullRequest(repo, 'closed', number, head, { headRef: 'feature/shared' }),
+      );
+    };
+    await close(30);
+    // Pull request 31 still waits for them: they are its runs now.
+    expect((await runsOf(app.id)).map((r) => [r.status, r.prNumber])).toEqual([['queued', 31]]);
+    await close(31);
+    expect((await runsOf(app.id)).map((r) => [r.status, r.reason])).toEqual([
+      ['cancelled', 'closed'],
+    ]);
+  });
+
+  it('hands the runs of a deleted branch to an open pull request from another branch', async () => {
+    const node = await newNode(false);
+    // Pushes to other branches than main run no checks: only the pull requests queue them.
+    const { app, repo } = await createTestApp(node, {
+      enabled: true,
+      items: [quality],
+      branches: ['main'],
+    });
+    const recreate = async (head: string, from: number, to: number, deleteFirst: boolean) => {
+      const x = `feature/x-${from}`;
+      const y = `feature/y-${to}`;
+      const pulls = fakeRepo(repo).pulls ?? {};
+      pulls[from] = { title: 'First try', headRef: x, headSha: head, state: 'open' };
+      pulls[to] = { title: 'Second try', headRef: y, headSha: head, state: 'open' };
+      fakeRepo(repo).pulls = pulls;
+      await deliver('pull_request', pullRequest(repo, 'opened', from, head, { headRef: x }));
+      await deliver('pull_request', pullRequest(repo, 'opened', to, head, { headRef: y }));
+      const closeFirst = async () => {
+        const pull = pulls[from];
+        if (pull) pull.state = 'closed';
+        await deliver('pull_request', pullRequest(repo, 'closed', from, head, { headRef: x }));
+      };
+      const deleteX = () =>
+        deliver('push', {
+          ref: `refs/heads/${x}`,
+          before: head,
+          after: '0'.repeat(40),
+          deleted: true,
+          sender: human,
+          repository: { ...repository(repo), default_branch: 'main' },
+        });
+      if (deleteFirst) {
+        await deleteX();
+        await closeFirst();
+      } else {
+        await closeFirst();
+        await deleteX();
+      }
+      const runs = (await runsOf(app.id)).filter((r) => r.commitSha === head);
+      expect(runs.map((r) => [r.status, r.trigger, r.prNumber, r.ref])).toEqual([
+        ['queued', 'pull_request', to, y],
+      ]);
+      // They are the second pull request's now: its close cancels them.
+      const second = pulls[to];
+      if (second) second.state = 'closed';
+      await deliver('pull_request', pullRequest(repo, 'closed', to, head, { headRef: y }));
+      expect(
+        (await runsOf(app.id)).filter((r) => r.commitSha === head).map((r) => r.status),
+      ).toEqual(['cancelled']);
+    };
+    // The pull request closes first, or the branch is deleted first (GitHub closes it then).
+    await recreate(sha(`${repo}-recreated-1`), 50, 51, false);
+    await recreate(sha(`${repo}-recreated-2`), 52, 53, true);
+  });
+
+  it('keeps runs queued after the close, such as those of a reopen delivered first', async () => {
+    const node = await newNode(false);
+    const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+    const head = sha(`${repo}-reopened`);
+    await deliver('pull_request', pullRequest(repo, 'reopened', 40, head));
+    const closedAt = new Date(Date.now() - 60_000).toISOString();
+    await deliver('pull_request', pullRequest(repo, 'closed', 40, head, { closedAt }));
+    expect((await runsOf(app.id)).map((r) => r.status)).toEqual(['queued']);
+  });
+
+  it('cancels the queued runs of a deleted branch, never those of the default branch', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(false);
+      const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
+      const head = sha(`${repo}-gone`);
+      const main = sha(`${repo}-main-2`);
+      await deliver('push', push(repo, 'feature/gone', head));
+      await deliver('push', push(repo, 'main', main));
+      const deletion = (branch: string, before: string) => ({
+        ref: `refs/heads/${branch}`,
+        before,
+        after: '0'.repeat(40),
+        deleted: true,
+        sender: human,
+        repository: { ...repository(repo), default_branch: 'main' },
+      });
+      await deliver('push', deletion('feature/gone', head));
+      await deliver('push', deletion('main', main));
+      const runs = await runsOf(app.id);
+      expect(runs.map((r) => [r.ref, r.status, r.reason, r.statusMessage])).toEqual([
+        ['feature/gone', 'cancelled', 'closed', 'Cancelled: branch feature/gone was deleted'],
+        ['main', 'queued', null, null],
+      ]);
+      await mirror.idle();
+      expect(
+        github.commitStatuses.filter((s) => s.repo === `octo/${repo}` && s.sha === head).at(-1)
+          ?.body,
+      ).toMatchObject({ state: 'error', description: 'Branch deleted' });
+    } finally {
+      stop();
+    }
+  });
+
+  it('reports scheduled runs apart and never queues errored runs at a full queue', async () => {
+    const mirror = createChecksMirror(deps);
+    const stop = mirror.start();
+    try {
+      const node = await newNode(true);
+      const sink = createCheckSink(deps);
+      const scheduler = createCheckScheduler(deps);
+      const { app, repo, mainSha } = await createTestApp(node, {
+        enabled: true,
+        items: [quality],
+        schedule: '0 6 * * 1',
+      });
+      await db
+        .update(apps)
+        .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+        .where(eq(apps.id, app.id));
+      await scheduler.tick(new Date('2026-11-02T06:00:30Z'));
+      const [scheduled] = await runsOf(app.id);
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === scheduled?.id);
+      });
+      await sink.onResult(node, {
+        runId: scheduled?.id as CheckRunId,
+        reason: 'exit',
+        exitCode: 1,
+      });
+      await mirror.idle();
+      // Its own context: the verdict of main's push (launchway/quality) stays as it is.
+      const onMain = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+      );
+      expect(new Set(onMain.map((s) => s.body.context))).toEqual(
+        new Set(['launchway/quality/schedule']),
+      );
+      expect(onMain.at(-1)?.body.state).toBe('failure');
+
+      // Its re-run reports there too.
+      const again = await api.request(`/api/v1/checks/${scheduled?.id}/rerun`, json('POST'));
+      expect(again.status).toBe(201);
+      const rerun = (await again.json()) as CheckRun;
+      expect(rerun).toMatchObject({ trigger: 'schedule', triggeredBy: admin.user.id });
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === rerun.id);
+      });
+      await sink.onResult(node, { runId: rerun.id, reason: 'exit', exitCode: 0 });
+      await mirror.idle();
+      const afterRerun = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+      );
+      expect(new Set(afterRerun.map((s) => s.body.context))).toEqual(
+        new Set(['launchway/quality/schedule']),
+      );
+      expect(afterRerun.at(-1)?.body.state).toBe('success');
+
+      // A full queue: the slot is used, nothing is queued, the Checks tab says why.
+      const limits = await api.request(
+        '/api/v1/settings',
+        json('PATCH', { checkMaxQueuedPerApp: 10, checkMaxQueuedPerNode: 100 }),
+      );
+      expect(limits.status).toBe(200);
+      try {
+        gateway.disconnect(node);
+        for (let index = 0; index < 10; index += 1) {
+          await deliver('push', push(repo, `feature/${index}`, sha(`${repo}-full-${index}`)));
+        }
+        expect((await runsOf(app.id)).filter((r) => r.status === 'queued')).toHaveLength(10);
+        const before = (await runsOf(app.id)).length;
+        const posted = github.commitStatuses.filter(
+          (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+        ).length;
+        await scheduler.tick(new Date('2026-11-09T06:00:30Z'));
+        expect(await runsOf(app.id)).toHaveLength(before);
+        const [row] = await db.select().from(apps).where(eq(apps.id, app.id));
+        expect(row?.checksLastSlot).toEqual(new Date('2026-11-09T06:00:00Z'));
+        const shown = (await (await api.request(`/api/v1/apps/${app.id}`)).json()) as App;
+        expect(shown.checksScheduleNote).toBe(
+          "Not queued for 2026-11-09 06:00 UTC: 10 queued and 1 new check would exceed the app's limit of 10",
+        );
+        await mirror.idle();
+        // No errored run, so nothing new on the default branch's head.
+        expect(
+          github.commitStatuses.filter((s) => s.repo === `octo/${repo}` && s.sha === mainSha),
+        ).toHaveLength(posted);
+      } finally {
+        await api.request(
+          '/api/v1/settings',
+          json('PATCH', { checkMaxQueuedPerApp: 30, checkMaxQueuedPerNode: 100 }),
+        );
+      }
+    } finally {
+      stop();
+    }
+  });
+
+  it('backs off a slot whose GitHub lookups fail, then uses it without runs', async () => {
+    const node = await newNode(false);
+    const scheduler = createCheckScheduler(deps);
+    const { app } = await createTestApp(node, { items: [quality], schedule: '0 6 * * 1' });
+    await db
+      .update(apps)
+      .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+      .where(eq(apps.id, app.id));
+    const slot = new Date('2026-11-02T06:00:00Z');
+    const at = (minutes: number) => new Date(slot.getTime() + minutes * 60_000 + 10_000);
+    const repoCalls = () => github.calls.filter((call) => call.startsWith('GET /repos/')).length;
+    github.failRepoRequests = 1000;
+    try {
+      // Tries after 0, 1, 3, 7 and 15 minutes; passes in between ask GitHub nothing.
+      for (const [minutes, asks] of [
+        [0, true],
+        [0.5, false],
+        [1, true],
+        [2, false],
+        [3, true],
+        [7, true],
+        [14, false],
+      ] as const) {
+        const calls = repoCalls();
+        await scheduler.tick(at(minutes));
+        expect([minutes, repoCalls() > calls]).toEqual([minutes, asks]);
+        expect(
+          (await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksScheduleNote,
+        ).toBeNull();
+      }
+      await scheduler.tick(at(15));
+    } finally {
+      github.failRepoRequests = 0;
+    }
+    const [row] = await db.select().from(apps).where(eq(apps.id, app.id));
+    expect(row?.checksLastSlot).toEqual(slot);
+    expect(row?.checksScheduleNote).toMatch(/^Not queued for 2026-11-02 06:00 UTC: 5 tries failed/);
+    expect(await runsOf(app.id)).toEqual([]);
+    // The next slot runs again, and the note goes.
+    await scheduler.tick(new Date('2026-11-09T06:00:30Z'));
+    expect((await runsOf(app.id)).map((r) => r.trigger)).toEqual(['schedule']);
+    expect(
+      (await db.select().from(apps).where(eq(apps.id, app.id)))[0]?.checksScheduleNote,
+    ).toBeNull();
+  });
+
+  it('sends the oldest queued run even while another statement holds its row', async () => {
+    const node = await newNode(false);
+    const { app } = await createTestApp(node, { items: [quality, lint] });
+    const created = await createRuns(app.id, { ref: 'main' });
+    expect(created).toHaveLength(2);
+    // The dispatcher's order.
+    const [oldest] = await db
+      .select()
+      .from(checkRuns)
+      .where(eq(checkRuns.appId, app.id))
+      .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
+      .limit(1);
+    let release = () => {};
+    const held = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let locked = () => {};
+    const isLocked = new Promise<void>((resolve) => {
+      locked = resolve;
+    });
+    // Holds the oldest run's row, as the commit status mirror or a cancel does for a moment.
+    const holding = db.transaction(async (tx) => {
+      await tx
+        .select({ id: checkRuns.id })
+        .from(checkRuns)
+        .where(eq(checkRuns.id, oldest?.id as CheckRunId))
+        .for('update');
+      locked();
+      await held;
+    });
+    await isLocked;
+    gateway.connect(node);
+    const dispatching = nudge(node);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(gateway.checkRuns.some((r) => r.nodeId === node)).toBe(false);
+    release();
+    await holding;
+    await dispatching;
+    expect(gateway.checkRuns.filter((r) => r.nodeId === node).map((r) => r.payload.runId)).toEqual([
+      oldest?.id,
+    ]);
   });
 });
 

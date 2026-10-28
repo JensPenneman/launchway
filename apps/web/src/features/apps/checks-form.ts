@@ -1,8 +1,11 @@
 import {
   type AppChecksSettings,
   type CheckItemInput,
+  CheckSchedule,
   DEFAULT_CHECK_SERVICE,
   DEFAULT_CHECK_TIMEOUT_MINUTES,
+  nextCronSlot,
+  parseCron,
   UpdateAppChecksSettings,
 } from '@launchway/contracts';
 import { friendlyMessage } from '@/lib/form';
@@ -27,6 +30,8 @@ export interface ChecksForm {
   /** Exact branch names separated by commas, spaces or line breaks; empty means every branch. */
   branches: string;
   skipBots: boolean;
+  /** Cron expression (UTC); empty means no schedule. */
+  schedule: string;
   items: CheckItemForm[];
 }
 
@@ -36,6 +41,7 @@ export function toChecksForm(settings: AppChecksSettings): ChecksForm {
     composeFiles: settings.composeFiles.join('\n'),
     branches: (settings.branches ?? []).join(', '),
     skipBots: settings.skipBots,
+    schedule: settings.schedule ?? '',
     items: settings.items.map((item) => ({
       name: item.name,
       command: item.command,
@@ -85,7 +91,7 @@ export type ChecksFormResult =
 /**
  * Validates the form with the contract schema and maps it to `PATCH /apps/{id}` `checks` (every
  * field, `items` replacing the list). Error keys are form paths: `composeFiles`, `branches`,
- * `items.<index>.<field>` and `items.root`.
+ * `schedule`, `items.<index>.<field>` and `items.root`.
  */
 export function parseChecksForm(form: ChecksForm): ChecksFormResult {
   const composeFiles = splitLines(form.composeFiles);
@@ -100,6 +106,7 @@ export function parseChecksForm(form: ChecksForm): ChecksFormResult {
       composeFiles,
       branches: branches.length === 0 ? null : branches,
       skipBots: form.skipBots,
+      schedule: form.schedule.trim() === '' ? null : form.schedule,
       items,
     },
     { error: friendlyMessage },
@@ -118,6 +125,8 @@ export function parseChecksForm(form: ChecksForm): ChecksFormResult {
     } else if (field === 'items') {
       // Repeated names are marked on the items below.
       if (issue.code !== 'custom') errors['items.root'] ??= issue.message;
+    } else if (field === 'schedule') {
+      errors.schedule ??= issue.message;
     } else if (field === 'composeFiles' || field === 'branches') {
       const values = field === 'composeFiles' ? composeFiles : branches;
       errors[field] ??=
@@ -130,4 +139,28 @@ export function parseChecksForm(form: ChecksForm): ChecksFormResult {
     }
   });
   return { success: false, errors };
+}
+
+const utc = new Intl.DateTimeFormat('en-GB', {
+  timeZone: 'UTC',
+  weekday: 'short',
+  day: 'numeric',
+  month: 'short',
+  year: 'numeric',
+  hour: '2-digit',
+  minute: '2-digit',
+});
+
+/** What the schedule field says under it: how to write one, or when it runs next. */
+export function scheduleHint(expression: string, now = new Date()): string {
+  const text = expression.trim();
+  if (text === '') {
+    return 'Optional: a cron expression (minute hour day-of-month month day-of-week, in UTC) on which the checks also run for the head of the default branch, at most once an hour. 0 6 * * 1 runs them on Mondays at 06:00 UTC.';
+  }
+  const parsed = parseCron(text);
+  const next =
+    CheckSchedule.safeParse(text).success && parsed.ok ? nextCronSlot(parsed.schedule, now) : null;
+  return next
+    ? `Next run ${utc.format(next)} UTC, for the head of the default branch, whether or not pushes run the checks; GitHub shows them as launchway/<name>/schedule.`
+    : 'minute hour day-of-month month day-of-week, in UTC';
 }

@@ -31,11 +31,13 @@ import {
   notInArray,
   or,
   type SQL,
+  sql,
 } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
 import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import type { RequestActor } from '../../lib/auth-context.js';
+import { systemActor } from '../../lib/auth-context.js';
 import { GitProviderError } from '../../lib/git-provider.js';
 import { logStream } from '../../lib/log-stream.js';
 import { afterCursor, createdAtKey, toPage } from '../../lib/pagination.js';
@@ -46,10 +48,12 @@ import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor, toGitProblem } from '../github/providers.js';
 import { nodes } from '../nodes/schema.js';
 import { createSettingsService } from '../settings/service.js';
+import { auditCopy, COPYABLE_TRIGGERS, copyOf, findCopySource } from './copies.js';
 import { createCheckDispatcher } from './dispatcher.js';
 import {
   announceCreated,
   announceStatus,
+  BRANCH_DELETED_PREFIX,
   type CheckRunRow,
   checkLogHub,
   checksSettingsOf,
@@ -74,7 +78,43 @@ export interface CommitTarget {
   /** The pushed branch, or the head branch of the pull request. */
   readonly ref: string;
   readonly prNumber: number | null;
-  readonly trigger: Exclude<CheckRunTrigger, 'manual'>;
+  readonly trigger: Exclude<CheckRunTrigger, 'manual' | 'schedule'>;
+  /** The commit's tree when the event names it (pushes); otherwise it is read from GitHub. */
+  readonly treeSha?: string | null;
+}
+
+/** A pull request of the app's repository that was closed or merged. */
+export interface ClosedPullRequest {
+  readonly number: number;
+  /** Its head branch: the ref its runs carry. */
+  readonly headRef: string;
+  readonly merged: boolean;
+  /** GitHub's `closed_at`: runs queued later (after a reopen) are not its closed runs. */
+  readonly closedAt: Date;
+  /** The repository's default branch from the event; read from GitHub when null. */
+  readonly defaultBranch: string | null;
+}
+
+/** A branch of the app's repository that was deleted. */
+export interface DeletedBranch {
+  readonly name: string;
+  /** The commit the branch pointed at (`before` of the push event). */
+  readonly headSha: string;
+  /** The repository's default branch from the event; read from GitHub when null. */
+  readonly defaultBranch: string | null;
+}
+
+/** What a slot of the check schedule did. */
+export type ScheduledOutcome =
+  | { readonly kind: 'queued'; readonly runs: CheckRun[] }
+  /** Nothing queued: the slot ran already, the schedule changed, or the checks still run. */
+  | { readonly kind: 'none' }
+  /** Nothing queued for a reason the app's Checks tab shows (`checksScheduleNote`). */
+  | { readonly kind: 'skipped'; readonly note: string };
+
+/** `2026-11-02 06:00` (UTC), how notes about a slot name it. */
+export function slotLabel(slot: Date): string {
+  return `${slot.toISOString().slice(0, 16).replace('T', ' ')} UTC`;
 }
 
 export interface ChecksService {
@@ -96,9 +136,35 @@ export interface ChecksService {
    * runs of the same ref for another commit are superseded. Returns the new runs.
    */
   queueForCommit(app: AppRow, commit: CommitTarget, actor: RequestActor): Promise<CheckRun[]>;
+  /**
+   * Webhooks: a pull request was closed or merged. The queued runs it started (trigger
+   * `pull_request`, its number, its head branch, queued before `closed_at`) are cancelled
+   * (reason `closed`), unless they also serve a push, another open pull request has the same
+   * head, or the head branch is the default branch. Running runs finish, so a merged pull
+   * request's result can still serve the merge commit of the same tree. Returns them.
+   */
+  closePullRequest(app: AppRow, pr: ClosedPullRequest, actor: RequestActor): Promise<CheckRun[]>;
+  /**
+   * Webhooks: a branch was deleted. The queued runs of the branch for the commit it pointed at
+   * are cancelled (reason `closed`), unless they also serve another branch's push or an open pull
+   * request from another branch at that commit needs them (they become its runs); the default
+   * branch is never touched. Returns the cancelled runs.
+   */
+  closeBranch(app: AppRow, branch: DeletedBranch, actor: RequestActor): Promise<CheckRun[]>;
+  /**
+   * The check schedule: queues the checks for the head of the default branch for the slot, once
+   * per slot (a slot at or before the app's last one, or a changed schedule, queues nothing). A
+   * full queue uses the slot without queueing; the note says why.
+   */
+  queueScheduled(app: AppRow, slot: Date, schedule: string): Promise<ScheduledOutcome>;
+  /** Uses a slot of the check schedule without queueing anything, noting why. */
+  skipScheduled(app: AppRow, slot: Date, schedule: string, note: string): Promise<void>;
   /** Cancels a queued run at once, a running one through its node; answers the run. */
   cancel(id: CheckRunId, actor: RequestActor): Promise<CheckRun>;
-  /** A new run of a finished run's check for the same commit, with the check's current config. */
+  /**
+   * A new run of a finished run's check for the same commit, with the check's current config
+   * (trigger `manual`; a scheduled run's re-run stays `schedule`, so it reports where it did).
+   */
   rerun(id: CheckRunId, actor: RequestActor): Promise<CheckRun>;
   /** SSE source of `GET /checks/{id}/logs`: history, then live lines while queued or running. */
   logStream(id: CheckRunId, query: CheckLogsQuery, signal: AbortSignal): AsyncIterable<SseMessage>;
@@ -112,7 +178,7 @@ export interface ChecksService {
 }
 
 interface Cancellation {
-  readonly reason: 'cancelled' | 'superseded';
+  readonly reason: 'cancelled' | 'superseded' | 'closed';
   readonly message: string;
   /** Extra audit summary fields. */
   readonly summary?: Record<string, unknown>;
@@ -257,6 +323,136 @@ export function createChecksService(deps: Deps): ChecksService {
     }
   }
 
+  /**
+   * The tree of a commit of the app's repository, or null when GitHub cannot tell (the run is
+   * then never a copy, nor copied from).
+   */
+  async function treeOf(app: AppRow, sha: string): Promise<string | null> {
+    try {
+      const connection = await getConnection(deps.db, app.connectionId);
+      return await providerFor(deps, connection).commitTree(app.repoOwner, app.repoName, sha);
+    } catch (error) {
+      logger.warn(
+        { appId: app.id, commitSha: sha, reason: messageOf(error) },
+        'could not read the tree of a commit; its checks run without same-tree copies',
+      );
+      return null;
+    }
+  }
+
+  /** The repository's default branch, or null when GitHub cannot tell (then nothing is cancelled). */
+  async function defaultBranchOf(app: AppRow): Promise<string | null> {
+    try {
+      const connection = await getConnection(deps.db, app.connectionId);
+      return await providerFor(deps, connection).defaultBranch(app.repoOwner, app.repoName);
+    } catch (error) {
+      logger.warn(
+        { appId: app.id, reason: messageOf(error) },
+        'could not read the default branch; no checks are cancelled',
+      );
+      return null;
+    }
+  }
+
+  /** Open pull requests of the repository with this head, or null when GitHub cannot tell. */
+  async function openPullRequestsWithHead(
+    app: AppRow,
+    sha: string,
+  ): Promise<{ number: number; headRef: string }[] | null> {
+    try {
+      const connection = await getConnection(deps.db, app.connectionId);
+      return await providerFor(deps, connection).openPullRequestsWithHead(
+        app.repoOwner,
+        app.repoName,
+        sha,
+      );
+    } catch (error) {
+      logger.warn(
+        { appId: app.id, commitSha: sha, reason: messageOf(error) },
+        'could not list the pull requests of a commit; its queued checks stay',
+      );
+      return null;
+    }
+  }
+
+  /** Scheduler state of the app, not a change of it: its updatedAt stays. */
+  async function markSlot(tx: Executor, appId: AppId, slot: Date, note: string | null) {
+    await tx.execute(
+      sql`UPDATE apps SET checks_last_slot = ${slot}, checks_schedule_note = ${note} WHERE id = ${appId}`,
+    );
+  }
+
+  /**
+   * How many runs of their node are running or queued before each queued run (the dispatcher
+   * sends the oldest first), for the runs given.
+   */
+  async function queuePositions(rows: readonly CheckRunRow[]): Promise<Map<CheckRunId, number>> {
+    const positions = new Map<CheckRunId, number>();
+    const queued = rows.filter((row) => row.status === 'queued');
+    if (queued.length === 0) return positions;
+    const active = await deps.db
+      .select({ id: checkRuns.id, nodeId: checkRuns.nodeId, status: checkRuns.status })
+      .from(checkRuns)
+      .where(
+        and(
+          inArray(checkRuns.nodeId, [...new Set(queued.map((row) => row.nodeId))]),
+          inArray(checkRuns.status, ['queued', 'running']),
+        ),
+      )
+      .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id));
+    // A running run is ahead of every queued one; queued ones go oldest first.
+    const ahead = new Map<NodeId, number>();
+    for (const run of active) {
+      if (run.status === 'running') ahead.set(run.nodeId, (ahead.get(run.nodeId) ?? 0) + 1);
+    }
+    for (const run of active) {
+      if (run.status !== 'queued') continue;
+      const before = ahead.get(run.nodeId) ?? 0;
+      positions.set(run.id, before);
+      ahead.set(run.nodeId, before + 1);
+    }
+    return positions;
+  }
+
+  async function withPositions(rows: readonly CheckRunRow[]): Promise<CheckRun[]> {
+    const positions = await queuePositions(rows);
+    return rows.map((row) => toCheckRun(row, positions.get(row.id) ?? null));
+  }
+
+  /**
+   * A push or pull request of a commit whose checks ran or run already: those runs serve it too,
+   * and say so. A push of another branch becomes the run's `alsoRef` (so neither closing its pull
+   * request nor a newer commit of its own branch cancels what that branch needs), a push of a
+   * pull request run's own branch makes it a push run, and a pull request becomes the run's
+   * `prNumber` when it has none. Returns the runs changed (publish after commit).
+   */
+  async function serveExisting(
+    tx: Executor,
+    existing: readonly CheckRunRow[],
+    commit: CommitTarget,
+  ): Promise<CheckRunRow[]> {
+    const changed: CheckRunRow[] = [];
+    for (const row of existing) {
+      const set =
+        commit.trigger === 'push' && row.ref !== commit.ref && row.alsoRef === null
+          ? { alsoRef: commit.ref }
+          : commit.trigger === 'push' && row.ref === commit.ref && row.trigger === 'pull_request'
+            ? // The push of its own branch: closing the pull request no longer cancels it.
+              { trigger: 'push' as const }
+            : commit.trigger === 'pull_request' && row.prNumber === null
+              ? { prNumber: commit.prNumber }
+              : null;
+      if (!set) continue;
+      const [updated] = await tx
+        .update(checkRuns)
+        .set(set)
+        .where(eq(checkRuns.id, row.id))
+        .returning();
+      if (updated) changed.push(updated);
+    }
+    return changed;
+  }
+
   /** Names of the app's checks with a queued or running run for the commit. */
   async function activeNames(tx: Executor, appId: AppId, sha: string): Promise<Set<string>> {
     const rows = await tx
@@ -283,12 +479,14 @@ export function createChecksService(deps: Deps): ChecksService {
       ref: string | null;
       prNumber: number | null;
       trigger: CheckRunTrigger;
+      treeSha: string | null;
     },
     actor: RequestActor,
     summary: Record<string, unknown> = {},
     /** Set when the queue is full: the runs end at once, so GitHub shows why. */
     full: string | null = null,
   ): Promise<CheckRunRow[]> {
+    if (items.length === 0) return [];
     const createdAt = new Date();
     const ended = full
       ? {
@@ -309,6 +507,7 @@ export function createChecksService(deps: Deps): ChecksService {
           ref: commit.ref,
           prNumber: commit.prNumber,
           trigger: commit.trigger,
+          treeSha: commit.treeSha,
           triggeredById: actor.principal?.user.id ?? null,
           createdAt,
           ...ended,
@@ -331,6 +530,42 @@ export function createChecksService(deps: Deps): ChecksService {
         },
       });
     }
+    return rows;
+  }
+
+  /**
+   * Inserts runs that end at once as copies of a finished run of the same tree (audited, in the
+   * transaction): they post their statuses like any finished run.
+   */
+  async function insertCopies(
+    tx: Executor,
+    app: AppRow,
+    settings: AppChecksSettings,
+    copies: readonly { item: CheckItem; source: CheckRunRow }[],
+    commit: CommitTarget & { treeSha: string },
+    actor: RequestActor,
+  ): Promise<CheckRunRow[]> {
+    if (copies.length === 0) return [];
+    const now = new Date();
+    const rows = await tx
+      .insert(checkRuns)
+      .values(
+        copies.map(({ item, source }) => ({
+          appId: app.id,
+          nodeId: app.nodeId,
+          ...runSnapshot(item, settings),
+          commitSha: commit.sha,
+          ref: commit.ref,
+          prNumber: commit.prNumber,
+          trigger: commit.trigger,
+          treeSha: commit.treeSha,
+          triggeredById: actor.principal?.user.id ?? null,
+          createdAt: now,
+          ...copyOf(source, now),
+        })),
+      )
+      .returning();
+    for (const row of rows) await auditCopy(tx, actor, row, null);
     return rows;
   }
 
@@ -452,11 +687,14 @@ export function createChecksService(deps: Deps): ChecksService {
         .where(and(...conditions))
         .orderBy(desc(checkRuns.createdAt), desc(checkRuns.id))
         .limit(query.limit + 1);
-      return toPage(rows, query.limit, (r) => toCheckRun(r.row));
+      const positions = await queuePositions(rows.map((r) => r.row));
+      return toPage(rows, query.limit, (r) => toCheckRun(r.row, positions.get(r.row.id) ?? null));
     },
 
     async get(id) {
-      return toCheckRun(await loadRow(id));
+      const [run] = await withPositions([await loadRow(id)]);
+      if (!run) throw notFound('Check run not found');
+      return run;
     },
 
     async createManual(appId, input, actor) {
@@ -474,6 +712,7 @@ export function createChecksService(deps: Deps): ChecksService {
         );
       }
       const sha = await resolveCommit(app, input.ref);
+      const treeSha = await treeOf(app, sha);
       const limits = await queueLimits();
       const { rows, nodeId } = await deps.db.transaction(async (tx) => {
         const locked = await lockApp(tx, appId);
@@ -487,7 +726,7 @@ export function createChecksService(deps: Deps): ChecksService {
         }
         const full = await queueFull(tx, locked, items.length, limits);
         if (full) throw conflict(`Not queued: ${full}; wait for them or raise the limit`);
-        const commit = { sha, ref: input.ref, prNumber: null, trigger: 'manual' as const };
+        const commit = { sha, ref: input.ref, prNumber: null, trigger: 'manual' as const, treeSha };
         return {
           rows: await insertRuns(tx, locked, settings, items, commit, actor),
           nodeId: locked.nodeId,
@@ -498,20 +737,21 @@ export function createChecksService(deps: Deps): ChecksService {
         'check runs queued',
       );
       queued(rows, nodeId);
-      return { items: rows.map(toCheckRun) };
+      return { items: await withPositions(rows) };
     },
 
     async queueForCommit(app, commit, actor) {
+      const treeSha = commit.treeSha !== undefined ? commit.treeSha : await treeOf(app, commit.sha);
       const limits = await queueLimits();
       const result = await deps.db.transaction(async (tx) => {
         const locked = await lockApp(tx, app.id);
         const settings = checksSettingsOf(locked);
         // Concurrent and repeated deliveries of one commit queue each check once; runs that never
         // ran (superseded by another commit of the branch, not queued while the queue was full,
-        // or ended while their node was offline before it took them) do not count, so the
-        // commit runs when it is pushed again.
+        // cancelled because their pull request closed, or ended while their node was offline
+        // before it took them) do not count, so the commit runs when it is pushed again.
         const existing = await tx
-          .select({ name: checkRuns.name })
+          .select()
           .from(checkRuns)
           .where(
             and(
@@ -520,22 +760,38 @@ export function createChecksService(deps: Deps): ChecksService {
               or(
                 isNull(checkRuns.reason),
                 and(
-                  notInArray(checkRuns.reason, ['superseded', 'queue-full']),
+                  notInArray(checkRuns.reason, ['superseded', 'queue-full', 'closed']),
                   or(ne(checkRuns.reason, 'offline'), isNotNull(checkRuns.startedAt)),
                 ),
               ),
             ),
           );
+        const served = await serveExisting(tx, existing, commit);
         const seen = new Set(existing.map((row) => row.name));
         const items = settings.items.filter((item) => !seen.has(item.name));
-        if (items.length === 0) return null;
-        // Runs of an older commit of the branch that no node has yet are outdated by this one.
+        if (items.length === 0)
+          return { rows: [], superseded: [], served, nodeId: locked.nodeId, full: null };
+        // A check that ran and exited for a commit of the same tree is not run again.
+        const copies: { item: CheckItem; source: CheckRunRow }[] = [];
+        const run: CheckItem[] = [];
+        for (const item of items) {
+          const source = await findCopySource(tx, {
+            appId: app.id,
+            treeSha,
+            ...runSnapshot(item, settings),
+          });
+          if (source) copies.push({ item, source });
+          else run.push(item);
+        }
+        // Runs of an older commit of the branch that no node has yet are outdated by this one;
+        // a run that also serves a push of another branch stays for that branch.
         const superseded = await cancelQueued(
           tx,
           and(
             eq(checkRuns.appId, app.id),
             eq(checkRuns.ref, commit.ref),
-            inArray(checkRuns.trigger, ['push', 'pull_request']),
+            or(isNull(checkRuns.alsoRef), eq(checkRuns.alsoRef, commit.ref)),
+            inArray(checkRuns.trigger, COPYABLE_TRIGGERS),
             ne(checkRuns.commitSha, commit.sha),
           ),
           {
@@ -546,25 +802,256 @@ export function createChecksService(deps: Deps): ChecksService {
           actor,
         );
         // Pushes to many branches must not queue without bound, each holding a pending status.
-        const full = await queueFull(tx, locked, items.length, limits);
-        const rows = await insertRuns(tx, locked, settings, items, commit, actor, {}, full);
-        return { rows, superseded, nodeId: locked.nodeId, full };
+        const full = run.length === 0 ? null : await queueFull(tx, locked, run.length, limits);
+        const target = { ...commit, treeSha };
+        const rows = [
+          ...(treeSha === null
+            ? []
+            : await insertCopies(tx, locked, settings, copies, { ...target, treeSha }, actor)),
+          ...(await insertRuns(tx, locked, settings, run, target, actor, {}, full)),
+        ];
+        return { rows, superseded, served, nodeId: locked.nodeId, full };
       });
-      if (!result) return [];
       for (const row of result.superseded) announceStatus(deps, row);
+      // No status: the commit status mirror has nothing to post for these.
+      for (const row of result.served) {
+        deps.events.publish({
+          topic: 'checks',
+          action: 'updated',
+          resourceId: row.id,
+          data: { appId: row.appId },
+        });
+      }
+      if (result.rows.length === 0) return [];
       logger.info(
         {
           appId: app.id,
           commitSha: commit.sha,
           trigger: commit.trigger,
           checks: result.rows.map((row) => row.name),
+          copies: result.rows.filter((row) => row.reason === 'same-tree').length,
           superseded: result.superseded.length,
           ...(result.full ? { notQueued: result.full } : {}),
         },
         result.full ? 'check runs not queued: the queue is full' : 'check runs queued',
       );
       queued(result.rows, result.nodeId);
-      return result.rows.map(toCheckRun);
+      return result.rows.map((row) => toCheckRun(row));
+    },
+
+    async closePullRequest(app, pr, actor) {
+      // The default branch always needs its checks.
+      const defaultBranch = pr.defaultBranch ?? (await defaultBranchOf(app));
+      if (defaultBranch === null || pr.headRef === defaultBranch) return [];
+      // The runs the pull request started: a run that a push of its branch also uses became a
+      // push run, one that serves another branch's push has `alsoRef`, and runs queued after it
+      // closed (a reopen, delivered before the close) are not its closed runs.
+      const own = and(
+        eq(checkRuns.appId, app.id),
+        eq(checkRuns.trigger, 'pull_request'),
+        eq(checkRuns.prNumber, pr.number),
+        eq(checkRuns.ref, pr.headRef),
+        isNull(checkRuns.alsoRef),
+        lt(checkRuns.createdAt, pr.closedAt),
+      );
+      const candidates = await deps.db
+        .selectDistinct({ commitSha: checkRuns.commitSha })
+        .from(checkRuns)
+        .where(and(own, eq(checkRuns.status, 'queued')));
+      // Another open pull request with the same head still needs them (one branch and two bases,
+      // or two branches at one commit): they become its runs, on its head branch, so closing that
+      // one or deleting this branch cancels them as its own. When GitHub cannot tell, they stay.
+      const kept: string[] = [];
+      const handedOver = new Map<string, { number: number; headRef: string }>();
+      for (const { commitSha } of candidates) {
+        const open = await openPullRequestsWithHead(app, commitSha);
+        const [other] = (open ?? [])
+          .filter((each) => each.number !== pr.number)
+          .sort((a, b) => a.number - b.number);
+        if (open === null || other !== undefined) kept.push(commitSha);
+        if (other !== undefined) handedOver.set(commitSha, other);
+      }
+      if (kept.length === candidates.length && handedOver.size === 0) return [];
+      const message = `Cancelled: pull request #${pr.number} was ${pr.merged ? 'merged' : 'closed'}`;
+      const { cancelled, moved } = await deps.db.transaction(async (tx) => {
+        await lockApp(tx, app.id);
+        const moved: CheckRunRow[] = [];
+        for (const [commitSha, other] of handedOver) {
+          moved.push(
+            ...(await tx
+              .update(checkRuns)
+              .set({ prNumber: other.number, ref: other.headRef })
+              .where(and(own, eq(checkRuns.status, 'queued'), eq(checkRuns.commitSha, commitSha)))
+              .returning()),
+          );
+        }
+        if (kept.length === candidates.length) return { cancelled: [], moved };
+        const cancelled = await cancelQueued(
+          tx,
+          and(own, kept.length === 0 ? undefined : notInArray(checkRuns.commitSha, kept)),
+          { reason: 'closed', message, summary: { prNumber: pr.number, merged: pr.merged } },
+          actor,
+        );
+        return { cancelled, moved };
+      });
+      for (const row of moved) {
+        deps.events.publish({
+          topic: 'checks',
+          action: 'updated',
+          resourceId: row.id,
+          data: { appId: row.appId },
+        });
+      }
+      for (const row of cancelled) announceStatus(deps, row);
+      if (cancelled.length > 0) {
+        logger.info(
+          { appId: app.id, prNumber: pr.number, merged: pr.merged, cancelled: cancelled.length },
+          'queued checks of a closed pull request cancelled',
+        );
+      }
+      return cancelled.map((row) => toCheckRun(row));
+    },
+
+    async closeBranch(app, branch, actor) {
+      const defaultBranch = branch.defaultBranch ?? (await defaultBranchOf(app));
+      if (defaultBranch === null || branch.name === defaultBranch) return [];
+      // Only the commit the branch pointed at: a branch created again meanwhile has others.
+      const ofBranch = and(
+        eq(checkRuns.appId, app.id),
+        eq(checkRuns.ref, branch.name),
+        eq(checkRuns.commitSha, branch.headSha),
+        isNull(checkRuns.alsoRef),
+        inArray(checkRuns.trigger, COPYABLE_TRIGGERS),
+        eq(checkRuns.status, 'queued'),
+      );
+      const [queued] = await deps.db
+        .select({ id: checkRuns.id })
+        .from(checkRuns)
+        .where(ofBranch)
+        .limit(1);
+      if (!queued) return [];
+      // An open pull request from another branch at the same commit still needs them: they become
+      // its runs. Pull requests from this branch close with it. When GitHub cannot tell, they stay.
+      const open = await openPullRequestsWithHead(app, branch.headSha);
+      if (open === null) return [];
+      const [other] = open
+        .filter((each) => each.headRef !== branch.name)
+        .sort((a, b) => a.number - b.number);
+      const message = `${BRANCH_DELETED_PREFIX}${branch.name} was deleted`;
+      const { cancelled, moved } = await deps.db.transaction(async (tx) => {
+        await lockApp(tx, app.id);
+        if (other) {
+          const moved = await tx
+            .update(checkRuns)
+            .set({ trigger: 'pull_request', prNumber: other.number, ref: other.headRef })
+            .where(ofBranch)
+            .returning();
+          return { cancelled: [], moved };
+        }
+        const cancelled = await cancelQueued(
+          tx,
+          ofBranch,
+          { reason: 'closed', message, summary: { branch: branch.name } },
+          actor,
+        );
+        return { cancelled, moved: [] as CheckRunRow[] };
+      });
+      for (const row of moved) {
+        deps.events.publish({
+          topic: 'checks',
+          action: 'updated',
+          resourceId: row.id,
+          data: { appId: row.appId },
+        });
+      }
+      for (const row of cancelled) announceStatus(deps, row);
+      if (cancelled.length > 0 || moved.length > 0) {
+        logger.info(
+          {
+            appId: app.id,
+            branch: branch.name,
+            cancelled: cancelled.length,
+            ...(other ? { handedTo: other.number } : {}),
+          },
+          other
+            ? 'queued checks of a deleted branch handed to an open pull request'
+            : 'queued checks of a deleted branch cancelled',
+        );
+      }
+      return cancelled.map((row) => toCheckRun(row));
+    },
+
+    async queueScheduled(app, slot, schedule) {
+      const actor = systemActor('check-scheduler');
+      const connection = await getConnection(deps.db, app.connectionId);
+      const provider = providerFor(deps, connection);
+      let branch: string;
+      let sha: string;
+      try {
+        branch = await provider.defaultBranch(app.repoOwner, app.repoName);
+        sha = (await provider.resolveRef(app.repoOwner, app.repoName, branch)).sha;
+      } catch (error) {
+        throw toGitProblem(error);
+      }
+      const treeSha = await treeOf(app, sha);
+      const limits = await queueLimits();
+      const result = await deps.db.transaction(async (tx) => {
+        const locked = await lockApp(tx, app.id);
+        const settings = checksSettingsOf(locked);
+        // Changed or turned off meanwhile, or this slot queued already (by another pass).
+        const last = locked.checksLastSlot;
+        if (settings.schedule !== schedule || (last !== null && slot <= last)) return null;
+        const busy = await activeNames(tx, app.id, sha);
+        const items = settings.items.filter((item) => !busy.has(item.name));
+        const full = items.length === 0 ? null : await queueFull(tx, locked, items.length, limits);
+        // A full queue: the slot is used, nothing is queued (no errored runs on the branch).
+        const note = full ? `Not queued for ${slotLabel(slot)}: ${full}` : null;
+        await markSlot(tx, app.id, slot, note);
+        if (note) return { rows: [], nodeId: locked.nodeId, note, changed: true };
+        const commit = { sha, ref: branch, prNumber: null, trigger: 'schedule' as const, treeSha };
+        const summary = { schedule, slot: slot.toISOString() };
+        const rows = await insertRuns(tx, locked, settings, items, commit, actor, summary);
+        return { rows, nodeId: locked.nodeId, note, changed: locked.checksScheduleNote !== null };
+      });
+      if (!result) return { kind: 'none' };
+      // The note shows in the app's Checks tab.
+      if (result.changed) {
+        deps.events.publish({ topic: 'apps', action: 'updated', resourceId: app.id });
+      }
+      if (result.note) {
+        logger.warn(
+          { appId: app.id, slot: slot.toISOString(), note: result.note },
+          'scheduled checks not queued',
+        );
+        return { kind: 'skipped', note: result.note };
+      }
+      if (result.rows.length === 0) return { kind: 'none' };
+      logger.info(
+        {
+          appId: app.id,
+          commitSha: sha,
+          slot: slot.toISOString(),
+          checks: result.rows.map((row) => row.name),
+        },
+        'scheduled checks queued',
+      );
+      queued(result.rows, result.nodeId);
+      return { kind: 'queued', runs: result.rows.map((row) => toCheckRun(row)) };
+    },
+
+    async skipScheduled(app, slot, schedule, note) {
+      const marked = await deps.db.transaction(async (tx) => {
+        const locked = await lockApp(tx, app.id);
+        const last = locked.checksLastSlot;
+        if (checksSettingsOf(locked).schedule !== schedule || (last !== null && slot <= last)) {
+          return false;
+        }
+        await markSlot(tx, app.id, slot, note);
+        return true;
+      });
+      if (!marked) return;
+      deps.events.publish({ topic: 'apps', action: 'updated', resourceId: app.id });
+      logger.warn({ appId: app.id, slot: slot.toISOString(), note }, 'scheduled checks not queued');
     },
 
     async cancel(id, actor) {
@@ -603,7 +1090,10 @@ export function createChecksService(deps: Deps): ChecksService {
           sha: previous.commitSha,
           ref: previous.ref,
           prNumber: previous.prNumber,
-          trigger: 'manual' as const,
+          // A scheduled run's re-run reports where it did (launchway/<name>/schedule), never over
+          // the verdict of the push on that commit.
+          trigger: previous.trigger === 'schedule' ? ('schedule' as const) : ('manual' as const),
+          treeSha: previous.treeSha,
         };
         const [created] = await insertRuns(tx, app, settings, [item], commit, actor, {
           rerunOf: previous.id,

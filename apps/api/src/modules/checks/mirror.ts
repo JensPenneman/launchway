@@ -25,7 +25,13 @@ import {
   githubConnectionState,
 } from '../github/state.js';
 import { createSettingsService } from '../settings/service.js';
-import type { CheckRunRow } from './model.js';
+import {
+  BRANCH_DELETED_DESCRIPTION,
+  BRANCH_DELETED_PREFIX,
+  type CheckRunRow,
+  formatDuration,
+  PULL_REQUEST_CLOSED_DESCRIPTION,
+} from './model.js';
 import { checkRuns } from './schema.js';
 
 /** The run fields a commit status is derived from. */
@@ -34,6 +40,7 @@ export type StatusRun = Pick<
   | 'id'
   | 'appId'
   | 'name'
+  | 'trigger'
   | 'commitSha'
   | 'status'
   | 'reason'
@@ -107,20 +114,12 @@ export function createDbStatusStore(deps: Pick<Deps, 'db' | 'config' | 'events'>
   };
 }
 
+export { formatDuration } from './model.js';
+
 const DESCRIPTION_MAX = 140;
 
 function truncate(text: string): string {
   return text.length > DESCRIPTION_MAX ? `${text.slice(0, DESCRIPTION_MAX - 3)}...` : text;
-}
-
-/** `45s`, `3m 20s`, `2h 5m`. */
-export function formatDuration(ms: number): string {
-  const seconds = Math.max(0, Math.round(ms / 1000));
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return seconds % 60 === 0 ? `${minutes}m` : `${minutes}m ${seconds % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  return minutes % 60 === 0 ? `${hours}h` : `${hours}h ${minutes % 60}m`;
 }
 
 /** A commit status to post. */
@@ -130,6 +129,9 @@ export interface CommitStatus {
 }
 
 function describe(run: StatusRun): string {
+  // "Same tree as 3f78685, passed in 4m 18s": the verdict of the run it copied.
+  const first = run.statusMessage?.split('\n', 1)[0]?.trim();
+  if (run.reason === 'same-tree' && first) return first;
   // From the moment the run was sent to its node (checkout and build included) to its result.
   const start = run.startedAt ?? run.createdAt;
   const duration = () => formatDuration((run.finishedAt ?? start).getTime() - start.getTime());
@@ -145,14 +147,16 @@ function describe(run: StatusRun): string {
       return run.exitCode === null
         ? `Failed after ${duration()}`
         : `Failed: exit code ${run.exitCode} after ${duration()}`;
-    case 'errored': {
-      const first = run.statusMessage?.split('\n', 1)[0]?.trim();
+    case 'errored':
       // "Not run: 28 queued and 5 new checks would exceed the app's limit of 30; run it again later"
       if (run.reason === 'queue-full' && first) return first;
       return `Error: ${first || run.reason || 'unknown'}`;
-    }
     case 'cancelled':
-      return run.reason === 'superseded' ? 'Superseded by a newer commit' : 'Cancelled';
+      if (run.reason === 'superseded') return 'Superseded by a newer commit';
+      if (run.reason !== 'closed') return 'Cancelled';
+      return run.statusMessage?.startsWith(BRANCH_DELETED_PREFIX)
+        ? BRANCH_DELETED_DESCRIPTION
+        : PULL_REQUEST_CLOSED_DESCRIPTION;
   }
 }
 
@@ -284,7 +288,8 @@ export function createChecksMirror(
           sha: run.commitSha,
           state: status.state,
           description: status.description,
-          context: checkStatusContext(run.name),
+          // Scheduled runs report apart (`launchway/<name>/schedule`): never over a push verdict.
+          context: checkStatusContext(run.name, run.trigger),
           ...(snapshot.publicUrl
             ? { target_url: checkTargetUrl(snapshot.publicUrl, run.appId, run.id) }
             : {}),

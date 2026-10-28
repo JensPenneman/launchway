@@ -99,7 +99,14 @@ describe('check settings', () => {
       branches: null,
       skipBots: false,
       items: [],
+      schedule: null,
     });
+  });
+
+  it('takes a schedule or null', () => {
+    expect(UpdateAppChecksSettings.parse({ schedule: '0 6 * * 1' }).schedule).toBe('0 6 * * 1');
+    expect(UpdateAppChecksSettings.parse({ schedule: null }).schedule).toBeNull();
+    expect(UpdateAppChecksSettings.safeParse({ schedule: '* * * * *' }).success).toBe(false);
   });
 
   it('is part of the app update', () => {
@@ -132,6 +139,8 @@ describe('check runs', () => {
     expect(project).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
     expect(checkImageName('trail', 'dev')).toBe('launchway-check/trail-dev');
     expect(checkStatusContext('e2e')).toBe('launchway/e2e');
+    expect(checkStatusContext('e2e', 'push')).toBe('launchway/e2e');
+    expect(checkStatusContext('e2e', 'schedule')).toBe('launchway/e2e/schedule');
   });
 
   it('recognises references to the image namespace of checks', () => {
@@ -185,6 +194,10 @@ describe('check runs', () => {
         statusMessage: 'Exited with code 3',
         githubState: 'failure',
         triggeredBy: null,
+        treeSha: 'b'.repeat(40),
+        copiedFrom: null,
+        alsoRef: null,
+        queuedBehind: null,
         createdAt: now,
         startedAt: now,
         finishedAt: now,

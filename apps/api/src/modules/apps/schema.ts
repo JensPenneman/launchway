@@ -8,7 +8,7 @@ import {
 } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
 import { boolean, check, index, jsonb, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
-import { idColumn, timestamps } from '../../db/columns.js';
+import { idColumn, timestamps, tz } from '../../db/columns.js';
 import { githubConnections } from '../github/schema.js';
 import { nodes } from '../nodes/schema.js';
 
@@ -62,6 +62,13 @@ export const apps = pgTable(
       .$type<AppChecksSettings>()
       .notNull()
       .default(sql.raw(`'${JSON.stringify(DEFAULT_APP_CHECKS_SETTINGS)}'::jsonb`)),
+    /**
+     * The check schedule's last slot that queued runs, or when the schedule was set: only slots
+     * after it run, each once.
+     */
+    checksLastSlot: tz('checks_last_slot'),
+    /** Why the schedule's last slot queued no runs; null once a slot queues runs. */
+    checksScheduleNote: text('checks_schedule_note'),
     ...timestamps(),
   },
   (t) => [

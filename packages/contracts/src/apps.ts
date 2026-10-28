@@ -6,6 +6,7 @@ import {
   ServiceName,
   Timestamp,
 } from './common.js';
+import { nextCronSlot, parseCron } from './cron.js';
 import { ServiceStatus } from './deployments.js';
 import { RepositoryRef } from './github.js';
 import { AppId, DeploymentId, EnvVarId, GitHubConnectionId, NodeId } from './ids.js';
@@ -363,6 +364,36 @@ export const CheckBranches = z
     example: ['main'],
   });
 
+/**
+ * When the checks run on their own: a cron expression (`minute hour day-of-month month
+ * day-of-week`, UTC) with one minute, so at most once an hour.
+ */
+export const CheckSchedule = z
+  .string()
+  .trim()
+  .min(1)
+  .max(100)
+  .superRefine((expression, ctx) => {
+    const parsed = parseCron(expression);
+    if (!parsed.ok) {
+      ctx.addIssue({ code: 'custom', message: parsed.error });
+      return;
+    }
+    if (!/^\d{1,2}$/.test(expression.split(/\s+/)[0] ?? '')) {
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Use one minute (0-59): scheduled checks run at most once an hour',
+      });
+    } else if (!nextCronSlot(parsed.schedule, new Date(0))) {
+      ctx.addIssue({ code: 'custom', message: 'This schedule never runs' });
+    }
+  })
+  .openapi({
+    description:
+      'Cron expression (minute hour day-of-month month day-of-week, in UTC) on which the checks run for the head of the default branch; one minute only, so at most once an hour',
+    example: '0 6 * * 1',
+  });
+
 /** Per-app check settings (ADR 0020). */
 export const AppChecksSettings = z
   .object({
@@ -384,6 +415,10 @@ export const AppChecksSettings = z
       .max(MAX_CHECK_ITEMS)
       .refine(uniqueCheckNames, 'Check names must be unique')
       .openapi({ description: `At most ${MAX_CHECK_ITEMS} checks with unique names` }),
+    schedule: CheckSchedule.nullable().openapi({
+      description:
+        'Runs the checks for the head of the default branch on this cron schedule (UTC), whether or not pushes run them; null: never',
+    }),
   })
   .openapi('AppChecksSettings');
 export type AppChecksSettings = z.infer<typeof AppChecksSettings>;
@@ -394,6 +429,7 @@ export const DEFAULT_APP_CHECKS_SETTINGS: AppChecksSettings = {
   branches: null,
   skipBots: false,
   items: [],
+  schedule: null,
 };
 
 /** Partial update of the check settings; omitted fields keep their value, `items` replaces all. */
@@ -408,6 +444,7 @@ export const UpdateAppChecksSettings = z
       .max(MAX_CHECK_ITEMS)
       .refine(uniqueCheckNames, 'Check names must be unique')
       .optional(),
+    schedule: CheckSchedule.nullable().optional(),
   })
   .openapi('UpdateAppChecksSettings');
 export type UpdateAppChecksSettings = z.infer<typeof UpdateAppChecksSettings>;
@@ -438,6 +475,10 @@ export const App = z
     proxyServices: ProxyServices,
     previews: AppPreviewSettings,
     checks: AppChecksSettings,
+    checksScheduleNote: z.string().nullable().openapi({
+      description:
+        'Why the last slot of the check schedule queued no runs (a full queue, GitHub not answering); null once a slot queues runs',
+    }),
     activeDeploymentId: DeploymentId.nullable().openapi({
       description: 'The running production deployment',
     }),

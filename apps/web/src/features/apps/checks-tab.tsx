@@ -74,6 +74,7 @@ import {
   CHECK_TRIGGER_LABELS,
   checkLogEmptyText,
   checkRunOutcome,
+  checkRunQueueLabel,
   checkRunStartedLabel,
 } from './check-runs';
 
@@ -168,6 +169,12 @@ export function ChecksTab({ app, openRunId, onOpenRun, onConfigure }: ChecksTabP
             Pushes and pull requests do not run the checks: they are turned off in the app settings.
             {canRun && ' Running them by hand works.'}
           </AlertDescription>
+        </Alert>
+      )}
+      {app.checks.schedule && app.checksScheduleNote && (
+        <Alert>
+          <ListChecks />
+          <AlertDescription>Schedule: {app.checksScheduleNote}</AlertDescription>
         </Alert>
       )}
       {configured.length === 0 && items.length > 0 && (
@@ -303,8 +310,31 @@ function CommitCell({ app, run }: { app: App; run: CheckRun }) {
         )}
         {run.prNumber !== null && run.ref && ' · '}
         {run.ref && <span className="font-mono">{run.ref}</span>}
+        {run.alsoRef && (
+          <span title={`The push of this commit to ${run.alsoRef} uses this run too`}>
+            {' · also '}
+            <span className="font-mono">{run.alsoRef}</span>
+          </span>
+        )}
       </span>
     </div>
+  );
+}
+
+/** Under a run's status: its place in the node's queue, or the run whose result it reused. */
+function RunNote({ run, onOpenRun }: { run: CheckRun; onOpenRun: (id: string) => void }) {
+  const queue = checkRunQueueLabel(run);
+  if (queue) return <span className="text-xs text-muted-foreground">{queue}</span>;
+  if (run.reason !== 'same-tree' || run.copiedFrom === null) return null;
+  const copiedFrom = run.copiedFrom;
+  return (
+    <button
+      type="button"
+      className="text-left text-xs text-muted-foreground hover:underline"
+      onClick={() => onOpenRun(copiedFrom)}
+    >
+      same tree, result reused
+    </button>
   );
 }
 
@@ -335,13 +365,16 @@ function CheckRunRow({
   return (
     <TableRow>
       <TableCell>
-        <CheckRunStatusBadge status={run.status} />
+        <div className="flex flex-col items-start gap-1">
+          <CheckRunStatusBadge status={run.status} />
+          <RunNote run={run} onOpenRun={onOpenRun} />
+        </div>
       </TableCell>
       <TableCell>
         <div className="flex flex-col gap-0.5">
           <span className="font-medium">{run.name}</span>
           <span className="font-mono text-xs text-muted-foreground">
-            {checkStatusContext(run.name)}
+            {checkStatusContext(run.name, run.trigger)}
           </span>
         </div>
       </TableCell>
@@ -363,7 +396,7 @@ function CheckRunRow({
           {canRun && active && (
             <ConfirmButton
               title={`Cancel ${run.name}?`}
-              description={`The run on ${shortSha(run.commitSha)} stops, and GitHub shows ${checkStatusContext(run.name)} as an error until the check runs again.`}
+              description={`The run on ${shortSha(run.commitSha)} stops, and GitHub shows ${checkStatusContext(run.name, run.trigger)} as an error until the check runs again.`}
               confirmLabel="Cancel check"
               onConfirm={() => cancel.mutate()}
             >
@@ -598,7 +631,7 @@ function CheckRunDetail({
         </SheetTitle>
         <SheetDescription>
           {data
-            ? `${checkStatusContext(data.name)} · ${shortSha(data.commitSha)}${data.ref ? ` on ${data.ref}` : ''} · ${CHECK_TRIGGER_LABELS[data.trigger]} · queued ${formatDateTime(data.createdAt)}`
+            ? `${checkStatusContext(data.name, data.trigger)} · ${shortSha(data.commitSha)}${data.ref ? ` on ${data.ref}` : ''} · ${CHECK_TRIGGER_LABELS[data.trigger]} · queued ${formatDateTime(data.createdAt)}`
             : 'Loading…'}
         </SheetDescription>
       </SheetHeader>
@@ -637,14 +670,35 @@ function CheckRunDetail({
             <Detail label="Node">{node?.name ?? data.nodeId}</Detail>
             <Detail label="Duration">{formatDuration(data.startedAt, data.finishedAt)}</Detail>
             <Detail label="Result" className="col-span-2">
-              {outcome ?? (data.status === 'queued' ? 'Waiting for its node' : 'Running')}
+              {outcome ??
+                (data.status === 'queued'
+                  ? `Waiting for its node${checkRunQueueLabel(data) ? `: ${checkRunQueueLabel(data)}` : ''}`
+                  : 'Running')}
             </Detail>
             <Detail label="Exit code">
               <span className="font-mono">{data.exitCode ?? '—'}</span>
             </Detail>
+            {data.reason === 'same-tree' && data.copiedFrom && (
+              <Detail label="Result of" className="col-span-2">
+                <Button
+                  variant="link"
+                  className="h-auto p-0"
+                  onClick={() => data.copiedFrom && onOpenRun(data.copiedFrom)}
+                >
+                  The run of the same tree
+                </Button>
+              </Detail>
+            )}
+            {data.treeSha && (
+              <Detail label="Tree">
+                <span className="font-mono" title={data.treeSha}>
+                  {shortSha(data.treeSha)}
+                </span>
+              </Detail>
+            )}
             <Detail label="On GitHub" className="col-span-full">
               <span className="flex flex-wrap items-center gap-2">
-                <code className="font-mono">{checkStatusContext(data.name)}</code>
+                <code className="font-mono">{checkStatusContext(data.name, data.trigger)}</code>
                 {data.githubState ? (
                   <GitHubStateBadge state={data.githubState} />
                 ) : (
@@ -664,7 +718,7 @@ function CheckRunDetail({
           lines={lines}
           state={stream.state}
           filename={`${app.slug}-${data?.name ?? 'check'}-${data ? shortSha(data.commitSha) : runId}.log`}
-          {...(status ? { emptyText: checkLogEmptyText(status) } : {})}
+          {...(status ? { emptyText: checkLogEmptyText(status, data?.reason) } : {})}
           className="min-h-80 flex-1"
         />
         {canRun && status && (

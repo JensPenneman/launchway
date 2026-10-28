@@ -366,6 +366,8 @@ function trailChecks(): AppChecksSettings {
     composeFiles: ['.devcontainer/compose.yaml'],
     branches: ['main'],
     skipBots: true,
+    // Trail's Monday test of main.
+    schedule: '0 6 * * 1',
     items: [
       {
         name: 'quality',
@@ -409,6 +411,7 @@ export function createApps(): App[] {
       composeFiles: null,
     },
     checks: noChecks(),
+    checksScheduleNote: null as string | null,
   };
   return [
     {
@@ -432,6 +435,8 @@ export function createApps(): App[] {
         composeFiles: ['compose.preview.yaml'],
       },
       checks: trailChecks(),
+      checksScheduleNote:
+        "Not queued for 2026-10-26 06:00 UTC: 30 queued and 3 new checks would exceed the app's limit of 30",
       activeDeploymentId: fixedId('dep', 2),
       createdAt: ago(60 * 24 * 30),
       updatedAt: ago(60 * 24),
@@ -929,6 +934,10 @@ export function createCheckRuns(): CheckRun[] {
               ? 'error'
               : 'pending',
       triggeredBy: null,
+      treeSha: sha(700 + n),
+      copiedFrom: null,
+      alsoRef: null,
+      queuedBehind: null,
       createdAt: ago(minutesAgo),
       startedAt: started ? ago(minutesAgo - 0.2) : null,
       finishedAt: finished ? ago(minutesAgo - 3.4) : null,
@@ -939,10 +948,18 @@ export function createCheckRuns(): CheckRun[] {
   const pullRequest = { commitSha: sha(90), ref: 'feature/elevation', prNumber: 42 } as const;
   const runs: CheckRun[] = [
     run(4, 'quality', 'running', 2, { ...pullRequest, trigger: 'pull_request' }),
-    run(5, 'test', 'queued', 2, { ...pullRequest, trigger: 'pull_request' }),
-    run(6, 'e2e', 'queued', 2, { ...pullRequest, trigger: 'pull_request' }),
+    run(5, 'test', 'queued', 2, { ...pullRequest, trigger: 'pull_request', queuedBehind: 1 }),
+    run(6, 'e2e', 'queued', 2, { ...pullRequest, trigger: 'pull_request', queuedBehind: 2 }),
     run(1, 'quality', 'succeeded', 60 * 3),
-    run(2, 'test', 'succeeded', 60 * 3),
+    // The merge commit has the tree of the pull request's head: its result counts here.
+    run(2, 'test', 'succeeded', 60 * 3, {
+      reason: 'same-tree',
+      copiedFrom: fixedId('chk', 100 + 1),
+      treeSha: sha(700 + 100 + 1),
+      statusMessage: `Same tree as ${sha(200).slice(0, 7)}, passed in 3m 12s`,
+      startedAt: null,
+      finishedAt: ago(60 * 3),
+    }),
     run(3, 'e2e', 'failed', 60 * 3),
     run(7, 'e2e', 'cancelled', 60 * 5, {
       trigger: 'manual',

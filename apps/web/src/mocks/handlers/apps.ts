@@ -190,6 +190,7 @@ export const appHandlers = [
         composeFiles: [...DEFAULT_APP_CHECKS_SETTINGS.composeFiles],
         items: [],
       },
+      checksScheduleNote: null,
       activeDeploymentId: null,
       createdAt: now(),
       updatedAt: now(),
@@ -231,6 +232,8 @@ export const appHandlers = [
       for (const [key, value] of Object.entries(checks)) {
         if (value !== undefined) Object.assign(next, { [key]: value });
       }
+      // Like the API: a new schedule starts afresh.
+      if (next.schedule !== app.checks.schedule) app.checksScheduleNote = null;
       app.checks = next;
     }
     if (proxyServices && proxyServices.join(',') !== app.proxyServices.join(',')) {

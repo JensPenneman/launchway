@@ -11,6 +11,7 @@ import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor } from '../github/providers.js';
 import { nodes } from '../nodes/schema.js';
 import { createSettingsService } from '../settings/service.js';
+import { auditCopy, COPYABLE_TRIGGERS, copyOf, findCopySource } from './copies.js';
 import {
   announceStatus,
   type CheckRunRow,
@@ -26,7 +27,9 @@ export const NODE_TIMEOUT_MESSAGE = 'Timed out waiting for the node';
 const MAX_DISPATCH_ATTEMPTS = 10;
 
 type AppRow = typeof apps.$inferSelect;
-type DispatchOutcome = 'none' | 'sent' | 'errored' | 'deferred';
+/** `errored` and `copied`: the node is still free, so the next queued run may go. */
+type DispatchOutcome = 'none' | 'sent' | 'errored' | 'deferred' | 'copied';
+type Claim = { run: CheckRunRow; app: AppRow } | { copied: CheckRunRow };
 
 export interface CheckDispatcher {
   /**
@@ -55,10 +58,13 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
   const state = checkNodeState(deps.events);
 
   /**
-   * Marks the oldest queued run of the node `running` when none runs there. Concurrent claims of
-   * one node meet at the partial unique index (one running run per node): the loser stops.
+   * Marks the oldest queued run of the node `running` when none runs there, or ends it as a copy
+   * when a run of the same tree and check finished meanwhile (same-tree copies). The claim waits
+   * for a row another statement holds for a moment (the commit status mirror, a cancel) instead
+   * of skipping it, so the oldest run goes first. Concurrent claims of one node meet at that row
+   * or at the partial unique index (one running run per node): the loser stops.
    */
-  async function claim(nodeId: NodeId): Promise<{ run: CheckRunRow; app: AppRow } | null> {
+  async function claim(nodeId: NodeId): Promise<Claim | null> {
     try {
       return await deps.db.transaction(async (tx) => {
         const [busy] = await tx
@@ -73,8 +79,21 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
           .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')))
           .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
           .limit(1)
-          .for('update', { skipLocked: true });
+          .for('update');
         if (!next) return null;
+        if ((COPYABLE_TRIGGERS as readonly string[]).includes(next.trigger)) {
+          const source = await findCopySource(tx, next);
+          if (source) {
+            const [copied] = await tx
+              .update(checkRuns)
+              .set(copyOf(source))
+              .where(and(eq(checkRuns.id, next.id), eq(checkRuns.status, 'queued')))
+              .returning();
+            if (!copied) return null;
+            await auditCopy(tx, actor, copied, 'queued');
+            return { copied };
+          }
+        }
         const [run] = await tx
           .update(checkRuns)
           .set({ status: 'running', startedAt: new Date() })
@@ -160,6 +179,14 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
     }
     const claimed = await claim(nodeId);
     if (!claimed) return 'none';
+    if ('copied' in claimed) {
+      announceStatus(deps, claimed.copied);
+      logger.info(
+        { nodeId, runId: claimed.copied.id, copiedFrom: claimed.copied.copiedFromId },
+        'check run reused the result of a run of the same tree',
+      );
+      return 'copied';
+    }
     const { run, app } = claimed;
     announceStatus(deps, run);
     const context = { nodeId, appId: run.appId, runId: run.id, check: run.name };
@@ -197,9 +224,10 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
 
   async function dispatchNode(nodeId: NodeId): Promise<void> {
     try {
-      // An errored run frees the node for the next queued one.
+      // An errored or copied run leaves the node free for the next queued one.
       for (let attempt = 0; attempt < MAX_DISPATCH_ATTEMPTS; attempt += 1) {
-        if ((await dispatchOnce(nodeId)) !== 'errored') return;
+        const outcome = await dispatchOnce(nodeId);
+        if (outcome !== 'errored' && outcome !== 'copied') return;
       }
     } catch (error) {
       logger.error({ err: error, nodeId }, 'check dispatch errored');

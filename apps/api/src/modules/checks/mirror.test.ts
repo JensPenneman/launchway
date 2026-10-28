@@ -29,6 +29,7 @@ function runOf(fields: Partial<StatusRun> = {}): StatusRun {
     id: 'chk_01' as CheckRunId,
     appId: 'app_01' as AppId,
     name: 'quality',
+    trigger: 'push',
     commitSha: 'a'.repeat(40),
     status: 'queued',
     reason: null,
@@ -91,6 +92,35 @@ describe('commitStatusOf', () => {
     expect(
       commitStatusOf(runOf({ status: 'errored', reason: 'queue-full', statusMessage: message })),
     ).toEqual({ state: 'error', description: message });
+  });
+
+  it("gives a same-tree copy the verdict of the run it copied, and a closed pull request's runs a reason", () => {
+    const message = 'Same tree as 3f78685, passed in 4m 18s';
+    expect(
+      commitStatusOf(runOf({ status: 'succeeded', reason: 'same-tree', statusMessage: message })),
+    ).toEqual({ state: 'success', description: message });
+    const failed = 'Same tree as 3f78685, failed: exit code 1 after 52s';
+    expect(
+      commitStatusOf(runOf({ status: 'failed', reason: 'same-tree', statusMessage: failed })),
+    ).toEqual({ state: 'failure', description: failed });
+    expect(
+      commitStatusOf(
+        runOf({
+          status: 'cancelled',
+          reason: 'closed',
+          statusMessage: 'Cancelled: pull request #12 was merged',
+        }),
+      ),
+    ).toEqual({ state: 'error', description: 'Pull request closed' });
+    expect(
+      commitStatusOf(
+        runOf({
+          status: 'cancelled',
+          reason: 'closed',
+          statusMessage: 'Cancelled: branch feature/x was deleted',
+        }),
+      ),
+    ).toEqual({ state: 'error', description: 'Branch deleted' });
   });
 
   it('tells a superseded run from a cancelled one', () => {

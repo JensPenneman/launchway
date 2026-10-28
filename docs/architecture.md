@@ -289,7 +289,8 @@ reported to GitHub as commit statuses that branch protection can require
   composeFile?, timeoutMinutes (1-120, default 30) }`.
   Members change them with `PATCH /apps/{id}`; the limits every service of a
   check gets are platform settings (`checkMemoryMb`, `checkCpus`,
-  `checkPidsLimit`; defaults 2048, 2, 4096), and so are the bounds of the
+  `checkPidsLimit`; defaults 2048, 2, 4096), and so are the checks a node
+  runs at once (`checkConcurrency`, 1-8, default 1) and the bounds of the
   queue (`checkMaxQueuedPerApp` 30, `checkMaxQueuedPerNode` 100, each
   10-1000).
 - **Triggers.** `push` to a branch (no tags, no deletions) and
@@ -315,10 +316,13 @@ reported to GitHub as commit statuses that branch protection can require
   `POST /apps/{id}/checks` `{ ref, names? }` runs them by hand (the only
   webhook-free trigger besides the schedule for token connections); `POST
   /checks/{id}/rerun` and `POST /checks/{id}/cancel` act on one run. Queued
-  runs carry their place in the node's queue (`queuedBehind`).
+  runs carry their place in the node's queue (`queuedBehind`: the runs of the
+  node that have to end before they start).
 - **Lifecycle.** `queued → running → succeeded | failed | errored`, or
-  `cancelled`. One check runs per node at a time (a partial unique index),
-  oldest first across the node's apps. `failed` means the command exited
+  `cancelled`. A node runs up to `checkConcurrency` checks at once, oldest
+  first across its apps: the dispatcher's claim counts the node's running
+  runs under a transaction-level advisory lock of the node
+  ([ADR 0021](adr/0021-concurrent-checks-per-node.md)). `failed` means the command exited
   non-zero or timed out; `errored` that there is no verdict on the code
   (policy, build, Docker, an offline node, an agent without checks). Logs are
   kept 30 days, runs for good.
@@ -552,7 +556,8 @@ export interface DnsProvider {
   and the server marks their node's runs `errored` (`unsupported`). A run
   not acknowledged within 30 seconds stays claimed until the heartbeats
   show whether the agent has it; if not, it is sent again. The agent runs
-  one check at a time:
+  every run it gets at once, beside the others (the server sends at most
+  `checkConcurrency`; sweeps run alone), each one:
   1. fetch the commit into `/var/lib/launchway/checks/<appId>/<runId>/src`
      (credentials as for deployments);
   2. parse the Compose files (YAML) and refuse `include`, a top-level merge
@@ -572,7 +577,7 @@ export interface DnsProvider {
      `container_name`, `restart`, `logging`, `deploy`, `ulimits`, `cpuset`,
      `storage_opt` or other resource settings of the project, and no `ipam`
      or `enable_ipv6` on its networks (nor fixed addresses on services); built services tagged
-     `launchway-check/<slug>-<service>`; directory binds inside the checkout
+     `launchway-check/<slug>-<service>:<run id suffix>`; directory binds inside the checkout
      turned into mounts of the run's source volume (`volume.subpath`),
      read-only text files of at most 64 KiB into `configs` with inline
      content; environment entries and build arguments without a value
@@ -580,7 +585,8 @@ export interface DnsProvider {
      `BUILDKIT_SANDBOX_HOSTNAME=check-<app id>`, which keys the cache of its
      `RUN` steps per app;
   4. `build --pull --builder launchway-check-build-<memory>m-<cpus>c-<hash>`
-     (in the node's build slots, shared with deployments): a buildx
+     (in the node's build slots, shared with deployments, and one build of
+     checks at a time in the builder, its prunes included): a buildx
      `docker-container` builder of checks only (the hash covers its BuildKit
      image, network, flags and `buildkitd.toml`), created on demand with the
      memory (no swap), CPUs and processes of a check service, a cache of at
@@ -598,11 +604,13 @@ export interface DnsProvider {
   6. `docker compose run -T --name <project>-check <service> sh -c
      <command>` within `timeoutMs` (the sidecars start through
      `depends_on`); the run container's exit code decides;
-  7. report the result, then clean up within the slot: the run's
+  7. report the result, then clean up what is the run's own: its
      containers, `down --volumes --remove-orphans`, the source volume, other
-     labelled volumes and networks, dangling images with the
-     `launchway.check` label, the checkout. At start the agent removes what
-     earlier runs left behind (projects `launchway-check_*`).
+     volumes and networks labelled with the run, the images tagged with the
+     run, the app's dangling images with the `launchway.check` label, the
+     checkout. At start the agent removes what earlier runs left behind
+     (projects `launchway-check_*` and every image of the check namespace)
+     before it starts a run.
 - **Compose preflight.** Before `docker compose config`, deployments parse
   their Compose files too: `include` entries (path, `env_file`,
   `project_directory`), `extends.file`, `env_file` and `label_file` must be
@@ -746,8 +754,10 @@ Agent (`launchway-agent` container):
 - Checks run untrusted branch code: no app variables or secrets, no bind
   mounts outside the checkout (the checkout reaches containers through a
   volume), no published ports, per-service memory (no swap), CPU and process
-  limits, one check per node, fork pull requests never run, logs capped and
-  redacted ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)).
+  limits, `checkConcurrency` checks per node, fork pull requests never run,
+  logs capped and redacted
+  ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md),
+  [ADR 0021](adr/0021-concurrent-checks-per-node.md)).
 - Internal endpoints (`/internal/*`, agent WebSocket upgrades without a valid
   token) reject requests from outside the Docker networks. *(v0.1 refuses
   upgrades without a valid token with 401 from any network; the network

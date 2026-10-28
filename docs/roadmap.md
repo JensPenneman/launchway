@@ -75,7 +75,7 @@ features that are deliberately out of scope for v0.1 are listed in
 - Checks ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md))
   report commit statuses only; GitHub's Checks API would add annotations and
   re-run buttons on GitHub but needs a GitHub App. Branch filters are exact
-  names (no patterns), one check runs per node at a time, and every run
+  names (no patterns), a node runs at most eight checks at once, and every run
   installs its dependencies again (no cache volumes per app yet). `include`
   is refused in checks.
 - Webhook deliveries of apps whose installation was removed still pass the

@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.7.0](https://github.com/JensPenneman/launchway/compare/v0.6.0...v0.7.0) (2026-10-28)
+
+
+### Features
+
+* **checks:** run several checks per node at once ([#22](https://github.com/JensPenneman/launchway/issues/22)) ([63b96a9](https://github.com/JensPenneman/launchway/commit/63b96a9898056fdbab7d3b8d02172ed97bc8135e))
+
 ## [0.6.0](https://github.com/JensPenneman/launchway/compare/v0.5.0...v0.6.0) (2026-10-28)
 
 

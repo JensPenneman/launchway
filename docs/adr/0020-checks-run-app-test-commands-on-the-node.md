@@ -245,7 +245,11 @@ shape the design:
     pull request's result can still serve the merge commit (next point), and
     cancelling would throw away work already done. A deleted branch (`push`
     with `deleted`) cancels its queued runs of the commit it pointed at
-    (GitHub: "Branch deleted"), never the default branch's. Cancelled runs
+    (GitHub: "Branch deleted"), never the default branch's, and hands them to
+    an open pull request from another branch at that commit instead (a pull
+    request recreated from a new branch); a handed-over run takes the pull
+    request's number and head branch, so its close or its branch's deletion
+    cancels it as its own. Cancelled runs
     never ran, so they do not count for the deduplication.
   - Same-tree copies: a push or pull request run whose commit has the tree of
     a commit for which the same check ran and exited within seven days ends
@@ -267,13 +271,14 @@ shape the design:
     branch (trigger `schedule`) once per slot: the app's last slot is stored
     (`checks_last_slot`, also set when the schedule changes, so a new
     schedule starts with its next slot), and the slot is claimed under the
-    app row lock together with the runs. Scheduled runs report as
-    `launchway/<name>/schedule`, so they never replace the push's verdict on
-    the default branch's head, nor hold it at pending. At a full queue the
-    slot is used without runs (no errored runs) and `checks_schedule_note`
-    says why on the Checks tab; a slot whose GitHub lookups fail is tried
-    after 1, 2, 4 and 8 minutes, then used the same way. It runs whether or
-    not webhooks run the checks, and counts against the queue bounds.
+    app row lock together with the runs. Scheduled runs, and their re-runs,
+    report as `launchway/<name>/schedule`, so they never replace the push's
+    verdict on the default branch's head, nor hold it at pending. At a full
+    queue the slot is used without runs (no errored runs) and
+    `checks_schedule_note` says why on the Checks tab; a slot whose GitHub
+    lookups fail is tried after 1, 2, 4 and 8 minutes, then used the same
+    way. It runs whether or not webhooks run the checks, and counts against
+    the queue bounds.
   - The dispatcher's claim waits for a row another statement holds for a
     moment (the status mirror, a cancel, a copy) instead of skipping it
     (`FOR UPDATE`, not `SKIP LOCKED`), so the oldest run goes first;

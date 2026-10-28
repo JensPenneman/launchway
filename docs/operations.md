@@ -563,8 +563,9 @@ dependencies first.
   another open pull request with the same head still needs (they become its
   runs), runs that serve a push of another branch, and runs started by hand.
   When a branch is deleted, its queued checks of the commit it pointed at
-  end the same way, with "Branch deleted" on GitHub; the default branch's
-  never do.
+  end the same way, with "Branch deleted" on GitHub, unless an open pull
+  request from another branch at that commit needs them (they become its
+  checks); the default branch's never do.
 - **Same files, same result.** A push or pull request whose commit has the
   same tree (the same files) as a commit the same check ran and exited for
   in the last seven days does not run that check again: the run ends at once
@@ -586,7 +587,8 @@ dependencies first.
   branch protection and release workflows read, nor hold it at pending
   while they wait. Each slot runs once; slots missed while the control
   plane was down run once, late; a check that is still queued or running
-  for that commit is not queued again. Changing the schedule starts it from
+  for that commit is not queued again. **Re-run** of a scheduled run reports
+  under `/schedule` as well. Changing the schedule starts it from
   its next slot. When the queue is full at a slot, nothing is queued (no
   *error* on the branch): the slot is used and the **Checks** tab says why,
   until a slot queues runs again. A slot whose GitHub lookups fail is tried

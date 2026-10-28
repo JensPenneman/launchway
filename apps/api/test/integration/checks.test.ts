@@ -1345,6 +1345,12 @@ describe('checks against PostgreSQL', () => {
     return found;
   };
 
+  /**
+   * Sends the node's next run if it is free, as the dispatcher's pass every 15 s would: a claim
+   * skips a run whose row the commit status mirror holds at that moment.
+   */
+  const nudge = (node: NodeId) => createCheckDispatcher(deps).dispatchNode(node);
+
   /** A push whose head commit names its tree, as GitHub's push events do. */
   const pushWithTree = (repo: string, branch: string, after: string, tree: string) => ({
     ...push(repo, branch, after),
@@ -1462,11 +1468,11 @@ describe('checks against PostgreSQL', () => {
             (r) => r.commitSha === commit && statuses.includes(r.status),
           );
         while ((await ofCommit(['queued', 'running'])).length > 0) {
-          await until(
-            async () =>
-              (await ofCommit(['running', 'queued'])).some((r) => r.status === 'running') ||
-              (await ofCommit(['queued', 'running'])).length === 0,
-          );
+          await until(async () => {
+            await nudge(node);
+            const active = await ofCommit(['queued', 'running']);
+            return active.length === 0 || active.some((r) => r.status === 'running');
+          });
           const [running] = await ofCommit(['running']);
           if (!running) continue;
           const exitCode = running.name === 'lint' ? 1 : 0;
@@ -1621,7 +1627,10 @@ describe('checks against PostgreSQL', () => {
       fakeRepo(repo).trees = { [head]: tree };
       await deliver('pull_request', pullRequest(repo, 'opened', 6, head));
       const [prRun] = await runsOf(app.id);
-      await until(() => gateway.checkRuns.some((r) => r.payload.runId === prRun?.id));
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === prRun?.id);
+      });
       // Merged while it runs: the merge commit's run waits behind it.
       await deliver('push', pushWithTree(repo, 'main', merge, tree));
       const [waiting] = (await runsOf(app.id)).filter((r) => r.commitSha === merge);
@@ -1670,6 +1679,8 @@ describe('checks against PostgreSQL', () => {
         startedAt: new Date(Date.now() - 1_000),
         finishedAt: new Date(),
       });
+      // The mirror's status update locks the run, which a claim skips: let it finish first.
+      await mirror.idle();
       gateway.connect(node);
       await createCheckDispatcher(deps).dispatchNode(node);
       expect(await runRow(lateRun?.id ?? '')).toMatchObject({

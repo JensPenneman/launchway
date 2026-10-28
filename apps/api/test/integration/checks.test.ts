@@ -1888,6 +1888,80 @@ describe('checks against PostgreSQL', () => {
     expect(one.queuedBehind).toBe(3);
   });
 
+  it('passes over a run whose check runs for its tree, so it still becomes a copy', async () => {
+    const node = await newNode(false);
+    const sink = createCheckSink(deps);
+    const { app } = await createTestApp(node, { items: [quality, lint] });
+    const tree = sha(unique('tree'));
+    const otherTree = sha(unique('tree'));
+    /** A queued run of `name` for a new commit of `treeSha`, inserted as a webhook queues it. */
+    const queue = async (
+      name: string,
+      trigger: (typeof checkRuns.$inferInsert)['trigger'],
+      treeSha: string,
+    ) => {
+      const [row] = await db
+        .insert(checkRuns)
+        .values({
+          appId: app.id,
+          nodeId: node,
+          name,
+          command: `npm run ${name}`,
+          service: 'dev',
+          composeFiles: ['.devcontainer/compose.yaml'],
+          timeoutMinutes: 30,
+          commitSha: sha(unique('commit')),
+          ref: 'main',
+          trigger,
+          treeSha,
+        })
+        .returning();
+      if (!row) throw new Error('run insert failed');
+      return row;
+    };
+    const sent = () =>
+      gateway.checkRuns.filter((r) => r.nodeId === node).map((r) => r.payload.runId);
+    const statusOf = async (id: string) => (await runRow(id)).status;
+    await withConcurrency(3, async () => {
+      gateway.connect(node);
+      const dispatcher = createCheckDispatcher(deps);
+      const first = await queue('quality', 'push', tree);
+      // The same check for another commit of the tree (a merge commit, say): it waits for first.
+      const second = await queue('quality', 'push', tree);
+      // Another check of the tree, and a manual run of the same check: they run.
+      const lintRun = await queue('lint', 'push', tree);
+      const manual = await queue('quality', 'manual', tree);
+      await dispatcher.dispatchNode(node);
+      expect(sent()).toEqual([first.id, lintRun.id, manual.id]);
+      expect(await statusOf(second.id)).toBe('queued');
+      // A free slot changes nothing while first runs.
+      await sink.onResult(node, { runId: lintRun.id, reason: 'exit', exitCode: 0 });
+      await dispatcher.dispatchNode(node);
+      expect(await statusOf(second.id)).toBe('queued');
+
+      // first exits: second takes its verdict instead of running.
+      await sink.onResult(node, { runId: first.id, reason: 'exit', exitCode: 0 });
+      expect(await runRow(second.id)).toMatchObject({
+        status: 'succeeded',
+        reason: 'same-tree',
+        copiedFromId: first.id,
+        startedAt: null,
+      });
+      await sink.onResult(node, { runId: manual.id, reason: 'exit', exitCode: 1 });
+
+      // A run of the tree that ends without a verdict lets the next one run.
+      const timedOut = await queue('quality', 'pull_request', otherTree);
+      const next = await queue('quality', 'push', otherTree);
+      await dispatcher.dispatchNode(node);
+      await until(() => sent().includes(timedOut.id));
+      expect(await statusOf(next.id)).toBe('queued');
+      await sink.onResult(node, { runId: timedOut.id, reason: 'timeout', exitCode: null });
+      await until(() => sent().includes(next.id));
+      expect(await statusOf(next.id)).toBe('running');
+      expect(sent()).not.toContain(second.id);
+    });
+  });
+
   it('counts the free slots of the node in the place of its queued runs', async () => {
     const node = await newNode(false);
     const first = await createTestApp(node, { items: [quality, lint] });

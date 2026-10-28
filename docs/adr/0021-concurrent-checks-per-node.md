@@ -35,7 +35,9 @@ removes every check project it finds.
 2. **The API counts, under a lock of the node.** The dispatcher's claim takes
    `pg_advisory_xact_lock(hashtext('launchway.checks.node:' || node_id))`,
    counts the node's `running` runs and, below the limit, claims the oldest
-   queued run (or ends it as a same-tree copy) as before; claims of one node
+   queued run (or ends it as a same-tree copy) as before, passing over a push
+   or pull request run while the same check runs for its tree on the node
+   (see *Consequences*); claims of one node
    take turns, claims of different nodes do not wait for each other. The
    partial unique index `check_runs_one_running_per_node` is dropped (the
    index on `(node_id, status)` serves the count). A dispatch pass claims and
@@ -87,10 +89,13 @@ removes every check project it finds.
   setting before upgrading the agent makes runs wait on the node instead of
   in the queue, still in order.
 - The sweep at start assumes, as before, one agent per Docker daemon.
-- Follow-up: same-tree copies of a queued run are made when it is queued,
-  when a run of its tree ends and when the claim takes it, and they need a
-  run that has ended. With two or more checks at once, the claim can start a
-  queued run while a run of the same check and tree is still running on the
-  node, so both run where one check at a time would have copied the result.
-  The claim should pass over such a run (it becomes a copy when the running
-  one ends) and take the next queued one.
+- Same-tree copies need a run that has ended: they are made when a run is
+  queued, when a run of its tree ends and when the claim takes it. With two
+  or more checks at once the claim could start a queued run while a run of
+  the same app, check configuration and tree still runs on the node, and
+  both would run where one check at a time copies the result. The claim
+  therefore passes over a push or pull request run in that case and takes
+  the next queued one: when the running run exits, the passed-over run
+  becomes its copy; when it ends without a verdict (a timeout, an error, a
+  cancel), the passed-over run is claimed then. Manual and scheduled runs
+  never wait. A passed-over run's place in the queue does not show the wait.

@@ -10,7 +10,13 @@ import { recordAudit } from '../audit/service.js';
 import { getConnection, providerFor } from '../github/providers.js';
 import { nodes } from '../nodes/schema.js';
 import { createSettingsService } from '../settings/service.js';
-import { auditCopy, COPYABLE_TRIGGERS, copyOf, findCopySource } from './copies.js';
+import {
+  auditCopy,
+  COPYABLE_TRIGGERS,
+  copyOf,
+  findCopySource,
+  notWaitingForItsTree,
+} from './copies.js';
 import {
   announceStatus,
   type CheckRunRow,
@@ -61,11 +67,12 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
 
   /**
    * Marks the oldest queued run of the node `running` while fewer than `limit` run there, or ends
-   * it as a copy when a run of the same tree and check finished meanwhile (same-tree copies).
-   * Claims of one node take turns on a transaction-level advisory lock of the node, so each one
-   * counts the runs the claims before it committed (ADR 0021). The claim waits for a row another
-   * statement holds for a moment (the commit status mirror, a cancel) instead of skipping it, so
-   * the oldest run goes first.
+   * it as a copy when a run of the same tree and check finished meanwhile (same-tree copies). A
+   * push or pull request run whose check runs for its tree on the node is passed over: it becomes
+   * that run's copy once it exits. Claims of one node take turns on a transaction-level advisory
+   * lock of the node, so each one counts the runs the claims before it committed (ADR 0021). The
+   * claim waits for a row another statement holds for a moment (the commit status mirror, a
+   * cancel) instead of skipping it, so the oldest run goes first.
    */
   async function claim(nodeId: NodeId, limit: number): Promise<Claim | null> {
     return deps.db.transaction(async (tx) => {
@@ -80,7 +87,14 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
       const [next] = await tx
         .select()
         .from(checkRuns)
-        .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')))
+        .where(
+          and(
+            eq(checkRuns.nodeId, nodeId),
+            eq(checkRuns.status, 'queued'),
+            // Passes over a run whose check runs for its tree: it becomes that run's copy.
+            notWaitingForItsTree(tx),
+          ),
+        )
         .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
         .limit(1)
         .for('update');

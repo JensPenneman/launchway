@@ -26,14 +26,33 @@ async function migrationsBefore(tag: string): Promise<string> {
   return folder;
 }
 
+/**
+ * A pool whose `close()` resolves once every connection it opened is closed. `pool.end()` resolves
+ * as soon as the pool has let go of its clients, before their connections are gone; a database
+ * dropped then would terminate them under the pool (57P01, an error event nobody listens to).
+ */
+function trackedPool(connectionString: string): { pool: pg.Pool; close: () => Promise<void> } {
+  const pool = new pg.Pool({ connectionString });
+  const open = new Set<pg.PoolClient>();
+  pool.on('connect', (client) => open.add(client));
+  pool.on('remove', (client) => open.delete(client));
+  return {
+    pool,
+    close: async () => {
+      await pool.end();
+      while (open.size > 0) await new Promise((resolve) => pool.once('remove', resolve));
+    },
+  };
+}
+
 describe('migrations', () => {
   it('0008 applies on a database with running check runs and lets a node run several', async () => {
     const url = new URL(inject('databaseUrl'));
     const name = `launchway_migrate_${randomBytes(4).toString('hex')}`;
-    const admin = new pg.Pool({ connectionString: url.toString() });
-    await admin.query(`CREATE DATABASE ${name}`);
+    const admin = trackedPool(url.toString());
+    await admin.pool.query(`CREATE DATABASE ${name}`);
     url.pathname = `/${name}`;
-    const pool = new pg.Pool({ connectionString: url.toString() });
+    const { pool, close } = trackedPool(url.toString());
     const folder = await migrationsBefore('0008_check_concurrency');
     try {
       await migrate(drizzle(pool), { migrationsFolder: folder });
@@ -75,9 +94,10 @@ describe('migrations', () => {
       const [row] = await db.select({ checkConcurrency: settings.checkConcurrency }).from(settings);
       expect(row?.checkConcurrency).toBe(1);
     } finally {
-      await pool.end();
-      await admin.query(`DROP DATABASE ${name} WITH (FORCE)`);
-      await admin.end();
+      // Every connection to the database is closed first; without FORCE, one left open fails here.
+      await close();
+      await admin.pool.query(`DROP DATABASE ${name}`);
+      await admin.close();
       await rm(folder, { recursive: true, force: true });
     }
   });

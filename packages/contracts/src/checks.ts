@@ -34,10 +34,10 @@ export function isActiveCheckRunStatus(status: CheckRunStatus): boolean {
   return (ACTIVE_CHECK_RUN_STATUSES as readonly CheckRunStatus[]).includes(status);
 }
 
-export const CHECK_RUN_TRIGGERS = ['push', 'pull_request', 'manual'] as const;
+export const CHECK_RUN_TRIGGERS = ['push', 'pull_request', 'manual', 'schedule'] as const;
 export const CheckRunTrigger = z.enum(CHECK_RUN_TRIGGERS).openapi('CheckRunTrigger', {
   description:
-    'push: a push to a branch of the repository; pull_request: a pull request from a branch of the repository; manual: an API request (or a re-run)',
+    "push: a push to a branch of the repository; pull_request: a pull request from a branch of the repository; manual: an API request (or a re-run); schedule: the app's check schedule (the head of the default branch)",
 });
 export type CheckRunTrigger = z.infer<typeof CheckRunTrigger>;
 
@@ -48,8 +48,10 @@ export type CheckRunTrigger = z.infer<typeof CheckRunTrigger>;
  * source volume, a dependency that does not start, ...), `interrupted` (the agent shut down),
  * `cancelled`, `superseded` (a newer commit of the branch arrived while it waited), `offline` (the
  * node was offline too long or went away), `lost` (the node no longer reports it), `unsupported`
- * (the node's agent does not run checks), `dispatch` (the control plane could not prepare it) and
- * `queue-full` (the app or its node already had as many queued runs as the platform allows).
+ * (the node's agent does not run checks), `dispatch` (the control plane could not prepare it),
+ * `queue-full` (the app or its node already had as many queued runs as the platform allows),
+ * `closed` (its pull request was closed or merged before it ran) and `same-tree` (not run: a run
+ * of the same check for a commit with the same tree had finished, and its result was reused).
  */
 export const CHECK_RUN_REASONS = [
   'exit',
@@ -65,6 +67,8 @@ export const CHECK_RUN_REASONS = [
   'unsupported',
   'dispatch',
   'queue-full',
+  'closed',
+  'same-tree',
 ] as const;
 export const CheckRunReason = z.enum(CHECK_RUN_REASONS).openapi('CheckRunReason');
 export type CheckRunReason = z.infer<typeof CheckRunReason>;
@@ -113,6 +117,12 @@ export function githubStateOfCheck(status: CheckRunStatus): GitHubCommitStatusSt
   }
 }
 
+/** A Git tree SHA (a commit's content). */
+export const TreeSha = z
+  .string()
+  .regex(/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/, 'Must be a full lowercase tree SHA')
+  .openapi({ example: '9bb3f7a1f8d47a0b8d1f2c3e4a5b6c7d8e9f0a1b' });
+
 export const CheckRun = z
   .object({
     id: CheckRunId,
@@ -140,6 +150,20 @@ export const CheckRun = z
         'State last posted to GitHub as the commit status launchway/<name>; null when none was posted',
     }),
     triggeredBy: UserId.nullable(),
+    treeSha: TreeSha.nullable().openapi({
+      description: "The commit's tree, when Launchway could read it from GitHub",
+    }),
+    copiedFrom: CheckRunId.nullable().openapi({
+      description:
+        'Reason same-tree: the run of the same check for a commit with the same tree whose result this run reused',
+    }),
+    alsoRef: GitRef.nullable().openapi({
+      description:
+        'Another branch whose push of the same commit this run serves (one run per commit and check)',
+    }),
+    queuedBehind: z.number().int().min(0).nullable().openapi({
+      description: 'While queued: how many runs of its node are running or queued before it',
+    }),
     createdAt: Timestamp,
     startedAt: Timestamp.nullable().openapi({ description: 'When the run was sent to its node' }),
     finishedAt: Timestamp.nullable(),

@@ -1,5 +1,17 @@
 import type { CheckRunTrigger } from '@launchway/contracts';
-import { and, desc, eq, gte, inArray } from 'drizzle-orm';
+import {
+  and,
+  desc,
+  eq,
+  gte,
+  inArray,
+  isNull,
+  notExists,
+  notInArray,
+  or,
+  type SQL,
+} from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { Executor } from '../../db/client.js';
 import type { RequestActor } from '../../lib/auth-context.js';
 import { recordAudit } from '../audit/service.js';
@@ -35,6 +47,39 @@ function sameCheck(key: CopyKey & { treeSha: string }) {
     eq(checkRuns.service, key.service),
     eq(checkRuns.composeFiles, key.composeFiles),
     eq(checkRuns.timeoutMinutes, key.timeoutMinutes),
+  );
+}
+
+const running = alias(checkRuns, 'running');
+
+/**
+ * Queued runs that need not wait for their tree (ADR 0021): a push or pull request run with a
+ * tree waits while a run of the same app, tree and check configuration runs on its node, since
+ * that run's verdict becomes its own once it exits, as with one check per node at a time. Every
+ * other run may go. For the claim's `WHERE` on `check_runs`.
+ */
+export function notWaitingForItsTree(tx: Executor): SQL | undefined {
+  return or(
+    notInArray(checkRuns.trigger, COPYABLE_TRIGGERS),
+    isNull(checkRuns.treeSha),
+    notExists(
+      tx
+        .select({ id: running.id })
+        .from(running)
+        .where(
+          and(
+            eq(running.nodeId, checkRuns.nodeId),
+            eq(running.status, 'running'),
+            eq(running.appId, checkRuns.appId),
+            eq(running.treeSha, checkRuns.treeSha),
+            eq(running.name, checkRuns.name),
+            eq(running.command, checkRuns.command),
+            eq(running.service, checkRuns.service),
+            eq(running.composeFiles, checkRuns.composeFiles),
+            eq(running.timeoutMinutes, checkRuns.timeoutMinutes),
+          ),
+        ),
+    ),
   );
 }
 

@@ -559,13 +559,15 @@ dependencies first.
 - **Several at once.** A node runs up to `checkConcurrency` checks at once
   (default 1), oldest first across its apps; the **Checks** tab shows a
   queued run's place ("starts after 3 runs end": the runs of the node, every
-  app's, that have to end before it starts). A newer push to a
-  branch cancels the queued checks of older commits of that branch,
-  whichever commit it is (a force-push back to a commit runs its checks
-  again); a push and a pull request of the same commit run once, and the run
-  shows both (a pull request's run that a push to `main` uses too says "also
-  main"; a pull request's run that the push of its own branch uses becomes a
-  push run).
+  app's, that have to end before it starts). A push or pull request check
+  whose same check runs for a commit with the same files waits for it and
+  takes its result (*Same files, same result*, below) instead of running
+  beside it. A newer push to a branch cancels the queued checks of older
+  commits of that branch, whichever commit it is (a force-push back to a
+  commit runs its checks again); a push and a pull request of the same
+  commit run once, and the run shows both (a pull request's run that a push
+  to `main` uses too says "also main"; a pull request's run that the push of
+  its own branch uses becomes a push run).
 - **Closed pull requests and deleted branches.** When a pull request is
   closed or merged, the queued checks it started (trigger *pull request*,
   queued before it closed) end at once with *cancelled*, reason `closed`,

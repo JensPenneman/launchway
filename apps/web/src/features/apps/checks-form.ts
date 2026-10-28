@@ -161,6 +161,6 @@ export function scheduleHint(expression: string, now = new Date()): string {
   const next =
     CheckSchedule.safeParse(text).success && parsed.ok ? nextCronSlot(parsed.schedule, now) : null;
   return next
-    ? `Next run ${utc.format(next)} UTC, for the head of the default branch, whether or not pushes run the checks.`
+    ? `Next run ${utc.format(next)} UTC, for the head of the default branch, whether or not pushes run the checks; GitHub shows them as launchway/<name>/schedule.`
     : 'minute hour day-of-month month day-of-week, in UTC';
 }

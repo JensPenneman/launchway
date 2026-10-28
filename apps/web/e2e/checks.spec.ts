@@ -34,6 +34,7 @@ test('lists the check runs of an app page by page and filters them', async ({ pa
 
 test('shows where queued runs wait and which result a same-tree run reused', async ({ page }) => {
   await page.goto(`/apps/${TRAIL_APP_ID}?tab=checks`);
+  await expect(page.getByText(/^Schedule: Not queued for 2026-10-26 06:00 UTC/)).toBeVisible();
   await expect(runRow(page, 'test', 'PR #42')).toContainText('behind 1 run');
   await expect(runRow(page, 'e2e', 'PR #42')).toContainText('behind 2 runs');
   const copy = runRow(page, 'test', 'main').filter({ hasText: 'same tree' }).first();

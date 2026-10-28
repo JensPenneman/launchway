@@ -116,7 +116,7 @@ describe('parseChecksForm', () => {
   it('tells when a schedule runs next, in UTC', () => {
     const now = new Date('2026-10-28T12:00:00Z');
     expect(scheduleHint('0 6 * * 1', now)).toBe(
-      'Next run Mon, 2 Nov 2026, 06:00 UTC, for the head of the default branch, whether or not pushes run the checks.',
+      'Next run Mon, 2 Nov 2026, 06:00 UTC, for the head of the default branch, whether or not pushes run the checks; GitHub shows them as launchway/<name>/schedule.',
     );
     expect(scheduleHint('', now)).toMatch(/^Optional: a cron expression/);
     expect(scheduleHint('0 6 * *', now)).toBe('minute hour day-of-month month day-of-week, in UTC');

@@ -171,6 +171,12 @@ export function ChecksTab({ app, openRunId, onOpenRun, onConfigure }: ChecksTabP
           </AlertDescription>
         </Alert>
       )}
+      {app.checks.schedule && app.checksScheduleNote && (
+        <Alert>
+          <ListChecks />
+          <AlertDescription>Schedule: {app.checksScheduleNote}</AlertDescription>
+        </Alert>
+      )}
       {configured.length === 0 && items.length > 0 && (
         <Alert>
           <ListChecks />
@@ -368,7 +374,7 @@ function CheckRunRow({
         <div className="flex flex-col gap-0.5">
           <span className="font-medium">{run.name}</span>
           <span className="font-mono text-xs text-muted-foreground">
-            {checkStatusContext(run.name)}
+            {checkStatusContext(run.name, run.trigger)}
           </span>
         </div>
       </TableCell>
@@ -390,7 +396,7 @@ function CheckRunRow({
           {canRun && active && (
             <ConfirmButton
               title={`Cancel ${run.name}?`}
-              description={`The run on ${shortSha(run.commitSha)} stops, and GitHub shows ${checkStatusContext(run.name)} as an error until the check runs again.`}
+              description={`The run on ${shortSha(run.commitSha)} stops, and GitHub shows ${checkStatusContext(run.name, run.trigger)} as an error until the check runs again.`}
               confirmLabel="Cancel check"
               onConfirm={() => cancel.mutate()}
             >
@@ -625,7 +631,7 @@ function CheckRunDetail({
         </SheetTitle>
         <SheetDescription>
           {data
-            ? `${checkStatusContext(data.name)} · ${shortSha(data.commitSha)}${data.ref ? ` on ${data.ref}` : ''} · ${CHECK_TRIGGER_LABELS[data.trigger]} · queued ${formatDateTime(data.createdAt)}`
+            ? `${checkStatusContext(data.name, data.trigger)} · ${shortSha(data.commitSha)}${data.ref ? ` on ${data.ref}` : ''} · ${CHECK_TRIGGER_LABELS[data.trigger]} · queued ${formatDateTime(data.createdAt)}`
             : 'Loading…'}
         </SheetDescription>
       </SheetHeader>
@@ -692,7 +698,7 @@ function CheckRunDetail({
             )}
             <Detail label="On GitHub" className="col-span-full">
               <span className="flex flex-wrap items-center gap-2">
-                <code className="font-mono">{checkStatusContext(data.name)}</code>
+                <code className="font-mono">{checkStatusContext(data.name, data.trigger)}</code>
                 {data.githubState ? (
                   <GitHubStateBadge state={data.githubState} />
                 ) : (

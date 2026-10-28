@@ -411,6 +411,7 @@ export function createApps(): App[] {
       composeFiles: null,
     },
     checks: noChecks(),
+    checksScheduleNote: null as string | null,
   };
   return [
     {
@@ -434,6 +435,8 @@ export function createApps(): App[] {
         composeFiles: ['compose.preview.yaml'],
       },
       checks: trailChecks(),
+      checksScheduleNote:
+        "Not queued for 2026-10-26 06:00 UTC: 30 queued and 3 new checks would exceed the app's limit of 30",
       activeDeploymentId: fixedId('dep', 2),
       createdAt: ago(60 * 24 * 30),
       updatedAt: ago(60 * 24),

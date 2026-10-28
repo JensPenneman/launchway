@@ -146,8 +146,9 @@ export interface ChecksService {
   closePullRequest(app: AppRow, pr: ClosedPullRequest, actor: RequestActor): Promise<CheckRun[]>;
   /**
    * Webhooks: a branch was deleted. The queued runs of the branch for the commit it pointed at
-   * are cancelled (reason `closed`), unless they also serve another branch's push; the default
-   * branch is never touched. Returns them.
+   * are cancelled (reason `closed`), unless they also serve another branch's push or an open pull
+   * request from another branch at that commit needs them (they become its runs); the default
+   * branch is never touched. Returns the cancelled runs.
    */
   closeBranch(app: AppRow, branch: DeletedBranch, actor: RequestActor): Promise<CheckRun[]>;
   /**
@@ -160,7 +161,10 @@ export interface ChecksService {
   skipScheduled(app: AppRow, slot: Date, schedule: string, note: string): Promise<void>;
   /** Cancels a queued run at once, a running one through its node; answers the run. */
   cancel(id: CheckRunId, actor: RequestActor): Promise<CheckRun>;
-  /** A new run of a finished run's check for the same commit, with the check's current config. */
+  /**
+   * A new run of a finished run's check for the same commit, with the check's current config
+   * (trigger `manual`; a scheduled run's re-run stays `schedule`, so it reports where it did).
+   */
   rerun(id: CheckRunId, actor: RequestActor): Promise<CheckRun>;
   /** SSE source of `GET /checks/{id}/logs`: history, then live lines while queued or running. */
   logStream(id: CheckRunId, query: CheckLogsQuery, signal: AbortSignal): AsyncIterable<SseMessage>;
@@ -351,7 +355,10 @@ export function createChecksService(deps: Deps): ChecksService {
   }
 
   /** Open pull requests of the repository with this head, or null when GitHub cannot tell. */
-  async function openPullRequestsWithHead(app: AppRow, sha: string): Promise<number[] | null> {
+  async function openPullRequestsWithHead(
+    app: AppRow,
+    sha: string,
+  ): Promise<{ number: number; headRef: string }[] | null> {
     try {
       const connection = await getConnection(deps.db, app.connectionId);
       return await providerFor(deps, connection).openPullRequestsWithHead(
@@ -851,26 +858,29 @@ export function createChecksService(deps: Deps): ChecksService {
         .selectDistinct({ commitSha: checkRuns.commitSha })
         .from(checkRuns)
         .where(and(own, eq(checkRuns.status, 'queued')));
-      // Another open pull request with the same head still needs them (one branch, two bases):
-      // they become its runs, so closing that one cancels them. When GitHub cannot tell, they stay.
+      // Another open pull request with the same head still needs them (one branch and two bases,
+      // or two branches at one commit): they become its runs, on its head branch, so closing that
+      // one or deleting this branch cancels them as its own. When GitHub cannot tell, they stay.
       const kept: string[] = [];
-      const handedOver = new Map<string, number>();
+      const handedOver = new Map<string, { number: number; headRef: string }>();
       for (const { commitSha } of candidates) {
         const open = await openPullRequestsWithHead(app, commitSha);
-        const others = (open ?? []).filter((number) => number !== pr.number).sort((a, b) => a - b);
-        if (open === null || others.length > 0) kept.push(commitSha);
-        if (others[0] !== undefined) handedOver.set(commitSha, others[0]);
+        const [other] = (open ?? [])
+          .filter((each) => each.number !== pr.number)
+          .sort((a, b) => a.number - b.number);
+        if (open === null || other !== undefined) kept.push(commitSha);
+        if (other !== undefined) handedOver.set(commitSha, other);
       }
       if (kept.length === candidates.length && handedOver.size === 0) return [];
       const message = `Cancelled: pull request #${pr.number} was ${pr.merged ? 'merged' : 'closed'}`;
       const { cancelled, moved } = await deps.db.transaction(async (tx) => {
         await lockApp(tx, app.id);
         const moved: CheckRunRow[] = [];
-        for (const [commitSha, number] of handedOver) {
+        for (const [commitSha, other] of handedOver) {
           moved.push(
             ...(await tx
               .update(checkRuns)
-              .set({ prNumber: number })
+              .set({ prNumber: other.number, ref: other.headRef })
               .where(and(own, eq(checkRuns.status, 'queued'), eq(checkRuns.commitSha, commitSha)))
               .returning()),
           );
@@ -905,28 +915,67 @@ export function createChecksService(deps: Deps): ChecksService {
     async closeBranch(app, branch, actor) {
       const defaultBranch = branch.defaultBranch ?? (await defaultBranchOf(app));
       if (defaultBranch === null || branch.name === defaultBranch) return [];
+      // Only the commit the branch pointed at: a branch created again meanwhile has others.
+      const ofBranch = and(
+        eq(checkRuns.appId, app.id),
+        eq(checkRuns.ref, branch.name),
+        eq(checkRuns.commitSha, branch.headSha),
+        isNull(checkRuns.alsoRef),
+        inArray(checkRuns.trigger, COPYABLE_TRIGGERS),
+        eq(checkRuns.status, 'queued'),
+      );
+      const [queued] = await deps.db
+        .select({ id: checkRuns.id })
+        .from(checkRuns)
+        .where(ofBranch)
+        .limit(1);
+      if (!queued) return [];
+      // An open pull request from another branch at the same commit still needs them: they become
+      // its runs. Pull requests from this branch close with it. When GitHub cannot tell, they stay.
+      const open = await openPullRequestsWithHead(app, branch.headSha);
+      if (open === null) return [];
+      const [other] = open
+        .filter((each) => each.headRef !== branch.name)
+        .sort((a, b) => a.number - b.number);
       const message = `${BRANCH_DELETED_PREFIX}${branch.name} was deleted`;
-      const cancelled = await deps.db.transaction(async (tx) => {
+      const { cancelled, moved } = await deps.db.transaction(async (tx) => {
         await lockApp(tx, app.id);
-        // Only the commit the branch pointed at: a branch created again meanwhile has others.
-        return cancelQueued(
+        if (other) {
+          const moved = await tx
+            .update(checkRuns)
+            .set({ trigger: 'pull_request', prNumber: other.number, ref: other.headRef })
+            .where(ofBranch)
+            .returning();
+          return { cancelled: [], moved };
+        }
+        const cancelled = await cancelQueued(
           tx,
-          and(
-            eq(checkRuns.appId, app.id),
-            eq(checkRuns.ref, branch.name),
-            eq(checkRuns.commitSha, branch.headSha),
-            isNull(checkRuns.alsoRef),
-            inArray(checkRuns.trigger, COPYABLE_TRIGGERS),
-          ),
+          ofBranch,
           { reason: 'closed', message, summary: { branch: branch.name } },
           actor,
         );
+        return { cancelled, moved: [] as CheckRunRow[] };
       });
+      for (const row of moved) {
+        deps.events.publish({
+          topic: 'checks',
+          action: 'updated',
+          resourceId: row.id,
+          data: { appId: row.appId },
+        });
+      }
       for (const row of cancelled) announceStatus(deps, row);
-      if (cancelled.length > 0) {
+      if (cancelled.length > 0 || moved.length > 0) {
         logger.info(
-          { appId: app.id, branch: branch.name, cancelled: cancelled.length },
-          'queued checks of a deleted branch cancelled',
+          {
+            appId: app.id,
+            branch: branch.name,
+            cancelled: cancelled.length,
+            ...(other ? { handedTo: other.number } : {}),
+          },
+          other
+            ? 'queued checks of a deleted branch handed to an open pull request'
+            : 'queued checks of a deleted branch cancelled',
         );
       }
       return cancelled.map((row) => toCheckRun(row));
@@ -1041,7 +1090,9 @@ export function createChecksService(deps: Deps): ChecksService {
           sha: previous.commitSha,
           ref: previous.ref,
           prNumber: previous.prNumber,
-          trigger: 'manual' as const,
+          // A scheduled run's re-run reports where it did (launchway/<name>/schedule), never over
+          // the verdict of the push on that commit.
+          trigger: previous.trigger === 'schedule' ? ('schedule' as const) : ('manual' as const),
           treeSha: previous.treeSha,
         };
         const [created] = await insertRuns(tx, app, settings, [item], commit, actor, {

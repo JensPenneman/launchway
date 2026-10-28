@@ -1871,6 +1871,61 @@ describe('checks against PostgreSQL', () => {
     ]);
   });
 
+  it('hands the runs of a deleted branch to an open pull request from another branch', async () => {
+    const node = await newNode(false);
+    // Pushes to other branches than main run no checks: only the pull requests queue them.
+    const { app, repo } = await createTestApp(node, {
+      enabled: true,
+      items: [quality],
+      branches: ['main'],
+    });
+    const recreate = async (head: string, from: number, to: number, deleteFirst: boolean) => {
+      const x = `feature/x-${from}`;
+      const y = `feature/y-${to}`;
+      const pulls = fakeRepo(repo).pulls ?? {};
+      pulls[from] = { title: 'First try', headRef: x, headSha: head, state: 'open' };
+      pulls[to] = { title: 'Second try', headRef: y, headSha: head, state: 'open' };
+      fakeRepo(repo).pulls = pulls;
+      await deliver('pull_request', pullRequest(repo, 'opened', from, head, { headRef: x }));
+      await deliver('pull_request', pullRequest(repo, 'opened', to, head, { headRef: y }));
+      const closeFirst = async () => {
+        const pull = pulls[from];
+        if (pull) pull.state = 'closed';
+        await deliver('pull_request', pullRequest(repo, 'closed', from, head, { headRef: x }));
+      };
+      const deleteX = () =>
+        deliver('push', {
+          ref: `refs/heads/${x}`,
+          before: head,
+          after: '0'.repeat(40),
+          deleted: true,
+          sender: human,
+          repository: { ...repository(repo), default_branch: 'main' },
+        });
+      if (deleteFirst) {
+        await deleteX();
+        await closeFirst();
+      } else {
+        await closeFirst();
+        await deleteX();
+      }
+      const runs = (await runsOf(app.id)).filter((r) => r.commitSha === head);
+      expect(runs.map((r) => [r.status, r.trigger, r.prNumber, r.ref])).toEqual([
+        ['queued', 'pull_request', to, y],
+      ]);
+      // They are the second pull request's now: its close cancels them.
+      const second = pulls[to];
+      if (second) second.state = 'closed';
+      await deliver('pull_request', pullRequest(repo, 'closed', to, head, { headRef: y }));
+      expect(
+        (await runsOf(app.id)).filter((r) => r.commitSha === head).map((r) => r.status),
+      ).toEqual(['cancelled']);
+    };
+    // The pull request closes first, or the branch is deleted first (GitHub closes it then).
+    await recreate(sha(`${repo}-recreated-1`), 50, 51, false);
+    await recreate(sha(`${repo}-recreated-2`), 52, 53, true);
+  });
+
   it('keeps runs queued after the close, such as those of a reopen delivered first', async () => {
     const node = await newNode(false);
     const { app, repo } = await createTestApp(node, { enabled: true, items: [quality] });
@@ -1952,6 +2007,25 @@ describe('checks against PostgreSQL', () => {
         new Set(['launchway/quality/schedule']),
       );
       expect(onMain.at(-1)?.body.state).toBe('failure');
+
+      // Its re-run reports there too.
+      const again = await api.request(`/api/v1/checks/${scheduled?.id}/rerun`, json('POST'));
+      expect(again.status).toBe(201);
+      const rerun = (await again.json()) as CheckRun;
+      expect(rerun).toMatchObject({ trigger: 'schedule', triggeredBy: admin.user.id });
+      await until(async () => {
+        await nudge(node);
+        return gateway.checkRuns.some((r) => r.payload.runId === rerun.id);
+      });
+      await sink.onResult(node, { runId: rerun.id, reason: 'exit', exitCode: 0 });
+      await mirror.idle();
+      const afterRerun = github.commitStatuses.filter(
+        (s) => s.repo === `octo/${repo}` && s.sha === mainSha,
+      );
+      expect(new Set(afterRerun.map((s) => s.body.context))).toEqual(
+        new Set(['launchway/quality/schedule']),
+      );
+      expect(afterRerun.at(-1)?.body.state).toBe('success');
 
       // A full queue: the slot is used, nothing is queued, the Checks tab says why.
       const limits = await api.request(

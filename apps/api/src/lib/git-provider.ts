@@ -33,10 +33,14 @@ export interface GitProvider {
   /** The repository's default branch. */
   defaultBranch(owner: string, repo: string): Promise<string>;
   /**
-   * Numbers of the open pull requests from a branch of the repository itself (not a fork) whose
-   * head is the commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`).
+   * The open pull requests from a branch of the repository itself (not a fork) whose head is the
+   * commit (`GET /repos/{owner}/{repo}/commits/{sha}/pulls`), with their head branches.
    */
-  openPullRequestsWithHead(owner: string, repo: string, sha: string): Promise<number[]>;
+  openPullRequestsWithHead(
+    owner: string,
+    repo: string,
+    sha: string,
+  ): Promise<{ number: number; headRef: string }[]>;
 }
 
 /** What previews need to know about a pull request. */
@@ -191,7 +195,11 @@ const RawCommitPulls = z.array(
   z.object({
     number: z.number().int().positive(),
     state: z.string(),
-    head: z.object({ sha: z.string(), repo: z.object({ full_name: z.string() }).nullable() }),
+    head: z.object({
+      ref: z.string(),
+      sha: z.string(),
+      repo: z.object({ full_name: z.string() }).nullable(),
+    }),
     base: z.object({ repo: z.object({ full_name: z.string() }) }),
   }),
 );
@@ -443,7 +451,7 @@ function createGitHubProvider(
               pr.head.sha === sha &&
               pr.head.repo?.full_name.toLowerCase() === pr.base.repo.full_name.toLowerCase(),
           )
-          .map((pr) => pr.number);
+          .map((pr) => ({ number: pr.number, headRef: pr.head.ref }));
       }),
   };
 }

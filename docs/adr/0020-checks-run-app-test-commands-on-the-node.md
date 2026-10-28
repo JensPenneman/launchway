@@ -226,17 +226,27 @@ shape the design:
   commit of it.
 - Queue hygiene (follow-up of this decision), since one node runs one check
   at a time and its queue reached 90 minutes of work:
-  - A `pull_request` `closed` event (merged or not) cancels the pull
-    request's queued runs (reason `closed`; GitHub: error, "Pull request
-    closed"): the runs of its number on its head branch, in the apps the
-    delivery's connection links to the delivery's repository, so a delivery
-    for one repository never cancels another's runs. Running runs finish: a
-    merged pull request's result can still serve the merge commit (next
-    point), and cancelling would throw away work already done. Runs that also
-    serve a push of another branch (`alsoRef`, set when a push of the same
-    commit is deduplicated into a run of another branch) stay, so a
-    fast-forward merge keeps its checks; manual runs and re-runs stay.
-    Cancelled runs never ran, so they do not count for the deduplication.
+  - A `pull_request` `closed` event (merged or not) cancels the queued runs
+    the pull request started (reason `closed`; GitHub: error, "Pull request
+    closed"): trigger `pull_request`, its number, its head branch, queued
+    before its `closed_at` (a reopen delivered before the close keeps its
+    runs), in the apps the delivery's connection links to the delivery's
+    repository, so a delivery for one repository never cancels another's
+    runs. Push runs are never cancelled by a pull request, even when it
+    shares them: a pull request's run that the push of its own branch uses
+    becomes a push run. Runs of the default branch stay (the branch from the
+    event, else GitHub's API; when neither tells, nothing is cancelled), and
+    so do runs another open pull request with the same head needs (`GET
+    /repos/{owner}/{repo}/commits/{sha}/pulls`; they become that pull
+    request's runs, and when GitHub cannot tell they stay), runs that serve a
+    push of another branch (`alsoRef`, set when a push of the same commit is
+    deduplicated into a run of another branch, so a fast-forward merge keeps
+    its checks), and manual runs and re-runs. Running runs finish: a merged
+    pull request's result can still serve the merge commit (next point), and
+    cancelling would throw away work already done. A deleted branch (`push`
+    with `deleted`) cancels its queued runs of the commit it pointed at
+    (GitHub: "Branch deleted"), never the default branch's. Cancelled runs
+    never ran, so they do not count for the deduplication.
   - Same-tree copies: a push or pull request run whose commit has the tree of
     a commit for which the same check ran and exited within seven days ends
     at once as a copy of that run (status and exit code, reason `same-tree`,
@@ -257,8 +267,18 @@ shape the design:
     branch (trigger `schedule`) once per slot: the app's last slot is stored
     (`checks_last_slot`, also set when the schedule changes, so a new
     schedule starts with its next slot), and the slot is claimed under the
-    app row lock together with the runs. It runs whether or not webhooks run
-    the checks, and counts against the queue bounds.
+    app row lock together with the runs. Scheduled runs report as
+    `launchway/<name>/schedule`, so they never replace the push's verdict on
+    the default branch's head, nor hold it at pending. At a full queue the
+    slot is used without runs (no errored runs) and `checks_schedule_note`
+    says why on the Checks tab; a slot whose GitHub lookups fail is tried
+    after 1, 2, 4 and 8 minutes, then used the same way. It runs whether or
+    not webhooks run the checks, and counts against the queue bounds.
+  - The dispatcher's claim waits for a row another statement holds for a
+    moment (the status mirror, a cancel, a copy) instead of skipping it
+    (`FOR UPDATE`, not `SKIP LOCKED`), so the oldest run goes first;
+    concurrent claims of one node meet at that row or at the one-running-run
+    index.
   - The API reports a queued run's place in its node's queue (`queuedBehind`),
     which the Checks tab shows with the copy provenance.
 - The Compose file preflight applies to deployments as well: `include`,

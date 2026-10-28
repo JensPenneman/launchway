@@ -551,13 +551,20 @@ dependencies first.
   whichever commit it is (a force-push back to a commit runs its checks
   again); a push and a pull request of the same commit run once, and the run
   shows both (a pull request's run that a push to `main` uses too says "also
-  main").
-- **Closed pull requests.** When a pull request is closed or merged, its
-  queued checks end at once with *cancelled*, reason `closed`, and GitHub
-  shows "Pull request closed" on its head commit. A check that already runs
-  finishes: the merge commit of an up-to-date pull request has the same files
-  and gets its result (next point). Runs that also serve a push of another
-  branch stay, and so do runs started by hand.
+  main"; a pull request's run that the push of its own branch uses becomes a
+  push run).
+- **Closed pull requests and deleted branches.** When a pull request is
+  closed or merged, the queued checks it started (trigger *pull request*,
+  queued before it closed) end at once with *cancelled*, reason `closed`,
+  and GitHub shows "Pull request closed" on its head commit. A check that
+  already runs finishes: the merge commit of an up-to-date pull request has
+  the same files and gets its result (next point). These stay: push runs
+  (also those a pull request shares), runs of the default branch, runs that
+  another open pull request with the same head still needs (they become its
+  runs), runs that serve a push of another branch, and runs started by hand.
+  When a branch is deleted, its queued checks of the commit it pointed at
+  end the same way, with "Branch deleted" on GitHub; the default branch's
+  never do.
 - **Same files, same result.** A push or pull request whose commit has the
   same tree (the same files) as a commit the same check ran and exited for
   in the last seven days does not run that check again: the run ends at once
@@ -574,11 +581,16 @@ dependencies first.
   if that matters.
 - **On a schedule.** With a schedule, the checks also run for the head of
   the repository's default branch at each slot (trigger `schedule`), whether
-  or not pushes run them, and report on that commit like any run. Each slot
-  runs once; slots missed while the control plane was down run once, late;
-  a check that is still queued or running for that commit is not queued
-  again. Changing the schedule starts it from its next slot. Scheduled runs
-  count against the queue bounds.
+  or not pushes run them. GitHub shows them as `launchway/<name>/schedule`,
+  so they never replace the verdict of the push (`launchway/<name>`) that
+  branch protection and release workflows read, nor hold it at pending
+  while they wait. Each slot runs once; slots missed while the control
+  plane was down run once, late; a check that is still queued or running
+  for that commit is not queued again. Changing the schedule starts it from
+  its next slot. When the queue is full at a slot, nothing is queued (no
+  *error* on the branch): the slot is used and the **Checks** tab says why,
+  until a slot queues runs again. A slot whose GitHub lookups fail is tried
+  again after 1, 2, 4 and 8 minutes, then used without runs, with a note.
 - **A bounded queue.** An app may have at most `checkMaxQueuedPerApp` (30)
   checks waiting and a node at most `checkMaxQueuedPerNode` (100); both are
   at least 10, since a commit queues all its checks or none. The checks of a
@@ -681,6 +693,9 @@ is fixed.
   minutes end with *error*.
 - **A check says "Same tree as …" but should run.** Its result came from a
   commit with the same files (reason `same-tree`); **Re-run** runs it.
+- **"Schedule: Not queued for …" on the Checks tab.** The last slot of the
+  schedule queued nothing: the queue was full, or GitHub did not answer. The
+  next slot tries again; **Run checks** runs them now.
 - **"Not run: … would exceed the app's limit".** The queue of the app or
   its node was full (reason `queue-full`). Wait for the queue to drain, then
   push again or **Re-run**, or raise the limits under **Settings → Platform →
@@ -939,9 +954,13 @@ the UI shows those nodes with an error until they are upgraded.
   copies** reuse verdicts of the last seven days for pushes and pull
   requests (*What a check runs with*). Runs from before the upgrade have no
   tree, so they are never reused.
-- **Schedules** are off until an app sets one.
+- **Schedules** are off until an app sets one; scheduled runs report as
+  `launchway/<name>/schedule`, so branch protection keeps requiring the
+  contexts it requires now.
 - Nothing changes for GitHub Apps: the tree of a commit is read with the
-  *Contents* permission that clones use already.
+  *Contents* permission that clones use already, and the open pull requests
+  of a commit with *Pull requests: Read*, which Launchway's GitHub App has
+  for previews.
 
 ### Upgrading to 0.5.0
 

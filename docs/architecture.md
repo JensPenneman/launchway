@@ -300,14 +300,18 @@ reported to GitHub as commit statuses that branch protection can require
   before a node took them; a push of another branch deduplicated into a run
   is its `alsoRef`), a newer push of a branch cancels the queued runs of the
   other commits of that branch, and runs beyond the queue bounds end at once
-  as `errored` (`queue-full`). `pull_request` `closed` cancels the pull
-  request's queued runs (`closed`). A push or pull request run whose commit
-  has the tree (`treeSha`, from the push event or `GET
-  /repos/{owner}/{repo}/git/commits/{sha}`) of a run of the same app and
-  check snapshot that exited within seven days ends as its copy (`same-tree`,
-  `copiedFrom`), when queued, when that run ends or when the dispatcher takes
-  it. The schedule pass (every minute) queues the default branch's head once
-  per slot (`schedule`, `apps.checks_last_slot`).
+  as `errored` (`queue-full`). `pull_request` `closed` cancels the queued
+  runs the pull request started (`closed`; never push runs, the default
+  branch's, or runs another open pull request with the same head needs), and
+  a deleted branch its queued runs of the commit it pointed at. A push or
+  pull request run whose commit has the tree (`treeSha`, from the push event
+  or `GET /repos/{owner}/{repo}/git/commits/{sha}`) of a run of the same app
+  and check snapshot that exited within seven days ends as its copy
+  (`same-tree`, `copiedFrom`), when queued, when that run ends or when the
+  dispatcher takes it. The schedule pass (every minute) queues the default
+  branch's head once per slot (`schedule`, `apps.checks_last_slot`; reported
+  as `launchway/<name>/schedule`; a full queue or failing GitHub lookups
+  leave `apps.checks_schedule_note` instead of runs).
   `POST /apps/{id}/checks` `{ ref, names? }` runs them by hand (the only
   webhook-free trigger besides the schedule for token connections); `POST
   /checks/{id}/rerun` and `POST /checks/{id}/cancel` act on one run. Queued

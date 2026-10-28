@@ -1,12 +1,19 @@
 import { type AppChecksSettings, DEFAULT_APP_CHECKS_SETTINGS } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
-import { type ChecksForm, newCheckItem, parseChecksForm, toChecksForm } from './checks-form';
+import {
+  type ChecksForm,
+  newCheckItem,
+  parseChecksForm,
+  scheduleHint,
+  toChecksForm,
+} from './checks-form';
 
 const SETTINGS: AppChecksSettings = {
   enabled: true,
   composeFiles: ['.devcontainer/compose.yaml', '.devcontainer/compose.ci.yaml'],
   branches: ['main', 'release'],
   skipBots: true,
+  schedule: '0 6 * * 1',
   items: [
     { name: 'quality', command: 'pnpm check', service: 'dev', timeoutMinutes: 30 },
     {
@@ -30,6 +37,7 @@ describe('toChecksForm', () => {
       composeFiles: '.devcontainer/compose.yaml\n.devcontainer/compose.ci.yaml',
       branches: 'main, release',
       skipBots: true,
+      schedule: '0 6 * * 1',
       items: [
         {
           name: 'quality',
@@ -82,6 +90,7 @@ describe('parseChecksForm', () => {
         composeFiles: ['.devcontainer/compose.yaml'],
         branches: ['main', 'develop', 'release'],
         skipBots: true,
+        schedule: '0 6 * * 1',
         // Empty service and timeout take the defaults; no Compose file of its own.
         items: [{ name: 'lint', command: 'pnpm lint', service: 'dev', timeoutMinutes: 30 }],
       },
@@ -91,6 +100,26 @@ describe('parseChecksForm', () => {
   it('sends null branches (every branch) and an empty list of checks', () => {
     const result = parseChecksForm(form({ branches: '  ', items: [] }));
     expect(result.success && result.data).toMatchObject({ branches: null, items: [] });
+  });
+
+  it('sends an empty schedule as none and refuses one that runs more than hourly', () => {
+    expect(parseChecksForm(form({ schedule: '  ' }))).toMatchObject({
+      success: true,
+      data: { schedule: null },
+    });
+    expect(parseChecksForm(form({ schedule: '*/10 * * * *' }))).toEqual({
+      success: false,
+      errors: { schedule: 'Use one minute (0-59): scheduled checks run at most once an hour' },
+    });
+  });
+
+  it('tells when a schedule runs next, in UTC', () => {
+    const now = new Date('2026-10-28T12:00:00Z');
+    expect(scheduleHint('0 6 * * 1', now)).toBe(
+      'Next run Mon, 2 Nov 2026, 06:00 UTC, for the head of the default branch, whether or not pushes run the checks.',
+    );
+    expect(scheduleHint('', now)).toMatch(/^Optional: a cron expression/);
+    expect(scheduleHint('0 6 * *', now)).toBe('minute hour day-of-month month day-of-week, in UTC');
   });
 
   it('starts new checks with the default service and timeout', () => {

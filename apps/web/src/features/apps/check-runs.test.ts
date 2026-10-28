@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { checkLogEmptyText, checkRunOutcome, checkRunStartedLabel } from './check-runs';
+import {
+  checkLogEmptyText,
+  checkRunOutcome,
+  checkRunQueueLabel,
+  checkRunStartedLabel,
+} from './check-runs';
 
 const NOW = Date.parse('2026-10-27T12:00:00.000Z');
 
@@ -24,6 +29,21 @@ describe('checkRunOutcome', () => {
       'A newer commit of the branch arrived while it waited',
     );
     expect(checkRunOutcome({ reason: null, exitCode: null, timeoutMinutes: 30 })).toBeNull();
+    expect(checkRunOutcome({ reason: 'closed', exitCode: null, timeoutMinutes: 30 })).toBe(
+      'Its pull request was closed or merged before it ran',
+    );
+    expect(checkRunOutcome({ reason: 'same-tree', exitCode: 0, timeoutMinutes: 30 })).toMatch(
+      /^Not run: the same check had run for a commit with the same files/,
+    );
+  });
+});
+
+describe('checkRunQueueLabel', () => {
+  it("tells a queued run's place on its node", () => {
+    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 0 })).toBe('next on its node');
+    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 1 })).toBe('behind 1 run');
+    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 5 })).toBe('behind 5 runs');
+    expect(checkRunQueueLabel({ status: 'running', queuedBehind: null })).toBeNull();
   });
 });
 

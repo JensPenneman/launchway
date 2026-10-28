@@ -27,7 +27,13 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { statusesBlocked } from '@/features/settings/github-capabilities';
-import { type ChecksForm, newCheckItem, parseChecksForm, toChecksForm } from './checks-form';
+import {
+  type ChecksForm,
+  newCheckItem,
+  parseChecksForm,
+  scheduleHint,
+  toChecksForm,
+} from './checks-form';
 
 const resolver: Resolver<ChecksForm, unknown, UpdateAppChecksSettings> = async (values) => {
   const result = parseChecksForm(values);
@@ -133,6 +139,13 @@ export function ChecksCard({ app }: { app: App }) {
             description="Exact branch names, separated by commas or spaces: pushes to these branches and pull requests into them run the checks. Leave empty for every branch."
           >
             <Input className="font-mono" placeholder="main" {...form.register('branches')} />
+          </Field>
+          <Field
+            label="Schedule (UTC)"
+            error={errors.schedule?.message}
+            description={scheduleHint(form.watch('schedule'))}
+          >
+            <Input className="font-mono" placeholder="0 6 * * 1" {...form.register('schedule')} />
           </Field>
           <Field
             label="Compose files of the checks"

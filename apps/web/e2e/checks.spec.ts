@@ -32,6 +32,21 @@ test('lists the check runs of an app page by page and filters them', async ({ pa
   await expect(rows.nth(1)).toContainText('launchway/test');
 });
 
+test('shows where queued runs wait and which result a same-tree run reused', async ({ page }) => {
+  await page.goto(`/apps/${TRAIL_APP_ID}?tab=checks`);
+  await expect(runRow(page, 'test', 'PR #42')).toContainText('behind 1 run');
+  await expect(runRow(page, 'e2e', 'PR #42')).toContainText('behind 2 runs');
+  const copy = runRow(page, 'test', 'main').filter({ hasText: 'same tree' }).first();
+  await copy.getByRole('button', { name: 'Logs' }).click();
+  const drawer = page.getByRole('dialog', { name: /Check test/ });
+  await expect(drawer).toContainText(/Same tree as [0-9a-f]{7}, passed in 3m 12s/);
+  await expect(drawer).toContainText(
+    'No output: this run reused the result of a run of the same tree',
+  );
+  await drawer.getByRole('button', { name: 'The run of the same tree' }).click();
+  await expect(drawer.getByRole('log', { name: 'Log output' })).toContainText('Test Files');
+});
+
 test('opens the log of a run from the list and from its URL', async ({ page }) => {
   await page.goto(`/apps/${TRAIL_APP_ID}?tab=checks`);
   await runRow(page, 'e2e', 'failed').getByRole('button', { name: 'Logs' }).click();
@@ -128,6 +143,13 @@ test('configures the checks of an app in its settings', async ({ page }) => {
   await second.getByLabel('Timeout (minutes)', { exact: true }).fill('10');
 
   await form.getByLabel('Branches').fill('main, release');
+  await form.getByLabel('Schedule (UTC)').fill('*/10 * * * *');
+  await form.getByLabel('Schedule (UTC)').blur();
+  await expect(form.getByText(/at most once an hour/)).toBeVisible();
+  await form.getByLabel('Schedule (UTC)').fill('0 6 * * 1');
+  await expect(
+    form.getByText(/^Next run .* UTC, for the head of the default branch/),
+  ).toBeVisible();
   await form.getByLabel('Run checks for pushes and pull requests').click();
   await form.getByRole('button', { name: 'Save check settings' }).click();
   await expect(page.getByText('Check settings saved')).toBeVisible();

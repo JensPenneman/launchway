@@ -1,6 +1,7 @@
 ALTER TYPE "public"."check_run_trigger" ADD VALUE 'schedule';--> statement-breakpoint
 ALTER TABLE "apps" ALTER COLUMN "checks" SET DEFAULT '{"enabled":false,"composeFiles":[".devcontainer/compose.yaml"],"branches":null,"skipBots":false,"items":[],"schedule":null}'::jsonb;--> statement-breakpoint
 ALTER TABLE "apps" ADD COLUMN "checks_last_slot" timestamp with time zone;--> statement-breakpoint
+ALTER TABLE "apps" ADD COLUMN "checks_schedule_note" text;--> statement-breakpoint
 ALTER TABLE "check_runs" ADD COLUMN "tree_sha" text;--> statement-breakpoint
 ALTER TABLE "check_runs" ADD COLUMN "copied_from_id" text;--> statement-breakpoint
 ALTER TABLE "check_runs" ADD COLUMN "also_ref" text;--> statement-breakpoint

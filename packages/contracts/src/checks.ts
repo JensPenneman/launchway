@@ -50,8 +50,9 @@ export type CheckRunTrigger = z.infer<typeof CheckRunTrigger>;
  * node was offline too long or went away), `lost` (the node no longer reports it), `unsupported`
  * (the node's agent does not run checks), `dispatch` (the control plane could not prepare it),
  * `queue-full` (the app or its node already had as many queued runs as the platform allows),
- * `closed` (its pull request was closed or merged before it ran) and `same-tree` (not run: a run
- * of the same check for a commit with the same tree had finished, and its result was reused).
+ * `closed` (its pull request was closed or merged, or its branch deleted, before it ran) and
+ * `same-tree` (not run: a run of the same check for a commit with the same tree had finished, and
+ * its result was reused).
  */
 export const CHECK_RUN_REASONS = [
   'exit',
@@ -93,9 +94,13 @@ export const GitHubCommitStatusState = z
   .openapi('GitHubCommitStatusState');
 export type GitHubCommitStatusState = z.infer<typeof GitHubCommitStatusState>;
 
-/** GitHub status context of a check (`launchway/<name>`), the name branch protection requires. */
-export function checkStatusContext(name: string): string {
-  return `launchway/${name}`;
+/**
+ * GitHub status context of a check (`launchway/<name>`), the name branch protection requires.
+ * Scheduled runs report as `launchway/<name>/schedule`, so they never replace the verdict of the
+ * push or pull request on the same commit, nor hold it at pending.
+ */
+export function checkStatusContext(name: string, trigger?: CheckRunTrigger): string {
+  return trigger === 'schedule' ? `launchway/${name}/schedule` : `launchway/${name}`;
 }
 
 /**

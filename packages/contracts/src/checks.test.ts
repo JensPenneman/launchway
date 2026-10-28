@@ -139,6 +139,8 @@ describe('check runs', () => {
     expect(project).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
     expect(checkImageName('trail', 'dev')).toBe('launchway-check/trail-dev');
     expect(checkStatusContext('e2e')).toBe('launchway/e2e');
+    expect(checkStatusContext('e2e', 'push')).toBe('launchway/e2e');
+    expect(checkStatusContext('e2e', 'schedule')).toBe('launchway/e2e/schedule');
   });
 
   it('recognises references to the image namespace of checks', () => {

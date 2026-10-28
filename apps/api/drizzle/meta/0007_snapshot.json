@@ -1,5 +1,5 @@
 {
-  "id": "6ac2c967-148d-4109-a0ad-8ab004b5b479",
+  "id": "45322751-8fa6-4b8d-a261-ad954137829f",
   "prevId": "cded65c0-41bd-418e-892e-cf167bdbb435",
   "version": "7",
   "dialect": "postgresql",
@@ -132,6 +132,12 @@
         "checks_last_slot": {
           "name": "checks_last_slot",
           "type": "timestamp with time zone",
+          "primaryKey": false,
+          "notNull": false
+        },
+        "checks_schedule_note": {
+          "name": "checks_schedule_note",
+          "type": "text",
           "primaryKey": false,
           "notNull": false
         },

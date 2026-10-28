@@ -7,7 +7,7 @@ import type {
   DomainId,
   DomainPage,
 } from '@launchway/contracts';
-import { and, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import pg from 'pg';
 import { afterAll, beforeAll, describe, expect, inject, it } from 'vitest';
 import { createApp } from '../../src/app.js';
@@ -278,10 +278,12 @@ describe('DNS accounts, zones, records and domains against PostgreSQL', () => {
     const flaky = createDomainsService(deps, { resolver: timingOut });
     expect(await flaky.verify(domain.id, actor)).toMatchObject({ ok: false, status: 'active' });
 
+    // In the order they happened: without an ORDER BY, PostgreSQL may return them in any order.
     const audit = await db
       .select({ action: auditEvents.action, actorType: auditEvents.actorType })
       .from(auditEvents)
-      .where(eq(auditEvents.targetId, domain.id));
+      .where(eq(auditEvents.targetId, domain.id))
+      .orderBy(asc(auditEvents.createdAt), asc(auditEvents.id));
     expect(audit.map((row) => row.action)).toEqual([
       'domain.create',
       'domain.verify',

@@ -137,7 +137,9 @@ describe('check runs', () => {
     const project = checkProjectName('trail', runId);
     expect(project).toBe(`launchway-check_trail_${runId.slice(4)}`);
     expect(project).toMatch(/^[a-z0-9][a-z0-9_-]*$/);
-    expect(checkImageName('trail', 'dev')).toBe('launchway-check/trail-dev');
+    expect(checkImageName('trail', 'dev', runId)).toBe(
+      `launchway-check/trail-dev:${runId.slice(4)}`,
+    );
     expect(checkStatusContext('e2e')).toBe('launchway/e2e');
     expect(checkStatusContext('e2e', 'push')).toBe('launchway/e2e');
     expect(checkStatusContext('e2e', 'schedule')).toBe('launchway/e2e/schedule');

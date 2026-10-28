@@ -6,6 +6,7 @@ import {
   CHECK_LOG_LINE_LIMIT,
   type CheckResultPayload,
   type CheckRunPayload,
+  checkImageName,
   checkProjectName,
   generateId,
   type LogLine,
@@ -186,6 +187,22 @@ function gate(result: Partial<RunResult> = {}) {
   return { handler, release: () => release(), entered: () => entered };
 }
 
+/** A `compose run` handler: every command waits for `release()`, or ends when aborted. */
+function held() {
+  let release: () => void = () => {};
+  const opened = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const handler: Handler = (call) =>
+    new Promise((resolve) => {
+      call.options.signal?.addEventListener('abort', () => resolve({ code: null, aborted: true }), {
+        once: true,
+      });
+      void opened.then(() => resolve({ code: 0 }));
+    });
+  return { handler, release: () => release() };
+}
+
 let root: string;
 let messages: AgentToServerMessage[];
 let fake: Fake;
@@ -298,6 +315,7 @@ describe('CheckManager', () => {
     const checks = manager();
     const run = payload();
     const project = checkProjectName('trail', run.runId);
+    const image = checkImageName('trail', 'dev', run.runId);
     checks.run('req-1', run);
     await waitFor(() => results().length === 1);
     await cleanedUp(run);
@@ -334,6 +352,7 @@ describe('CheckManager', () => {
       'docker volume rm',
       'docker volume ls',
       'docker network ls',
+      'docker image rm',
       'docker image prune',
       // The check builder: its cache mounts emptied, its cache pruned to its bound.
       'docker buildx',
@@ -426,7 +445,7 @@ describe('CheckManager', () => {
       '--mount',
       `type=volume,src=${project}_source,dst=/src,volume-nocopy`,
       '--',
-      'launchway-check/trail-dev',
+      image,
     ]);
     expect(callsOf('docker cp')[0]?.args).toEqual([
       'cp',
@@ -435,7 +454,7 @@ describe('CheckManager', () => {
     ]);
     expect(callsOf('docker run')[0]?.args.slice(-7)).toEqual([
       '--',
-      'launchway-check/trail-dev',
+      image,
       '-R',
       '-h',
       '--',
@@ -466,7 +485,8 @@ describe('CheckManager', () => {
       '--',
       `${project}_source`,
     ]);
-    // Only this app's dangling check images.
+    // The image the run built, by its tag of the run, then this app's dangling check images.
+    expect(callsOf('docker image rm')[0]?.args).toEqual(['image', 'rm', '--', image]);
     expect(callsOf('docker image prune')[0]?.args).toEqual([
       'image',
       'prune',
@@ -548,7 +568,7 @@ describe('CheckManager', () => {
     );
     const services = document.services as Record<string, Record<string, unknown>>;
     expect(document.name).toBe(project);
-    expect(services.dev?.image).toBe('launchway-check/trail-dev');
+    expect(services.dev?.image).toBe(checkImageName('trail', 'dev', run.runId));
     expect(services.dev?.labels).toEqual({ 'launchway.check': run.runId });
     expect(services.db?.configs).toEqual([
       { source: 'launchway-check-file-1', target: '/docker-entrypoint-initdb.d/init.sql' },
@@ -594,71 +614,187 @@ describe('CheckManager', () => {
     expect(callsOf('compose down')).toHaveLength(1);
   });
 
-  it('cancels a queued run at once and keeps the order of the others', async () => {
-    const first = gate();
-    fake.on['compose run'] = first.handler;
+  it('runs every run it gets at once, each with names, files and a log of its own', async () => {
+    const commands = held();
+    fake.on['compose run'] = commands.handler;
     const checks = manager();
     const [a, b, c] = [payload(), payload(), payload()];
     checks.run('req-a', a);
     checks.run('req-b', b);
     checks.run('req-c', c);
-    await waitFor(() => first.entered() === 1);
-    expect(checks.cancel(b.runId)).toBe(true);
-    expect(results()).toEqual([
-      { id: 'req-b', runId: b.runId, reason: 'cancelled', exitCode: null },
-    ]);
-    expect(checks.activeCheckRunIds()).toEqual([a.runId, c.runId]);
-    first.release();
+    // The API decides how many run at once; the agent runs what it gets, side by side.
+    await waitFor(() => callsOf('compose run').length === 3);
+    expect(results()).toEqual([]);
+    expect(checks.activeCheckRunIds()).toEqual([a.runId, b.runId, c.runId]);
+    const projectOf = (call: Call) => call.args[call.args.indexOf('-p') + 1];
+    const nameOf = (call: Call) => call.args[call.args.indexOf('--name') + 1];
+    const runs = callsOf('compose run');
+    // In any order: their builds take turns in the check builder.
+    const each = (name: (run: CheckRunPayload) => string) => [a, b, c].map(name).sort();
+    const project = (run: CheckRunPayload) => checkProjectName('trail', run.runId);
+    expect(runs.map(projectOf).sort()).toEqual(each(project));
+    expect(runs.map(nameOf).sort()).toEqual(each((run) => `${project(run)}-check`));
+    expect(new Set(runs.map((call) => call.options.cwd)).size).toBe(3);
+    expect(callsOf('docker container create').map(nameOf).sort()).toEqual(
+      each((run) => `${project(run)}-source`),
+    );
+    // Every run builds and runs an image tagged with the run, never one another run retags.
+    expect(
+      callsOf('docker run')
+        .map((call) => call.args.at(-6))
+        .sort(),
+    ).toEqual(each((run) => checkImageName('trail', 'dev', run.runId)));
+    for (const [id, run] of [
+      ['req-a', a],
+      ['req-b', b],
+      ['req-c', c],
+    ] as const) {
+      const lines = linesOf(id);
+      expect(lines.map((l) => l.seq)).toEqual(lines.map((_, i) => i));
+      const ofRun = (m: AgentToServerMessage) =>
+        (m.type === 'check.log' || m.type === 'check.result') && m.payload.runId === run.runId;
+      expect(messages.filter((m) => m.id === id).every(ofRun)).toBe(true);
+    }
+    commands.release();
     await waitFor(() => results().length === 3);
-    expect(results().map((r) => r.id)).toEqual(['req-b', 'req-a', 'req-c']);
-    // One run at a time: c only fetched after a was cleaned up; b never ran.
-    expect(callsOf('git init')).toHaveLength(2);
-    const firstDown = fake.events.indexOf('compose down');
-    const secondInit = fake.events.lastIndexOf('git init');
-    expect(firstDown).toBeLessThan(secondInit);
+    for (const run of [a, b, c]) await cleanedUp(run);
+    expect(results().map((r) => r.reason)).toEqual(['exit', 'exit', 'exit']);
+    expect(callsOf('compose down')).toHaveLength(3);
   });
 
-  it('cancels a running run: reports at once, kills its container, cleans up before the next', async () => {
-    fake.on['compose run'] = blockUntilAborted;
+  it('cancels one of the runs: reports at once, stops and cleans up its own, the others go on', async () => {
+    const commands = held();
+    fake.on['compose run'] = commands.handler;
     const checks = manager();
     const [a, b] = [payload(), payload()];
     checks.run('req-a', a);
     checks.run('req-b', b);
-    await waitFor(() => callsOf('compose run').length === 1);
+    await waitFor(() => callsOf('compose run').length === 2);
     expect(checks.cancel(a.runId)).toBe(true);
     // Reported synchronously, before the container is even killed.
     expect(results()).toEqual([
       { id: 'req-a', runId: a.runId, reason: 'cancelled', exitCode: null },
     ]);
     expect(checks.cancel(a.runId)).toBe(false);
-    await waitFor(() => callsOf('compose run').length === 2);
-    const project = checkProjectName('trail', a.runId);
-    expect(callsOf('docker kill')[0]?.args).toEqual(['kill', '--', `${project}-check`]);
-    const events = fake.events;
-    expect(events.indexOf('compose down')).toBeLessThan(events.lastIndexOf('git init'));
-    expect(checks.cancel(b.runId)).toBe(true);
+    expect(checks.activeCheckRunIds()).toEqual([b.runId]);
+    await cleanedUp(a);
+    const own = checkProjectName('trail', a.runId);
+    const other = checkProjectName('trail', b.runId);
+    expect(callsOf('docker kill').map((call) => call.args)).toEqual([
+      ['kill', '--', `${own}-check`],
+      ['kill', '--', `${own}-check`],
+    ]);
+    // The cleanup names only the cancelled run: its label, project, source volume and image.
+    const cleanup = fake.calls.slice(fake.calls.indexOf(callsOf('compose down')[0] as Call) - 1);
+    expect(cleanup[0]?.args).toContain(`label=launchway.check=${a.runId}`);
+    for (const call of cleanup) expect(call.args.join(' ')).not.toContain(b.runId.slice(4));
+    expect(callsOf('compose down').map((call) => call.args[call.args.indexOf('-p') + 1])).toEqual([
+      own,
+    ]);
+    expect(callsOf('docker image rm')[0]?.args).toEqual([
+      'image',
+      'rm',
+      '--',
+      checkImageName('trail', 'dev', a.runId),
+    ]);
+    expect(resultOf('req-b')).toBeUndefined();
+    commands.release();
     await waitFor(() => results().length === 2);
+    expect(resultOf('req-b')).toEqual({ runId: b.runId, reason: 'exit', exitCode: 0 });
+    await cleanedUp(b);
+    expect(callsOf('compose down').map((call) => call.args[call.args.indexOf('-p') + 1])).toEqual([
+      own,
+      other,
+    ]);
     // Nothing is logged after the result.
     const after = messages.findIndex((m) => m.id === 'req-a' && m.type === 'check.result');
     expect(messages.slice(after + 1).some((m) => m.id === 'req-a')).toBe(false);
   });
 
-  it('keeps the slot until the cleanup finished, though the run is no longer active', async () => {
+  it('reports a run before its cleanup and starts the next one meanwhile', async () => {
     const down = gate();
     fake.on['compose down'] = down.handler;
+    const checks = manager();
+    const a = payload();
+    checks.run('req-a', a);
+    await waitFor(() => down.entered() === 1);
+    expect(resultOf('req-a')).toMatchObject({ reason: 'exit', exitCode: 0 });
+    expect(checks.activeCheckRunIds()).toEqual([]);
+    expect(checks.cancel(a.runId)).toBe(false);
+    const b = payload();
+    checks.run('req-b', b);
+    await waitFor(() => callsOf('compose run').length === 2);
+    expect(callsOf('git init')).toHaveLength(2);
+    down.release();
+    await waitFor(() => results().length === 2);
+    await cleanedUp(a);
+    await cleanedUp(b);
+  });
+
+  it('builds one run at a time in the check builder, prunes it between builds, runs side by side', async () => {
+    const build = gate();
+    fake.on['compose build'] = build.handler;
+    const commands = held();
+    fake.on['compose run'] = commands.handler;
     const checks = manager();
     const [a, b] = [payload(), payload()];
     checks.run('req-a', a);
     checks.run('req-b', b);
-    await waitFor(() => down.entered() === 1);
-    expect(resultOf('req-a')).toMatchObject({ reason: 'exit', exitCode: 0 });
-    expect(checks.activeCheckRunIds()).toEqual([b.runId]);
-    expect(checks.cancel(a.runId)).toBe(false);
+    await waitFor(() => build.entered() === 1);
     await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(callsOf('git init')).toHaveLength(1);
-    down.release();
+    // b waits for the builder: its cache mounts are emptied only once a's build is done.
+    expect(build.entered()).toBe(1);
+    expect(callsOf('docker update')).toHaveLength(1);
+    expect(callsOf('compose config')).toHaveLength(2);
+    build.release();
+    await waitFor(() => callsOf('compose run').length === 2);
+    expect(build.entered()).toBe(2);
+    const events = fake.events;
+    const builds = events.flatMap((e, i) => (e === 'compose build' ? [i] : []));
+    const boots = events.flatMap((e, i) => (e === 'docker update' ? [i] : []));
+    expect(boots[1]).toBeGreaterThan(builds[0] as number);
+    const emptied = callsOf('docker buildx').filter((c) => c.args.includes('type=exec.cachemount'));
+    expect(emptied).toHaveLength(2);
+    commands.release();
     await waitFor(() => results().length === 2);
-    expect(callsOf('git init')).toHaveLength(2);
+    await cleanedUp(a);
+    await cleanedUp(b);
+    // Each run prunes the builder after it ran: the cache mounts, then the cache to its bound.
+    expect(
+      callsOf('docker buildx').filter((c) => c.args.includes('--max-used-space')),
+    ).toHaveLength(2);
+  });
+
+  it('never prunes the check builder or dangling images while another run builds', async () => {
+    const build = gate();
+    let builds = 0;
+    fake.on['compose build'] = (call) => {
+      builds += 1;
+      return builds === 1 ? {} : build.handler(call);
+    };
+    const commands = held();
+    fake.on['compose run'] = commands.handler;
+    const pruned = () =>
+      callsOf('docker buildx').filter((c) => c.args.includes('--max-used-space')).length;
+    const checks = manager();
+    const [a, b] = [payload(), payload()];
+    checks.run('req-a', a);
+    await waitFor(() => callsOf('compose run').length === 1);
+    checks.run('req-b', b);
+    await waitFor(() => build.entered() === 1);
+    // a ends while b builds: a removes its own, but its prunes wait for b's build (which loads
+    // its image, untagged for a moment, and uses the builder's cache mounts).
+    commands.release();
+    await waitFor(() => resultOf('req-a') !== undefined && callsOf('docker image rm').length > 0);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(callsOf('docker image prune')).toHaveLength(0);
+    expect(pruned()).toBe(0);
+    build.release();
+    await waitFor(() => results().length === 2);
+    await cleanedUp(a);
+    await cleanedUp(b);
+    expect(callsOf('docker image prune')).toHaveLength(2);
+    expect(pruned()).toBe(2);
   });
 
   it('caps the log, ends it with one truncation line and keeps the tail for the message', async () => {
@@ -910,13 +1046,13 @@ describe('CheckManager', () => {
     expect(callsOf('compose build')).toHaveLength(1);
   });
 
-  it('on shutdown interrupts running and queued runs at once and refuses new ones', async () => {
+  it('on shutdown interrupts every running run at once, cleans each up and refuses new ones', async () => {
     fake.on['compose run'] = blockUntilAborted;
     const checks = manager();
     const [a, b] = [payload(), payload()];
     checks.run('req-a', a);
     checks.run('req-b', b);
-    await waitFor(() => callsOf('compose run').length === 1);
+    await waitFor(() => callsOf('compose run').length === 2);
     const stopped = checks.shutdown(2_000);
     const interrupted = {
       reason: 'interrupted',
@@ -928,9 +1064,19 @@ describe('CheckManager', () => {
       { id: 'req-b', runId: b.runId, ...interrupted },
     ]);
     await stopped;
-    expect(callsOf('docker kill')).not.toHaveLength(0);
-    expect(callsOf('compose down')).toHaveLength(1);
-    expect(callsOf('git init')).toHaveLength(1);
+    // Both containers are stopped and both runs cleaned up, side by side within the grace period.
+    const killed = new Set(callsOf('docker kill').map((call) => call.args.at(-1)));
+    expect(killed).toEqual(
+      new Set([a, b].map((run) => `${checkProjectName('trail', run.runId)}-check`)),
+    );
+    expect(callsOf('compose down').map((call) => call.args[call.args.indexOf('-p') + 1])).toEqual(
+      expect.arrayContaining([a, b].map((run) => checkProjectName('trail', run.runId))),
+    );
+    expect(callsOf('compose down')).toHaveLength(2);
+    expect(callsOf('git init')).toHaveLength(2);
+    for (const run of [a, b]) {
+      await expect(stat(join(root, 'checks', run.app.id, run.runId))).rejects.toThrow();
+    }
     const c = payload();
     checks.run('req-c', c);
     expect(resultOf('req-c')).toEqual({
@@ -1132,6 +1278,15 @@ describe('CheckManager.sweep', () => {
         '\n',
       ),
     });
+    fake.on['docker image ls'] = () => ({
+      stdout: [
+        `launchway-check/trail-dev:${x.slice(-26)}`,
+        'launchway-check/trail-dev:latest',
+        '<none>:<none>',
+        // Labelled by its own Dockerfile: not an image of the check namespace.
+        'ghcr.io/acme/trail:1',
+      ].join('\n'),
+    });
   }
 
   it('removes only leftovers of check runs, then the run directories', async () => {
@@ -1152,6 +1307,8 @@ describe('CheckManager.sweep', () => {
       'docker volume rm',
       'docker network ls',
       'docker network rm',
+      'docker image ls',
+      'docker image rm',
       'docker image prune',
       // Check builders unused for a day: none here, so their network goes.
       'docker ps',
@@ -1183,6 +1340,22 @@ describe('CheckManager.sweep', () => {
       `${other}_source`,
     ]);
     expect(args('docker network rm')).toEqual(['network', 'rm', '--', 'n1']);
+    // Every tag of the check namespace: of runs, and the per-app ones of older agents.
+    expect(args('docker image ls')).toEqual([
+      'image',
+      'ls',
+      '--filter',
+      'label=launchway.check',
+      '--format',
+      '{{.Repository}}:{{.Tag}}',
+    ]);
+    expect(args('docker image rm')).toEqual([
+      'image',
+      'rm',
+      '--',
+      `launchway-check/trail-dev:${x.slice(-26)}`,
+      'launchway-check/trail-dev:latest',
+    ]);
     expect(args('docker image prune')).toEqual([
       'image',
       'prune',
@@ -1192,6 +1365,33 @@ describe('CheckManager.sweep', () => {
     ]);
     await expect(stat(join(root, 'checks', APP.id, 'chk_old'))).rejects.toThrow();
     expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 0 });
+  });
+
+  it('waits for the runs before it and holds back the runs after it', async () => {
+    const commands = held();
+    fake.on['compose run'] = commands.handler;
+    const checks = manager();
+    const a = payload();
+    checks.run('req-a', a);
+    await waitFor(() => callsOf('compose run').length === 1);
+    checks.sweep({ slug: 'trail' });
+    const b = payload();
+    checks.run('req-b', b);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const sweeps = () =>
+      callsOf('docker ps').filter((c) => c.args.includes('label=launchway.check'));
+    // The sweep would remove a's project; b would wait for it anyway.
+    expect(sweeps()).toHaveLength(0);
+    expect(callsOf('git init')).toHaveLength(1);
+    commands.release();
+    await waitFor(() => results().length === 2);
+    const events = fake.calls;
+    const sweep = events.indexOf(sweeps()[0] as Call);
+    const aDown = events.indexOf(callsOf('compose down')[0] as Call);
+    const bInit = events.indexOf(callsOf('git init')[1] as Call);
+    expect(aDown).toBeLessThan(sweep);
+    expect(sweep).toBeLessThan(bInit);
+    await cleanedUp(b);
   });
 
   it("limits itself to one app's runs when asked", async () => {

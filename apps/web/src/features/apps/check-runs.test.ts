@@ -41,8 +41,12 @@ describe('checkRunOutcome', () => {
 describe('checkRunQueueLabel', () => {
   it("tells a queued run's place on its node", () => {
     expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 0 })).toBe('next on its node');
-    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 1 })).toBe('behind 1 run');
-    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 5 })).toBe('behind 5 runs');
+    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 1 })).toBe(
+      'starts after 1 run ends',
+    );
+    expect(checkRunQueueLabel({ status: 'queued', queuedBehind: 5 })).toBe(
+      'starts after 5 runs end',
+    );
     expect(checkRunQueueLabel({ status: 'running', queuedBehind: null })).toBeNull();
   });
 });

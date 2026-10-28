@@ -35,6 +35,7 @@ const WRITABLE_KEYS = [
   'checkMemoryMb',
   'checkCpus',
   'checkPidsLimit',
+  'checkConcurrency',
   'checkMaxQueuedPerApp',
   'checkMaxQueuedPerNode',
 ] as const satisfies readonly (keyof UpdateSettingsInput & keyof SettingsRow)[];
@@ -87,6 +88,7 @@ export function createSettingsService(
       checkMemoryMb: row.checkMemoryMb,
       checkCpus: row.checkCpus,
       checkPidsLimit: row.checkPidsLimit,
+      checkConcurrency: row.checkConcurrency,
       checkMaxQueuedPerApp: row.checkMaxQueuedPerApp,
       checkMaxQueuedPerNode: row.checkMaxQueuedPerNode,
       updatedAt: row.updatedAt.toISOString(),

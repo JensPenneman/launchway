@@ -255,7 +255,7 @@ describe('buildCheckDocument', () => {
   it('names the project and reports the image, user, source use and new directories', () => {
     const { result, doc } = build();
     expect(doc.name).toBe(project);
-    expect(result.image).toBe('launchway-check/trail-dev');
+    expect(result.image).toBe(`launchway-check/trail-dev:${runId.slice(4)}`);
     expect(result.user).toBe('node');
     expect(result.usesSource).toBe(true);
     expect(result.directories).toEqual(['.devcontainer/cache']);
@@ -456,9 +456,9 @@ describe('buildCheckDocument', () => {
     expect(doc.volumes.empty).toEqual({ labels: { 'launchway.check': runId } });
   });
 
-  it('tags built images per app and service and never retags, exports or pulls them', () => {
+  it('tags built images per run and never retags, exports or pulls them', () => {
     const { dev, db } = build();
-    expect(dev.image).toBe('launchway-check/trail-dev');
+    expect(dev.image).toBe(`launchway-check/trail-dev:${runId.slice(4)}`);
     expect(dev.pull_policy).toBe('never');
     expect(dev.build).toEqual({
       context: ROOT,

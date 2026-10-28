@@ -1,4 +1,5 @@
 import {
+  CheckConcurrency,
   CheckCpus,
   CheckMemoryMb,
   CheckPidsLimit,
@@ -21,19 +22,25 @@ const number = (text: string) => (text.trim() === '' ? Number.NaN : Number(text)
 const required = (text: string, error: string | undefined) =>
   text.trim() === '' ? 'Required' : error;
 
-/** Platform limits of checks: memory, CPUs and processes of every service of a check run. */
+/**
+ * Platform limits of checks: memory, CPUs and processes of every service of a check run, how many
+ * checks a node runs at once, and how many may wait.
+ */
 export function CheckLimitsCard({ settings }: { settings: Settings }) {
   const [memory, setMemory] = useState(String(settings.checkMemoryMb));
   const [cpus, setCpus] = useState(String(settings.checkCpus));
   const [pids, setPids] = useState(String(settings.checkPidsLimit));
+  const [atOnce, setAtOnce] = useState(String(settings.checkConcurrency));
   const [perApp, setPerApp] = useState(String(settings.checkMaxQueuedPerApp));
   const [perNode, setPerNode] = useState(String(settings.checkMaxQueuedPerNode));
   const memoryError = required(memory, fieldError(CheckMemoryMb, number(memory)));
   const cpusError = required(cpus, fieldError(CheckCpus, number(cpus)));
   const pidsError = required(pids, fieldError(CheckPidsLimit, number(pids)));
+  const atOnceError = required(atOnce, fieldError(CheckConcurrency, number(atOnce)));
   const perAppError = required(perApp, fieldError(CheckQueueLimit, number(perApp)));
   const perNodeError = required(perNode, fieldError(CheckQueueLimit, number(perNode)));
-  const valid = !memoryError && !cpusError && !pidsError && !perAppError && !perNodeError;
+  const valid =
+    !memoryError && !cpusError && !pidsError && !atOnceError && !perAppError && !perNodeError;
 
   const save = useApiMutation(
     () =>
@@ -41,6 +48,7 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
         checkMemoryMb: Number(memory),
         checkCpus: Number(cpus),
         checkPidsLimit: Number(pids),
+        checkConcurrency: Number(atOnce),
         checkMaxQueuedPerApp: Number(perApp),
         checkMaxQueuedPerNode: Number(perNode),
       }),
@@ -53,8 +61,9 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
         <CardTitle>Checks</CardTitle>
         <CardDescription>
           Every service of a check gets these limits, so a check can use the number of its services
-          times them in total; swap is off. Its image builds run in a builder with the same memory
-          and CPUs. Runs beyond the queue limits end at once with an error on GitHub.
+          times them in total, and a node as many times that as it runs checks at once; swap is off.
+          Image builds of checks run one at a time in a builder with the same memory and CPUs. Runs
+          beyond the queue limits end at once with an error on GitHub.
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -70,7 +79,7 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
             <Field
               label="Memory (MiB)"
               error={memoryError}
-              description={memoryHint(number(memory))}
+              description={memoryHint(number(memory), number(atOnce))}
             >
               <Input
                 inputMode="numeric"
@@ -117,6 +126,17 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
                 inputMode="numeric"
                 value={perNode}
                 onChange={(event) => setPerNode(event.target.value.replace(/[^0-9]/g, ''))}
+              />
+            </Field>
+            <Field
+              label="At once per node"
+              error={atOnceError}
+              description="Checks a node runs side by side, all apps together"
+            >
+              <Input
+                inputMode="numeric"
+                value={atOnce}
+                onChange={(event) => setAtOnce(event.target.value.replace(/[^0-9]/g, ''))}
               />
             </Field>
           </div>

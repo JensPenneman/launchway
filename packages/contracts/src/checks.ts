@@ -8,10 +8,10 @@ import { z } from './zod.js';
 // --- Runs (ADR 0020) ---------------------------------------------------------------------------
 
 /**
- * queued: waiting for its node (one check runs per node at a time); running: sent to the node;
- * succeeded: the command exited 0; failed: it exited non-zero or timed out; errored: the run could
- * not produce a verdict (policy, build, Docker, node offline, superseded); cancelled: stopped on
- * request.
+ * queued: waiting for its node (a node runs up to `checkConcurrency` checks at once); running: sent
+ * to the node; succeeded: the command exited 0; failed: it exited non-zero or timed out; errored:
+ * the run could not produce a verdict (policy, build, Docker, node offline, superseded);
+ * cancelled: stopped on request.
  */
 export const CHECK_RUN_STATUSES = [
   'queued',
@@ -167,7 +167,8 @@ export const CheckRun = z
         'Another branch whose push of the same commit this run serves (one run per commit and check)',
     }),
     queuedBehind: z.number().int().min(0).nullable().openapi({
-      description: 'While queued: how many runs of its node are running or queued before it',
+      description:
+        'While queued: how many runs of its node have to end before it starts (0: it starts next), with the node running up to checkConcurrency runs at once',
     }),
     createdAt: Timestamp,
     startedAt: Timestamp.nullable().openapi({ description: 'When the run was sent to its node' }),
@@ -239,6 +240,16 @@ export const CheckPidsLimit = z.number().int().min(64).max(1_048_576).openapi({
   example: DEFAULT_CHECK_PIDS_LIMIT,
 });
 
+/** Default of the platform setting of how many checks a node runs at once (ADR 0021). */
+export const DEFAULT_CHECK_CONCURRENCY = 1;
+export const MAX_CHECK_CONCURRENCY = 8;
+
+export const CheckConcurrency = z.number().int().min(1).max(MAX_CHECK_CONCURRENCY).openapi({
+  description:
+    'Checks a node runs at once, all apps together; each one gets the limits of every service, so a node needs this many times their memory and CPUs',
+  example: DEFAULT_CHECK_CONCURRENCY,
+});
+
 /**
  * Defaults of the platform settings that bound the queue: runs that would make an app or a node
  * hold more queued runs end at once with `errored`, reason `queue-full`.
@@ -277,9 +288,12 @@ export function checkProjectName(slug: string, runId: TypeId<'chk'>): string {
  */
 export const CHECK_IMAGE_PREFIX = 'launchway-check/';
 
-/** Image tag of a service a check builds: one per app and service, so runs do not pile up. */
-export function checkImageName(slug: string, service: string): string {
-  return `${CHECK_IMAGE_PREFIX}${slug}-${service}`;
+/**
+ * Image of a service a check builds: `launchway-check/<slug>-<service>:<run id suffix>`, one per
+ * run, so runs of one app at once never retag each other's image; the run removes it at the end.
+ */
+export function checkImageName(slug: string, service: string, runId: TypeId<'chk'>): string {
+  return `${CHECK_IMAGE_PREFIX}${slug}-${service}:${runId.slice('chk_'.length)}`;
 }
 
 /**

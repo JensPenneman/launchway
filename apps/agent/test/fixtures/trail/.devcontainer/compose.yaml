@@ -1,0 +1,73 @@
+# Development container: Node LTS, Chromium for Playwright and a PostgreSQL of
+# its own, so that every check of the repository, the end-to-end suite
+# included, runs inside Docker (README, "Develop in a container"). The
+# Launchway node runs the checks of pushes and pull requests in it as well, a
+# fresh project per check (docs/operations.md, "Checks"). Start it
+# with scripts/devc.sh, which names the project after the worktree's branch:
+# several worktrees run side by side, each with its own database, modules and
+# browsers. Nothing is published on the host, since ports are what would
+# collide; `scripts/devc.sh up --web` adds compose.web.yaml for a browser.
+name: ${COMPOSE_PROJECT_NAME:?start the development container with scripts/devc.sh}
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+      args:
+        # set by scripts/devc.sh on Linux hosts only (see the Dockerfile)
+        USER_UID: ${TRAIL_DEVC_UID:-1000}
+        USER_GID: ${TRAIL_DEVC_GID:-1000}
+    # tini as PID 1: `sleep` stops at once, and processes that outlive their
+    # `docker compose exec` session are reaped
+    init: true
+    command: ["sleep", "infinity"]
+    # the databases of .env.example and of the test suites, on the db service
+    environment:
+      DATABASE_URL: postgres://trail:trail@db:5432/trail
+      TEST_DATABASE_URL: postgres://trail:trail@db:5432/trail_test
+      E2E_DATABASE_URL: postgres://trail:trail@db:5432/trail_e2e
+      PORT: "8787"
+      PUBLIC_URL: http://localhost:5173
+      ADDITIONAL_ORIGINS: http://localhost:8787
+      SIGNUP_ALLOWLIST: "*@example.com"
+      LOG_LEVEL: debug
+      # One Playwright worker per run: its browser draws the maps in software, a
+      # CPU's worth, and with more the suites of three worktrees at once overload
+      # an 8-CPU Docker until tests time out (README, "Develop in a container")
+      E2E_WORKERS: "1"
+    volumes:
+      - ..:/workspaces/trail
+      # Modules for Linux in volumes of their own: the worktree's are the host's
+      # (macOS binaries), and the bind mount is the slow path on Docker Desktop.
+      - node-modules:/workspaces/trail/node_modules
+      - api-node-modules:/workspaces/trail/apps/api/node_modules
+      - web-node-modules:/workspaces/trail/apps/web/node_modules
+      - contracts-node-modules:/workspaces/trail/packages/contracts/node_modules
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # The database of compose.yaml in the root, without its host port
+  db:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: trail
+      POSTGRES_PASSWORD: trail
+      POSTGRES_DB: trail
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale-provider=builtin --builtin-locale=C.UTF-8
+    volumes:
+      - db:/var/lib/postgresql
+      - ../scripts/db/init-dev.sql:/docker-entrypoint-initdb.d/10-databases.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U trail -d trail"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  db:
+  node-modules:
+  api-node-modules:
+  web-node-modules:
+  contracts-node-modules:

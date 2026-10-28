@@ -1,0 +1,8 @@
+# Added by `scripts/devc.sh up --web`: Vite's port (`npm run dev`) on a free
+# port of the host's loopback, picked by Docker, so worktrees never collide.
+# scripts/devc.sh prints the address and passes it as PUBLIC_URL to the
+# commands it runs, since passkeys only work on the origin the API expects.
+services:
+  dev:
+    ports:
+      - "127.0.0.1::5173"

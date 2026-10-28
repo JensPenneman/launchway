@@ -1,6 +1,5 @@
 import { type CheckRunReason, type NodeId, QUEUED_CHECK_TIMEOUT_MS } from '@launchway/contracts';
-import { and, asc, eq, isNull, lt, or } from 'drizzle-orm';
-import { isUniqueViolation } from '../../db/errors.js';
+import { and, asc, count, eq, isNull, lt, or, sql } from 'drizzle-orm';
 import type { Deps } from '../../deps.js';
 import { AgentRequestError, AgentUnavailableError } from '../../lib/agent-gateway.js';
 import { systemActor } from '../../lib/auth-context.js';
@@ -27,15 +26,18 @@ export const NODE_TIMEOUT_MESSAGE = 'Timed out waiting for the node';
 const MAX_DISPATCH_ATTEMPTS = 10;
 
 type AppRow = typeof apps.$inferSelect;
-/** `errored` and `copied`: the node is still free, so the next queued run may go. */
+/**
+ * `sent`: a slot of the node is taken, the next queued run may take another; `errored` and
+ * `copied`: the slot is still free, so the next queued run may go.
+ */
 type DispatchOutcome = 'none' | 'sent' | 'errored' | 'deferred' | 'copied';
 type Claim = { run: CheckRunRow; app: AppRow } | { copied: CheckRunRow };
 
 export interface CheckDispatcher {
   /**
-   * Sends the oldest queued run of the node to its agent, unless a run of the node is running or
-   * the node is offline (one check per node at a time). A run that cannot be sent is errored and
-   * the next one tried. Never throws; failures are logged.
+   * Sends the oldest queued runs of the node to its agent, one after the other, while fewer than
+   * the platform's `checkConcurrency` run there and the node is online. A run that cannot be sent
+   * is errored and the next one tried. Never throws; failures are logged.
    */
   dispatchNode(nodeId: NodeId): Promise<void>;
   /**
@@ -58,56 +60,54 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
   const state = checkNodeState(deps.events);
 
   /**
-   * Marks the oldest queued run of the node `running` when none runs there, or ends it as a copy
-   * when a run of the same tree and check finished meanwhile (same-tree copies). The claim waits
-   * for a row another statement holds for a moment (the commit status mirror, a cancel) instead
-   * of skipping it, so the oldest run goes first. Concurrent claims of one node meet at that row
-   * or at the partial unique index (one running run per node): the loser stops.
+   * Marks the oldest queued run of the node `running` while fewer than `limit` run there, or ends
+   * it as a copy when a run of the same tree and check finished meanwhile (same-tree copies).
+   * Claims of one node take turns on a transaction-level advisory lock of the node, so each one
+   * counts the runs the claims before it committed (ADR 0021). The claim waits for a row another
+   * statement holds for a moment (the commit status mirror, a cancel) instead of skipping it, so
+   * the oldest run goes first.
    */
-  async function claim(nodeId: NodeId): Promise<Claim | null> {
-    try {
-      return await deps.db.transaction(async (tx) => {
-        const [busy] = await tx
-          .select({ id: checkRuns.id })
-          .from(checkRuns)
-          .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'running')))
-          .limit(1);
-        if (busy) return null;
-        const [next] = await tx
-          .select()
-          .from(checkRuns)
-          .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')))
-          .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
-          .limit(1)
-          .for('update');
-        if (!next) return null;
-        if ((COPYABLE_TRIGGERS as readonly string[]).includes(next.trigger)) {
-          const source = await findCopySource(tx, next);
-          if (source) {
-            const [copied] = await tx
-              .update(checkRuns)
-              .set(copyOf(source))
-              .where(and(eq(checkRuns.id, next.id), eq(checkRuns.status, 'queued')))
-              .returning();
-            if (!copied) return null;
-            await auditCopy(tx, actor, copied, 'queued');
-            return { copied };
-          }
+  async function claim(nodeId: NodeId, limit: number): Promise<Claim | null> {
+    return deps.db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext('launchway.checks.node:' || ${nodeId}))`,
+      );
+      const [running] = await tx
+        .select({ count: count() })
+        .from(checkRuns)
+        .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'running')));
+      if ((running?.count ?? 0) >= limit) return null;
+      const [next] = await tx
+        .select()
+        .from(checkRuns)
+        .where(and(eq(checkRuns.nodeId, nodeId), eq(checkRuns.status, 'queued')))
+        .orderBy(asc(checkRuns.createdAt), asc(checkRuns.id))
+        .limit(1)
+        .for('update');
+      if (!next) return null;
+      if ((COPYABLE_TRIGGERS as readonly string[]).includes(next.trigger)) {
+        const source = await findCopySource(tx, next);
+        if (source) {
+          const [copied] = await tx
+            .update(checkRuns)
+            .set(copyOf(source))
+            .where(and(eq(checkRuns.id, next.id), eq(checkRuns.status, 'queued')))
+            .returning();
+          if (!copied) return null;
+          await auditCopy(tx, actor, copied, 'queued');
+          return { copied };
         }
-        const [run] = await tx
-          .update(checkRuns)
-          .set({ status: 'running', startedAt: new Date() })
-          .where(and(eq(checkRuns.id, next.id), eq(checkRuns.status, 'queued')))
-          .returning();
-        if (!run) return null;
-        const [app] = await tx.select().from(apps).where(eq(apps.id, run.appId));
-        if (!app) throw new Error('the app of a check run is missing');
-        return { run, app };
-      });
-    } catch (error) {
-      if (isUniqueViolation(error)) return null;
-      throw error;
-    }
+      }
+      const [run] = await tx
+        .update(checkRuns)
+        .set({ status: 'running', startedAt: new Date() })
+        .where(and(eq(checkRuns.id, next.id), eq(checkRuns.status, 'queued')))
+        .returning();
+      if (!run) return null;
+      const [app] = await tx.select().from(apps).where(eq(apps.id, run.appId));
+      if (!app) throw new Error('the app of a check run is missing');
+      return { run, app };
+    });
   }
 
   /** Errors a queued or running run (audited); false when its status changed meanwhile. */
@@ -171,13 +171,13 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
     }
   }
 
-  async function dispatchOnce(nodeId: NodeId): Promise<DispatchOutcome> {
+  async function dispatchOnce(nodeId: NodeId, limit: number): Promise<DispatchOutcome> {
     if (!deps.agents.isOnline(nodeId)) return 'none';
     if (state.capable.get(nodeId) === false) {
       await failUnsupported(nodeId);
       return 'none';
     }
-    const claimed = await claim(nodeId);
+    const claimed = await claim(nodeId, limit);
     if (!claimed) return 'none';
     if ('copied' in claimed) {
       announceStatus(deps, claimed.copied);
@@ -224,10 +224,14 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
 
   async function dispatchNode(nodeId: NodeId): Promise<void> {
     try {
-      // An errored or copied run leaves the node free for the next queued one.
-      for (let attempt = 0; attempt < MAX_DISPATCH_ATTEMPTS; attempt += 1) {
-        const outcome = await dispatchOnce(nodeId);
-        if (outcome !== 'errored' && outcome !== 'copied') return;
+      if (!deps.agents.isOnline(nodeId)) return;
+      const { checkConcurrency } = await settings.get();
+      // Until the node is full or nothing waits: a sent run takes a slot, and an errored or
+      // copied one leaves it for the next queued run (those count against the attempts).
+      for (let attempts = 0; attempts < MAX_DISPATCH_ATTEMPTS; ) {
+        const outcome = await dispatchOnce(nodeId, checkConcurrency);
+        if (outcome === 'none' || outcome === 'deferred') return;
+        if (outcome !== 'sent') attempts += 1;
       }
     } catch (error) {
       logger.error({ err: error, nodeId }, 'check dispatch errored');

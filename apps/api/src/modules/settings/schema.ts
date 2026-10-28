@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CHECK_CONCURRENCY,
   DEFAULT_CHECK_CPUS,
   DEFAULT_CHECK_MAX_QUEUED_PER_APP,
   DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
@@ -50,6 +51,8 @@ export const settings = pgTable(
     checkMemoryMb: integer('check_memory_mb').notNull().default(DEFAULT_CHECK_MEMORY_MB),
     checkCpus: doublePrecision('check_cpus').notNull().default(DEFAULT_CHECK_CPUS),
     checkPidsLimit: integer('check_pids_limit').notNull().default(DEFAULT_CHECK_PIDS_LIMIT),
+    /** Check runs a node runs at once (ADR 0021); the dispatcher claims up to this many. */
+    checkConcurrency: integer('check_concurrency').notNull().default(DEFAULT_CHECK_CONCURRENCY),
     /** Bounds of the check queue: runs beyond them end at once (reason queue-full). */
     checkMaxQueuedPerApp: integer('check_max_queued_per_app')
       .notNull()

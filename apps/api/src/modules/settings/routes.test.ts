@@ -50,6 +50,16 @@ describe('settings routes (authorization and validation)', () => {
     expect(problem.errors.map((e) => e.path)).toEqual(expect.arrayContaining(['body.publicUrl']));
   });
 
+  it('takes 1 to 8 checks at once per node', async () => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
+    for (const checkConcurrency of [0, 9, 1.5, '2']) {
+      const res = await app.request('/api/v1/settings', patch({ checkConcurrency }));
+      expect(res.status).toBe(400);
+      const problem = (await res.json()) as { errors: { path: string }[] };
+      expect(problem.errors.map((e) => e.path)).toEqual(['body.checkConcurrency']);
+    }
+  });
+
   it('rejects malformed JSON with a problem document', async () => {
     const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
     const res = await app.request('/api/v1/settings', {

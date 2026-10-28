@@ -2,6 +2,7 @@ import { mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   AppSlug,
+  CHECK_IMAGE_PREFIX,
   CHECK_LABEL,
   CHECK_LOG_LINE_LIMIT,
   CHECK_PROJECT_PREFIX,
@@ -30,11 +31,12 @@ import { formatEnvFile } from './compose-files.js';
 import { maskQuotedText } from './compose-output.js';
 import { evaluateComposePolicy, parseComposeConfig } from './compose-policy.js';
 import { ComposeFileError, preflightComposeFiles } from './compose-preflight.js';
-import { type Semaphore, secretsOf } from './deployments.js';
+import { Semaphore, secretsOf } from './deployments.js';
 import { childEnv, type Runner, type RunResult, runProcess } from './exec.js';
 import { assertSafeRef, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
 import { Batcher, MAX_LINE_LENGTH, Tail } from './lines.js';
 import type { Send } from './outbox.js';
+import { WorkQueue } from './work-queue.js';
 import {
   isInsideReal,
   MissingFileError,
@@ -281,7 +283,7 @@ interface CheckJob {
   payload: CheckRunPayload;
   controller: AbortController;
   state: 'queued' | 'running';
-  /** True once check.result was sent; the run may still be cleaning up in its slot. */
+  /** True once check.result was sent; the run may still be cleaning up. */
   settled: boolean;
   log: CheckLog;
 }
@@ -326,16 +328,18 @@ const downArgs = (project: string) =>
   composeArgs({ project }, 'down', '--volumes', '--remove-orphans', '--timeout', '5');
 
 /**
- * Removes everything of one run: its containers with their anonymous volumes (a project-only
- * `down` leaves those of the one-off container), the Compose project, the source volume and any
- * other volume or network labelled with the run, then the app's dangling check images.
+ * Removes everything of one run and nothing of another: its containers with their anonymous
+ * volumes (a project-only `down` leaves those of the one-off container), the Compose project, the
+ * source volume and any other volume or network labelled with the run, the images it built
+ * (tagged with the run), then the app's dangling check images, which no run uses: `whileNoBuild`
+ * keeps that prune away from a build that is loading its image (untagged for a moment).
  */
 async function removeRunResources(
   ctx: DockerContext,
-  project: string,
-  runId: string,
-  slug: string,
+  run: { project: string; runId: string; slug: string; images: readonly string[] },
+  whileNoBuild: <T>(task: () => Promise<T>) => Promise<T>,
 ) {
+  const { project, runId, slug, images } = run;
   const filter = `label=${CHECK_LABEL}=${runId}`;
   const containers = await cleanupDocker(ctx, 'docker ps', [
     'ps',
@@ -381,12 +385,17 @@ async function removeRunResources(
   const networkIds = networks ? outputLines(networks.stdout) : [];
   if (networkIds.length > 0)
     await cleanupDocker(ctx, 'docker network rm', ['network', 'rm', '--', ...networkIds]);
+  // Untags the run's own images: another run of the same commit keeps its tag of the same image.
+  if (images.length > 0)
+    await cleanupDocker(ctx, 'docker image rm', ['image', 'rm', '--', ...images], TIMEOUTS.cleanup);
   // Built images carry `launchway.check=<slug>`: only this app's dangling ones go.
-  await cleanupDocker(
-    ctx,
-    'docker image prune',
-    ['image', 'prune', '--force', '--filter', `label=${CHECK_LABEL}=${slug}`],
-    TIMEOUTS.cleanup,
+  await whileNoBuild(() =>
+    cleanupDocker(
+      ctx,
+      'docker image prune',
+      ['image', 'prune', '--force', '--filter', `label=${CHECK_LABEL}=${slug}`],
+      TIMEOUTS.cleanup,
+    ),
   );
 }
 
@@ -455,19 +464,36 @@ async function sweepResources(ctx: DockerContext, scope: SweepScope): Promise<bo
   if (networkIds.length > 0)
     await cleanupDocker(ctx, 'docker network rm', ['network', 'rm', '--', ...networkIds]);
   const images = scope.slug === undefined ? label : `${label}=${scope.slug}`;
+  // Built images are tagged per run and no run is active while a sweep runs, so every tag of
+  // the check namespace is a leftover (and so are the per-app tags of agents before 0.7).
+  const tagged = await cleanupDocker(ctx, 'docker image ls', [
+    'image',
+    'ls',
+    '--filter',
+    images,
+    '--format',
+    '{{.Repository}}:{{.Tag}}',
+  ]);
+  if (!tagged) return false;
+  const tags = outputLines(tagged.stdout).filter(
+    (reference) => reference.startsWith(CHECK_IMAGE_PREFIX) && !reference.endsWith(':<none>'),
+  );
+  if (tags.length > 0)
+    await cleanupDocker(ctx, 'docker image rm', ['image', 'rm', '--', ...tags], TIMEOUTS.cleanup);
   await cleanupDocker(
     ctx,
     'docker image prune',
     ['image', 'prune', '--force', '--filter', images],
     TIMEOUTS.cleanup,
   );
-  if (ids.length + names.length + networkIds.length > 0) {
+  if (ids.length + names.length + networkIds.length + tags.length > 0) {
     ctx.logger.info(
       {
         containers: ids.length,
         projects: projects.size,
         volumes: names.length,
         networks: networkIds.length,
+        images: tags.length,
       },
       'removed leftovers of earlier check runs',
     );
@@ -489,30 +515,43 @@ interface ExecOptions {
   stderrFilter?: (line: string) => string;
 }
 
-/** One check run, from fetching the commit to cleaning up (ADR 0020). */
+/**
+ * One check run, from fetching the commit to cleaning up (ADR 0020). Runs of a node overlap (ADR
+ * 0021): everything a run creates is its own (checkout directory, Compose project, container and
+ * volume names, built image tags, log), and only its builds take turns in the check builder.
+ */
 class CheckRun {
   readonly #job: CheckJob;
   readonly #payload: CheckRunPayload;
   readonly #options: CheckManagerOptions;
   readonly #run: Runner;
   readonly #settle: (outcome: CheckOutcome) => void;
+  /**
+   * Held while the run builds in the check builder, prunes it or prunes the app's dangling images:
+   * one build there at a time, and no prune while a build loads its image.
+   */
+  readonly #builderLock: Semaphore;
   readonly #logger: Logger;
   readonly #project: string;
   /** Set before the first command that creates Docker resources. */
   #dockerUsed = false;
   /** The check builder the run built with, pruned after the run. */
   #builder: string | null = null;
+  /** Images the run builds (tagged with the run), removed after the run. */
+  #images: string[] = [];
 
   constructor(
     job: CheckJob,
     options: CheckManagerOptions,
     run: Runner,
+    builderLock: Semaphore,
     settle: (outcome: CheckOutcome) => void,
   ) {
     this.#job = job;
     this.#payload = job.payload;
     this.#options = options;
     this.#run = run;
+    this.#builderLock = builderLock;
     this.#settle = settle;
     this.#project = checkProjectName(job.payload.app.slug, job.payload.runId);
     this.#logger = options.logger.child({ runId: job.payload.runId, appId: job.payload.app.id });
@@ -651,26 +690,34 @@ class CheckRun {
 
     this.#dockerUsed = true;
     const services = Object.values((built.document.services ?? {}) as Record<string, object>);
-    const builds = services.some((service) => 'build' in service);
-    await this.#options.builds.use(async () => {
-      this.#system('Building and pulling the images');
+    this.#images = services.flatMap((service) =>
+      'build' in service && 'image' in service && typeof service.image === 'string'
+        ? [service.image]
+        : [],
+    );
+    this.#system('Building and pulling the images');
+    if (this.#images.length > 0) {
       // Builds run in the check builder (limits, cache and network of their own), never in the
-      // engine's builder that deployments use.
-      const builder = builds ? await this.#ensureBuilder(runDir) : null;
-      const build = composeArgs(
-        target,
-        'build',
-        '--pull',
-        ...(builder ? ['--builder', builder] : []),
+      // engine's builder that deployments use, and one at a time there: every build starts with
+      // empty cache mounts that no build of another run writes to meanwhile (ADR 0021).
+      await this.#builderLock.use(
+        () =>
+          this.#options.builds.use(async () => {
+            const builder = await this.#ensureBuilder(runDir);
+            const build = composeArgs(target, 'build', '--pull', '--builder', builder);
+            await this.#exec('docker', build, {
+              label: 'docker compose build',
+              reason: 'build',
+              cwd: runDir,
+              // Compose finds the check builder in the agent's buildx records.
+              env: await this.#builderEnv(),
+              timeoutMs: TIMEOUTS.build,
+            });
+          }, this.#signal),
+        this.#signal,
       );
-      await this.#exec('docker', build, {
-        label: 'docker compose build',
-        reason: 'build',
-        cwd: runDir,
-        // Compose finds the check builder in the agent's buildx records.
-        env: builder ? await this.#builderEnv() : env,
-        timeoutMs: TIMEOUTS.build,
-      });
+    }
+    await this.#options.builds.use(async () => {
       // Always from the registry: an image that only exists on the node may be another app's.
       const pull = composeArgs(target, 'pull', '--policy', 'always', '--ignore-buildable');
       await this.#exec('docker', pull, {
@@ -998,13 +1045,17 @@ class CheckRun {
           cwd: await workspace.neutralDir(),
           logger: this.#logger,
         };
-        await removeRunResources(ctx, this.#project, runId, app.slug);
-      }
-      if (this.#builder) {
-        await pruneCheckBuilder(
-          await builderContext(this.#options, this.#run, this.#logger),
-          this.#builder,
+        await removeRunResources(
+          ctx,
+          { project: this.#project, runId, slug: app.slug, images: this.#images },
+          (task) => this.#builderLock.use(task),
         );
+      }
+      const builder = this.#builder;
+      if (builder) {
+        const ctx = await builderContext(this.#options, this.#run, this.#logger);
+        // Not while another run builds: that build's cache mounts are in use.
+        await this.#builderLock.use(() => pruneCheckBuilder(ctx, builder));
       }
     } catch (error) {
       this.#logger.warn({ err: error }, 'check cleanup failed');
@@ -1075,10 +1126,11 @@ class CheckRun {
 }
 
 /**
- * Check runs (ADR 0020): one at a time per node, in the order they arrive (the server sends at
- * most one; the agent serializes anyway). A run reports its result first and then cleans up in
- * its slot, so the next run starts only after the previous project is gone. Cancelling or
- * shutting down reports at once and aborts what is running.
+ * Check runs (ADR 0020): every run the server sends starts at once, beside the others (the server
+ * sends at most `checkConcurrency` per node, ADR 0021; the agent has no cap of its own). A run
+ * reports its result first and then cleans up what is its own. Sweeps run alone: they wait for
+ * the runs before them, and runs that arrive meanwhile wait for them. Cancelling or shutting down
+ * reports at once and aborts what is running.
  */
 export class CheckManager {
   readonly #options: CheckManagerOptions;
@@ -1086,7 +1138,9 @@ export class CheckManager {
   readonly #run: Runner;
   readonly #jobs = new Map<CheckRunId, CheckJob>();
   readonly #finished = new Map<CheckRunId, CheckResultPayload>();
-  #queue: Promise<void> = Promise.resolve();
+  readonly #work: WorkQueue;
+  /** One build of checks at a time, and no prune or removal of builders meanwhile. */
+  readonly #builderLock = new Semaphore(1);
   #shuttingDown = false;
   #idleBuilders: NodeJS.Timeout | undefined;
 
@@ -1094,6 +1148,9 @@ export class CheckManager {
     this.#options = options;
     this.#logger = options.logger;
     this.#run = options.run ?? runProcess;
+    this.#work = new WorkQueue((error) => {
+      this.#logger.error({ err: error }, 'check queue task failed');
+    });
   }
 
   /** Runs queued or running on this node (heartbeat `activeCheckRunIds`). */
@@ -1143,9 +1200,9 @@ export class CheckManager {
       { runId, appId: payload.app.id, check: payload.check.name },
       'check run queued',
     );
-    // Answer at once: the run may wait for the run before it.
+    // Answer at once: the run may wait for a sweep.
     this.#acknowledge(requestId, job, 'Received by the node');
-    this.#enqueue(() => this.#execute(job));
+    this.#work.shared(() => this.#execute(job));
   }
 
   /** Cancels a queued or running run; false when it is unknown or already reported. */
@@ -1157,12 +1214,13 @@ export class CheckManager {
   }
 
   /**
-   * Removes leftovers of earlier runs (Docker resources and this agent's run directories);
-   * queued before every run, so call it once at start. A `slug` limits the Docker part to that
-   * app's runs; without one it also removes idle check builders, then again every hour.
+   * Removes leftovers of earlier runs (Docker resources and this agent's run directories) while
+   * no run is active: it waits for the runs before it and holds back the runs after it, so call
+   * it once at start. A `slug` limits the Docker part to that app's runs; without one it also
+   * removes idle check builders, then again every hour (beside the runs).
    */
   sweep(scope: SweepScope = {}): void {
-    this.#enqueue(async () => {
+    this.#work.exclusive(async () => {
       const workspace = this.#options.workspace;
       try {
         const ctx: DockerContext = {
@@ -1186,33 +1244,36 @@ export class CheckManager {
     });
     if (scope.slug === undefined && !this.#idleBuilders && !this.#shuttingDown) {
       this.#idleBuilders = setInterval(
-        () => this.#enqueue(() => this.#removeIdleBuilders()),
+        () => this.#work.shared(() => this.#removeIdleBuilders()),
         IDLE_BUILDER_CHECK_MS,
       );
       this.#idleBuilders.unref();
     }
   }
 
-  /** Removes check builders unused for a day (checks may be off) and builders it does not know. */
+  /**
+   * Removes check builders unused for a day (checks may be off) and builders it does not know;
+   * never while a run builds or prunes.
+   */
   async #removeIdleBuilders(): Promise<void> {
     if (this.#shuttingDown) return;
     try {
       const ctx = await builderContext(this.#options, this.#run, this.#logger);
-      const removed = await removeIdleCheckBuilders(ctx);
+      const removed = await this.#builderLock.use(() => removeIdleCheckBuilders(ctx));
       if (removed.length > 0) this.#logger.info({ removed }, 'removed idle check builders');
     } catch (error) {
       this.#logger.warn({ err: error }, 'could not remove idle check builders');
     }
   }
 
-  /** Interrupts every run at once, then gives cleanup up to `graceMs`. */
+  /** Interrupts every run at once, then gives their cleanups, side by side, up to `graceMs`. */
   async shutdown(graceMs: number): Promise<void> {
     this.#shuttingDown = true;
     clearInterval(this.#idleBuilders);
     for (const job of [...this.#jobs.values()]) this.#stop(job, 'shutdown');
     let timer: NodeJS.Timeout | undefined;
     await Promise.race([
-      this.#queue,
+      this.#work.idle(),
       new Promise<void>((resolve) => {
         timer = setTimeout(resolve, graceMs);
       }),
@@ -1225,16 +1286,10 @@ export class CheckManager {
     return secretsOf(payload.source.authorization, this.#options.secrets?.() ?? []);
   }
 
-  #enqueue(task: () => Promise<void>): void {
-    this.#queue = this.#queue.then(task).catch((error: unknown) => {
-      this.#logger.error({ err: error }, 'check queue task failed');
-    });
-  }
-
   async #execute(job: CheckJob): Promise<void> {
     if (job.settled) return;
     job.state = 'running';
-    const run = new CheckRun(job, this.#options, this.#run, (outcome) =>
+    const run = new CheckRun(job, this.#options, this.#run, this.#builderLock, (outcome) =>
       this.#settle(job, outcome),
     );
     try {
@@ -1249,7 +1304,7 @@ export class CheckManager {
     }
   }
 
-  /** Reports at once, then aborts whatever runs (it cleans up in its slot). */
+  /** Reports at once, then aborts the run (it cleans up what is its own). */
   #stop(job: CheckJob, reason: 'cancel' | 'shutdown'): void {
     this.#settle(
       job,

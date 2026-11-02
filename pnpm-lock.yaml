@@ -131,8 +131,8 @@ importers:
         specifier: 22.0.1
         version: 22.0.1
       '@scalar/hono-api-reference':
-        specifier: 0.12.14
-        version: 0.12.14(hono@4.13.14)
+        specifier: 0.12.17
+        version: 0.12.17(hono@4.13.14)
       '@simplewebauthn/server':
         specifier: 14.0.3
         version: 14.0.3
@@ -204,8 +204,8 @@ importers:
         specifier: 14.0.0
         version: 14.0.0
       '@tanstack/react-query':
-        specifier: 5.104.5
-        version: 5.104.5(@types/react@19.3.0)(react@19.3.1)
+        specifier: 5.105.0
+        version: 5.105.0(@types/react@19.3.0)(react@19.3.1)
       '@tanstack/react-router':
         specifier: 1.170.46
         version: 1.170.46(react-dom@19.3.1(react@19.3.1))(react@19.3.1)
@@ -213,11 +213,11 @@ importers:
         specifier: 0.7.1
         version: 0.7.1
       cn:
-        specifier: 0.5.0
-        version: 0.5.0
+        specifier: 0.5.1
+        version: 0.5.1
       lucide-react:
-        specifier: 1.61.0
-        version: 1.61.0(@types/react@19.3.0)(react@19.3.1)
+        specifier: 1.65.0
+        version: 1.65.0(@types/react@19.3.0)(react@19.3.1)
       openapi-fetch:
         specifier: 0.17.0
         version: 0.17.0
@@ -2228,26 +2228,26 @@ packages:
   '@rolldown/pluginutils@1.0.1':
     resolution: {integrity: sha512-2j9bGt5Jh8hj+vPtgzPtl72j0yRxHAyumoo6TNfAjsLB04UtpSvPbPcDcBMxz7n+9CYB0c1GxQFxYRg2jimqGw==}
 
-  '@scalar/client-side-rendering@0.4.13':
-    resolution: {integrity: sha512-XkFct3IMx+WS2+WsRVDESEwYDy8e3lpbbMPYKo/75WsFgYVaPSjNB9wU5fu7NDgCEn5B+UnmCQ+2rQcD7LBrzw==}
+  '@scalar/client-side-rendering@0.4.16':
+    resolution: {integrity: sha512-C6g3yGa6DwK++L0yxB6oebTc4fCdU/n/FrOK+08UdK4RK24bTvgcCcvjh8k6OVXDMyCodSf73ZERwVWYlnkaxA==}
     engines: {node: '>=22'}
 
   '@scalar/helpers@0.16.4':
     resolution: {integrity: sha512-9eILWzUcAkHEuYMMvijpSIy69t+Vkq+NudLB/7lgARFTWqXfQpIxW1L3VH7ogKyRie5+E4CNZ3PSvlw6IIfLGw==}
     engines: {node: '>=22'}
 
-  '@scalar/hono-api-reference@0.12.14':
-    resolution: {integrity: sha512-Dw2F1mK1ND1legoHdNHPBwjVRdH1Y3KUUZmEVrs8quwF+JDAxVHIW2IXXt/Q3gDHfpiTf9bLSZi33Gn1V9A8Dw==}
+  '@scalar/hono-api-reference@0.12.17':
+    resolution: {integrity: sha512-qkXl07vyqTY6OC0LtrNO7ft/k9bb0oMPjjWLZNCPuLb10G3r3F9sFf4FclD9EWwx6om5UZrl9rgq711os2zUNg==}
     engines: {node: '>=22'}
     peerDependencies:
       hono: ^4.12.5
 
-  '@scalar/schemas@0.15.0':
-    resolution: {integrity: sha512-YxvmWVymAC536CFC84SGyt8PD57UqB5GOvr73y7Oj1Bjf8HMUUowzEt3AM3w9s21sR8ZKkncbt1R3r8sYsASnA==}
+  '@scalar/schemas@0.16.0':
+    resolution: {integrity: sha512-SHhRIH/9x86mRmJcyMgnMMWxDNzRtuyb93anz5zfWV2XuV7gZ1Br6E5Ll2Ygoc3HoKjOQkSdSVs11oKQxjvKMw==}
     engines: {node: '>=22'}
 
-  '@scalar/types@0.25.0':
-    resolution: {integrity: sha512-EdwOVV5ajKks4MX5BorHIdMLG0L8EAxfz+NisAPV8l7Rsic50+YoWnqkY1eqB6K96iyreIKUdl7B/PIFGLqylg==}
+  '@scalar/types@0.26.0':
+    resolution: {integrity: sha512-T78Dj1Q+W0E1RsMyPoydfR+L+p9IUIkntBCRYlWaRibM98jAxABRYGQoU/qDHX0PR1IAFdE+d7ZqslypZbJzcg==}
     engines: {node: '>=22'}
 
   '@scalar/validation@0.6.7':
@@ -2367,11 +2367,11 @@ packages:
     resolution: {integrity: sha512-w1+YvwmTkwt5n8yUqEH3IWZ9DsmorCZW/EQ3KYHnqEgIkOZpH54NvW6/Epq3Dzb8H0ifIeYX8PExvrNLIH5FIA==}
     engines: {node: '>=20.19'}
 
-  '@tanstack/query-core@5.104.5':
-    resolution: {integrity: sha512-Q94gI8Opd+CbdVNOdj8ZCyV8WqLYitrDq1t96Xc8WZT6lY0r5iRnJLXYDxMex7EEf2v+mXvn4FcjaBKSxXZQ9A==}
+  '@tanstack/query-core@5.105.0':
+    resolution: {integrity: sha512-7p56vRmT/z4UJ6sctGIdl5WRUQyUv53IUpUwEKi2g97zMbO7zh8ZsCLffGAvCPBR4xD72e3VXsDyLwXHhoNTMQ==}
 
-  '@tanstack/react-query@5.104.5':
-    resolution: {integrity: sha512-RORgFe052U+93weaNuqg7qHq7vNVNzXN/VrXqD4bbAuQCWUqOl2lV5Ui9flWk5CVvMyL/Bh27QWhzwH0aaOx9g==}
+  '@tanstack/react-query@5.105.0':
+    resolution: {integrity: sha512-y+hMuDERvgg6ay1da0V1a6ZC0ZONt7dELxSFkqRZuwm7p1TTZs0MoXrPlBRflIpRoYjvzQVYxycnLImpFLhWrw==}
     peerDependencies:
       '@types/react': ^18 || ^19
       react: ^18 || ^19
@@ -2767,8 +2767,8 @@ packages:
     resolution: {integrity: sha512-eYm0QWBtUrBWZWG0d386OGAw16Z995PiOVo2B7bjWSbHedGl5e0ZWaq65kOGgUSNesEIDkB9ISbTg/JK9dhCZA==}
     engines: {node: '>=6'}
 
-  cn@0.5.0:
-    resolution: {integrity: sha512-JGEixZEpfFXm1P5uXwvEobOFLlHwIWi5v4tjd1ZwfiYmcEilkuD2l+054rvJcYCR1B+uVThHeUbgmNz1FwuxuA==}
+  cn@0.5.1:
+    resolution: {integrity: sha512-SA06SpzSWXRNrt/EQWnRpck9jEVDfVJonw8ZewiNR6pOC4U0SQ81tWaQ9/PKNPh/lWvjuY4CMlxpc8tJViiX6Q==}
     engines: {node: '>=22'}
     hasBin: true
 
@@ -3481,8 +3481,8 @@ packages:
   lru-cache@5.1.1:
     resolution: {integrity: sha512-KpNARQA3Iwv+jTA0utUVVbrh+Jlrr1Fv0e56GGzAFOXN7dk/FviaDW8LHmK52DlcH4WP2n6gI8vN1aesBFgo9w==}
 
-  lucide-react@1.61.0:
-    resolution: {integrity: sha512-v2SQPPPNjnr+BlhL9Spuzmo5yR+hLkftfuE4E3jaxdNPgSH0hJKPcLJBP7yAta87jQNPsSERS59PJjCJ/CorBA==}
+  lucide-react@1.65.0:
+    resolution: {integrity: sha512-roSdtzudEY39i2hn5LLjA8toYfhF2z4S10WSqZF4ubXpHlOmNTvaxMxZLdJfQDi6pEifQWX+cRmYihKSsvAxfA==}
     peerDependencies:
       '@types/react': '*'
       react: ^16.5.1 || ^17.0.0 || ^18.0.0 || ^19.0.0
@@ -6250,26 +6250,27 @@ snapshots:
 
   '@rolldown/pluginutils@1.0.1': {}
 
-  '@scalar/client-side-rendering@0.4.13':
+  '@scalar/client-side-rendering@0.4.16':
     dependencies:
       '@scalar/helpers': 0.16.4
-      '@scalar/schemas': 0.15.0
-      '@scalar/types': 0.25.0
+      '@scalar/schemas': 0.16.0
+      '@scalar/types': 0.26.0
       '@scalar/validation': 0.6.7
 
   '@scalar/helpers@0.16.4': {}
 
-  '@scalar/hono-api-reference@0.12.14(hono@4.13.14)':
+  '@scalar/hono-api-reference@0.12.17(hono@4.13.14)':
     dependencies:
-      '@scalar/client-side-rendering': 0.4.13
+      '@scalar/client-side-rendering': 0.4.16
       hono: 4.13.14
 
-  '@scalar/schemas@0.15.0':
+  '@scalar/schemas@0.16.0':
     dependencies:
       '@scalar/helpers': 0.16.4
+      '@scalar/types': 0.26.0
       '@scalar/validation': 0.6.7
 
-  '@scalar/types@0.25.0':
+  '@scalar/types@0.26.0':
     dependencies:
       '@scalar/helpers': 0.16.4
       nanoid: 5.1.16
@@ -6369,11 +6370,11 @@ snapshots:
 
   '@tanstack/history@1.162.5': {}
 
-  '@tanstack/query-core@5.104.5': {}
+  '@tanstack/query-core@5.105.0': {}
 
-  '@tanstack/react-query@5.104.5(@types/react@19.3.0)(react@19.3.1)':
+  '@tanstack/react-query@5.105.0(@types/react@19.3.0)(react@19.3.1)':
     dependencies:
-      '@tanstack/query-core': 5.104.5
+      '@tanstack/query-core': 5.105.0
       react: 19.3.1
     optionalDependencies:
       '@types/react': 19.3.0
@@ -6790,7 +6791,7 @@ snapshots:
 
   clsx@2.1.1: {}
 
-  cn@0.5.0: {}
+  cn@0.5.1: {}
 
   color-convert@2.0.1:
     dependencies:
@@ -7349,7 +7350,7 @@ snapshots:
     dependencies:
       yallist: 3.1.1
 
-  lucide-react@1.61.0(@types/react@19.3.0)(react@19.3.1):
+  lucide-react@1.65.0(@types/react@19.3.0)(react@19.3.1):
     dependencies:
       react: 19.3.1
     optionalDependencies:

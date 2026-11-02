@@ -26,7 +26,7 @@
     "@launchway/contracts": "workspace:*",
     "@octokit/auth-app": "8.3.1",
     "@octokit/rest": "22.0.1",
-    "@scalar/hono-api-reference": "0.12.14",
+    "@scalar/hono-api-reference": "0.12.17",
     "@simplewebauthn/server": "14.0.3",
     "argon2": "0.45.1",
     "drizzle-orm": "0.45.4",

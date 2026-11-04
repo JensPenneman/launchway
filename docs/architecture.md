@@ -276,7 +276,7 @@ whose head is a branch of its repository (fork pull requests are ignored)
 
 ### Checks
 
-An app's checks are its test commands, run in job containers on its node for
+An app's checks are its test commands, run in job containers on its node, or the node its checks name ([ADR 0022](adr/0022-checks-on-a-chosen-node.md)), for
 every push and every pull request from a branch of its repository, and
 reported to GitHub as commit statuses that branch protection can require
 ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)):

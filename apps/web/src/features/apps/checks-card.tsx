@@ -64,6 +64,7 @@ export function ChecksCard({ app }: { app: App }) {
   const items = useFieldArray({ control: form.control, name: 'items' });
   const capabilities = useQuery(capabilitiesQuery(app.connectionId));
   const nodes = useQuery(nodesQuery);
+  const appNode = nodes.data?.items.find((node) => node.id === app.nodeId);
   const save = useApiMutation((checks: UpdateAppChecksSettings) => updateApp(app.id, { checks }), {
     invalidate: [keys.apps],
     success: 'Check settings saved',
@@ -157,10 +158,8 @@ export function ChecksCard({ app }: { app: App }) {
           >
             <Input className="font-mono" placeholder="0 6 * * 1" {...form.register('schedule')} />
           </Field>
-          <Field
-            label="Run checks on"
-            description="Deployments and previews always run on the node of the app. The node needs Docker and the agent, and enough CPU and memory for the limits of every check it runs at once."
-          >
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="settings-checks-node">Run checks on</Label>
             <Controller
               control={form.control}
               name="nodeId"
@@ -171,21 +170,36 @@ export function ChecksCard({ app }: { app: App }) {
                     field.onChange(value === OWN_NODE ? '' : value, { shouldDirty: true })
                   }
                 >
-                  <SelectTrigger className="w-full" aria-label="Run checks on">
+                  <SelectTrigger
+                    id="settings-checks-node"
+                    className="w-full"
+                    aria-describedby="settings-checks-node-description"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value={OWN_NODE}>The app's node</SelectItem>
-                    {(nodes.data?.items ?? []).map((node) => (
-                      <SelectItem key={node.id} value={node.id}>
-                        {node.name} ({node.status})
-                      </SelectItem>
-                    ))}
+                    <SelectItem value={OWN_NODE}>
+                      The app's node{appNode ? ` (${appNode.name})` : ''}
+                    </SelectItem>
+                    {(nodes.data?.items ?? [])
+                      // The app's own node is the default entry; it is listed by name only
+                      // when the checks are pinned to it, as they stay there if the app moves.
+                      .filter((node) => node.id !== app.nodeId || field.value === node.id)
+                      .map((node) => (
+                        <SelectItem key={node.id} value={node.id}>
+                          {node.name} ({node.status})
+                          {node.id === app.nodeId ? ', pinned: stays when the app moves' : ''}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               )}
             />
-          </Field>
+            <p id="settings-checks-node-description" className="text-xs text-muted-foreground">
+              Deployments and previews always run on the node of the app. The node needs Docker and
+              the agent, and enough CPU and memory for the limits of every check it runs at once.
+            </p>
+          </div>
           <Field
             label="Compose files of the checks"
             error={errors.composeFiles?.message}

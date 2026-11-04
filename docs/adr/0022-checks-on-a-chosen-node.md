@@ -28,15 +28,17 @@ can run many more than a 16 GB laptop.
    requires an existing node (400 on `body.checks.nodeId` otherwise). Naming
    the node of the app is allowed and means the same as null for the runs,
    but it stays when the app later moves. Deleting a node that an app names
-   is refused (409), as for an app that runs on it.
+   is refused (409), as for an app that runs on it. Naming the app's own node
+   pins the checks there if the app later moves; null follows the app.
 2. **One function decides.** `checkNodeOf(app) = app.checks.nodeId ??
    app.nodeId` is the node of every new check run: the row lock and the
    queue cap per node when runs are queued, the node stored on the run for
    pushes, pull requests, manual runs, re-runs and the schedule pass. A run
    keeps its `nodeId` for life, so dispatch, `queuedBehind`, same-tree
    copies, supersede and cancel need no change: they already work per
-   `check_runs.node_id`. Same-tree copies apply within a check node, as a run
-   on another node has no run of its tree to copy. Deployments, previews,
+   `check_runs.node_id`. Same-tree copies look for a finished run of the app
+   and check, whatever its node; only passing over a queued run while the same
+   check runs for its tree is per node. Deployments, previews,
    routes and the app's volumes keep using `app.nodeId`.
 3. **Changing the node.** When `checkNodeOf` changes (the app moves while it
    checks on its own node, or `checks.nodeId` changes), the queued runs of
@@ -68,6 +70,15 @@ can run many more than a 16 GB laptop.
   nodes that check there share its bound.
 - Changing the node of an app's checks cancels its queued runs; GitHub shows
   them as cancelled and a push or a manual run queues them again.
+- A node that has ever run a check cannot be deleted: `check_runs.node_id` is
+  `ON DELETE RESTRICT` and runs are kept as history (they go only with their
+  app). Deleting answers 409 ("still referenced") while any run exists, so a
+  check-only node can be revoked and left idle but not removed.
+- The check node must stay awake and online: a run queued for a node that has
+  been offline for 10 minutes ends `errored` (`offline`), with no fallback to
+  the app's node. A Mac that sleeps, or Docker Desktop pausing its VM, counts
+  as offline.
+- `queuedBehind` uses the limit of the run's own node.
 - Previews are not moved: a routed preview still runs on the app's node.
 - A changed `check_concurrency` applies to the next dispatch pass; runs
   already running are not stopped when it is lowered.

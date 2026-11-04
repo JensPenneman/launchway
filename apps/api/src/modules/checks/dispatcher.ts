@@ -42,7 +42,7 @@ type Claim = { run: CheckRunRow; app: AppRow } | { copied: CheckRunRow };
 export interface CheckDispatcher {
   /**
    * Sends the oldest queued runs of the node to its agent, one after the other, while fewer than
-   * the platform's `checkConcurrency` run there and the node is online. A run that cannot be sent
+   * the node's own `check_concurrency`, else the platform's `checkConcurrency`, run there and the node is online. A run that cannot be sent
    * is errored and the next one tried. Never throws; failures are logged.
    */
   dispatchNode(nodeId: NodeId): Promise<void>;

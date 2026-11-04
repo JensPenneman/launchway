@@ -1012,7 +1012,7 @@ describe('checks against PostgreSQL', () => {
     expect(deployed.status).toBe(201);
     expect(await deployed.json()).toMatchObject({ nodeId: appNode });
 
-    // A re-run goes to the check node as well, and the dispatcher sends it there only.
+    // The dispatcher sends the run to the check node only.
     gateway.connect(checkNode);
     await createCheckDispatcher(deps).dispatchNode(checkNode);
     const sentTo = gateway.checkRuns.filter((r) => r.payload.runId === manual?.id);
@@ -2134,6 +2134,83 @@ describe('checks against PostgreSQL', () => {
     await runningRun(first.app.id, node);
     const one = (await (await api.request(`/api/v1/checks/${behind?.id}`)).json()) as CheckRun;
     expect(one.queuedBehind).toBe(3);
+  });
+
+  it("uses the node's own limit for the places in the queue", async () => {
+    const big = await newNode(false);
+    const small = await newNode(false);
+    await db.update(nodes).set({ checkConcurrency: 6 }).where(eq(nodes.id, big));
+    await db.update(nodes).set({ checkConcurrency: 1 }).where(eq(nodes.id, small));
+    const onBig = await createTestApp(big, { items: [quality] });
+    const onSmall = await createTestApp(small, { items: [quality] });
+    for (let i = 0; i < 5; i++) await runningRun(onBig.app.id, big);
+    await runningRun(onSmall.app.id, small);
+    const [waitingBig] = await createRuns(onBig.app.id, { ref: 'main' });
+    const [waitingSmall] = await createRuns(onSmall.app.id, { ref: 'main' });
+    // Platform limit 1: only the node's own limit puts the run on the big node next.
+    expect(waitingBig?.queuedBehind).toBe(0);
+    await withConcurrency(4, async () => {
+      const got = (await (
+        await api.request(`/api/v1/checks/${waitingSmall?.id}`)
+      ).json()) as CheckRun;
+      expect(got.queuedBehind).toBe(1);
+    });
+  });
+
+  it('queues pushes and pull requests, re-runs and scheduled runs on the check node', async () => {
+    const appNode = await newNode(false);
+    const checkNode = await newNode(true);
+    const { app, repo, mainSha } = await createTestApp(appNode, {
+      enabled: true,
+      items: [quality],
+      nodeId: checkNode,
+    });
+    await withConcurrency(8, async () => {
+      const sentToCheckNode = (runId: string) =>
+        gateway.checkRuns.filter((r) => r.payload.runId === runId).map((r) => r.nodeId);
+
+      await deliver('push', push(repo, 'feature/a', sha(`${repo}-a`)));
+      await deliver('pull_request', pullRequest(repo, 'opened', 7, sha(`${repo}-pr`)));
+      const runs = await runsOf(app.id);
+      expect(runs).toHaveLength(2);
+      for (const run of runs) {
+        expect(run.nodeId).toBe(checkNode);
+        await until(() => sentToCheckNode(run.id).length > 0);
+        expect(sentToCheckNode(run.id)).toEqual([checkNode]);
+      }
+
+      // A re-run of a finished run.
+      const [finished] = runs;
+      await db
+        .update(checkRuns)
+        .set({ status: 'succeeded', exitCode: 0, finishedAt: new Date() })
+        .where(eq(checkRuns.id, finished?.id as CheckRunId));
+      const rerun = await api.request(`/api/v1/checks/${finished?.id}/rerun`, json('POST'));
+      expect(rerun.status).toBe(201);
+      const again = (await rerun.json()) as CheckRun;
+      expect(again.nodeId).toBe(checkNode);
+      await until(() => sentToCheckNode(again.id).length > 0);
+      expect(sentToCheckNode(again.id)).toEqual([checkNode]);
+
+      // The schedule pass.
+      const set = await api.request(
+        `/api/v1/apps/${app.id}`,
+        json('PATCH', { checks: { schedule: '0 6 * * 1' } }),
+      );
+      expect(set.status).toBe(200);
+      await db
+        .update(apps)
+        .set({ checksLastSlot: new Date('2026-10-30T12:00:00Z') })
+        .where(eq(apps.id, app.id));
+      await createCheckScheduler(deps).tick(new Date('2026-11-02T06:00:40Z'));
+      const scheduled = (await runsOf(app.id)).filter((r) => r.trigger === 'schedule');
+      expect(scheduled.map((r) => [r.nodeId, r.commitSha])).toEqual([[checkNode, mainSha]]);
+      const scheduledRun = scheduled[0];
+      await until(() => sentToCheckNode(scheduledRun?.id ?? '').length > 0);
+      expect(sentToCheckNode(scheduledRun?.id ?? '')).toEqual([checkNode]);
+      // Nothing was ever sent to the node of the app.
+      expect(gateway.checkRuns.filter((r) => r.nodeId === appNode)).toEqual([]);
+    });
   });
 
   it('passes over a run whose check runs for its tree, so it still becomes a copy', async () => {

@@ -168,7 +168,7 @@ export const CheckRun = z
     }),
     queuedBehind: z.number().int().min(0).nullable().openapi({
       description:
-        'While queued: how many runs of its node have to end before it starts (0: it starts next), with the node running up to checkConcurrency runs at once',
+        'While queued: how many runs of its node have to end before it starts (0: it starts next), with the node running up to its own checkConcurrency (else the platform setting) runs at once',
     }),
     createdAt: Timestamp,
     startedAt: Timestamp.nullable().openapi({ description: 'When the run was sent to its node' }),
@@ -246,7 +246,7 @@ export const MAX_CHECK_CONCURRENCY = 8;
 
 export const CheckConcurrency = z.number().int().min(1).max(MAX_CHECK_CONCURRENCY).openapi({
   description:
-    'Checks a node runs at once, all apps together; each one gets the limits of every service, so a node needs this many times their memory and CPUs',
+    'Checks a node runs at once, all apps together, unless the node sets its own (Checks at once on the node); each one gets the limits of every service, so a node needs this many times their memory and CPUs',
   example: DEFAULT_CHECK_CONCURRENCY,
 });
 

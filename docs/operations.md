@@ -409,7 +409,7 @@ added to GitHub afterwards.
 
 ## Checks
 
-Checks run an app's test commands on its node, in containers of the app's own
+Checks run an app's test commands on its node (or the node its checks name, see *Run checks on another node*), in containers of the app's own
 development container (its Compose project), for every push and every pull
 request from a branch of its repository, and report each one to GitHub as the
 commit status `launchway/<name>`. Branch protection can require them like the
@@ -829,8 +829,13 @@ GitHub for the checkout, and enough CPU and memory: every service of every
 check gets the platform limits, so the node needs *checks at once x services x
 limits* (*Resources on a 16 GB node* has the arithmetic). It needs nothing of
 the app: checks get no app variables, secrets or volumes. Routed previews
-and deployments still run on the app's node. A node that an app names for its
-checks cannot be deleted until the app checks elsewhere.
+and deployments still run on the app's node. The check node must stay awake and
+online: a queued run whose node has been offline for 10 minutes ends `errored`
+(`offline`), and it does not fall back to the app's node, so a Mac that sleeps
+(or Docker Desktop pausing its VM) makes its queued runs error. A node that an
+app names for its checks cannot be deleted while it does so. Once a node has
+run a check it cannot be deleted at all (409): runs are kept as history and
+reference their node, so revoke its credential and leave it idle instead.
 
 ### Trusted mounts (bind mounts and existing volumes)
 

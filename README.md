@@ -55,7 +55,7 @@ reachable through a REST API; the web UI is only a client of that API.
 - **Deployments on GitHub.** Every deployment, preview or production, shows
   in the repository's *Environments* and *Deployments* with its status, URL
   and a link back to Launchway.
-- **Checks.** An app's test commands run on its node for every push and pull
+- **Checks.** An app's test commands run on its node, or the node its checks name ([ADR 0022](docs/adr/0022-checks-on-a-chosen-node.md)), for every push and pull
   request from a branch of its repository, in containers of the app's own
   development container, with no app variables or secrets and capped memory,
   CPUs and processes. Their logs stream to the UI, and each check is a

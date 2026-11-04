@@ -131,7 +131,7 @@ export function CheckLimitsCard({ settings }: { settings: Settings }) {
             <Field
               label="At once per node"
               error={atOnceError}
-              description="Checks a node runs side by side, all apps together"
+              description="Checks a node runs side by side, all apps together, unless the node sets its own"
             >
               <Input
                 inputMode="numeric"

@@ -102,7 +102,9 @@ function NodeDetail() {
   }
 
   const data = node.data;
-  const nodeApps = (apps.data?.items ?? []).filter((app) => app.nodeId === data.id);
+  const nodeApps = (apps.data?.items ?? []).filter(
+    (app) => app.nodeId === data.id || app.checks.nodeId === data.id,
+  );
   const docker = data.docker;
 
   return (
@@ -248,10 +250,11 @@ function NodeDetail() {
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Apps on this node</CardTitle>
+            <CardDescription>Apps that run here, and apps whose checks run here.</CardDescription>
           </CardHeader>
           <CardContent>
             {nodeApps.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No apps are assigned to this node.</p>
+              <p className="text-sm text-muted-foreground">No apps run or check on this node.</p>
             ) : (
               <ul className="divide-y">
                 {nodeApps.map((app) => (
@@ -263,7 +266,9 @@ function NodeDetail() {
                     >
                       {app.name}
                     </Link>
-                    {app.activeDeploymentId ? (
+                    {app.nodeId !== data.id ? (
+                      <StatusBadge tone="neutral">checks only</StatusBadge>
+                    ) : app.activeDeploymentId ? (
                       <StatusBadge tone="success">running</StatusBadge>
                     ) : (
                       <StatusBadge tone="neutral">not running</StatusBadge>

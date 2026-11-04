@@ -41,7 +41,7 @@ export const checkRuns = pgTable(
       .$type<AppId>()
       .notNull()
       .references(() => apps.id, { onDelete: 'cascade' }),
-    /** The app's node when the run was queued; the run stays there. */
+    /** The check node of the app (ADR 0022) when the run was queued; the run stays there. */
     nodeId: text('node_id')
       .$type<NodeId>()
       .notNull()

@@ -43,7 +43,7 @@ const createCheckRuns = createRoute({
   summary: "Run an app's checks for a ref",
   description:
     'Resolves the ref (branch, tag or commit) to a commit and queues one run per check (every ' +
-    "configured check, or the named ones) on the app's node; checks queued or running for that " +
+    "configured check, or the named ones) on the node that runs the app's checks (its own node unless `checks.nodeId` names another); checks queued or running for that " +
     'commit already are skipped (409 when none is left). Works whether or not `checks.enabled` ' +
     'is set. Each run is reported to GitHub as the commit status `launchway/<name>`. Audited.',
   security: AUTHENTICATED,

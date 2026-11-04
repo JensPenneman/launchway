@@ -14,6 +14,7 @@ const SETTINGS: AppChecksSettings = {
   branches: ['main', 'release'],
   skipBots: true,
   schedule: '0 6 * * 1',
+  nodeId: null,
   items: [
     { name: 'quality', command: 'pnpm check', service: 'dev', timeoutMinutes: 30 },
     {
@@ -38,6 +39,7 @@ describe('toChecksForm', () => {
       branches: 'main, release',
       skipBots: true,
       schedule: '0 6 * * 1',
+      nodeId: '',
       items: [
         {
           name: 'quality',
@@ -67,6 +69,17 @@ describe('parseChecksForm', () => {
     expect(parseChecksForm(toChecksForm(SETTINGS))).toEqual({ success: true, data: SETTINGS });
   });
 
+  it('maps the node that runs the checks, empty meaning the node of the app', () => {
+    const node = 'node_01k7zzzzzzzzzzzzzzzzzzzzzz';
+    expect(toChecksForm({ ...SETTINGS, nodeId: node as AppChecksSettings['nodeId'] }).nodeId).toBe(
+      node,
+    );
+    const chosen = parseChecksForm(form({ nodeId: node }));
+    expect(chosen.success && chosen.data.nodeId).toBe(node);
+    const own = parseChecksForm(form({ nodeId: '' }));
+    expect(own.success && own.data.nodeId).toBeNull();
+  });
+
   it('accepts lists with commas, spaces and blank lines and trims the inputs', () => {
     const result = parseChecksForm(
       form({
@@ -91,6 +104,7 @@ describe('parseChecksForm', () => {
         branches: ['main', 'develop', 'release'],
         skipBots: true,
         schedule: '0 6 * * 1',
+        nodeId: null,
         // Empty service and timeout take the defaults; no Compose file of its own.
         items: [{ name: 'lint', command: 'pnpm lint', service: 'dev', timeoutMinutes: 30 }],
       },

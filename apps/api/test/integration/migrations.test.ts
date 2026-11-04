@@ -2,15 +2,16 @@ import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sql } from 'drizzle-orm';
+import { generateId, type NodeId } from '@launchway/contracts';
+import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
 import pg from 'pg';
 import { pino } from 'pino';
 import { describe, expect, inject, it } from 'vitest';
-import { createDatabase } from '../../src/db/client.js';
+import { createDatabase, type Database } from '../../src/db/client.js';
 import { MIGRATIONS_FOLDER, runMigrations } from '../../src/db/migrate.js';
-import { checkRuns, nodes, settings } from '../../src/db/schema.js';
+import { apps, checkRuns, nodes, settings } from '../../src/db/schema.js';
 import { insertApp } from '../support/edge-fixtures.js';
 
 /** A migrations folder that ends before `tag`, as an installation of an older version has it. */
@@ -24,6 +25,13 @@ async function migrationsBefore(tag: string): Promise<string> {
   journal.entries = journal.entries.slice(0, index);
   await writeFile(path, JSON.stringify(journal));
   return folder;
+}
+
+/** A node row as a database before 0009 takes it (the schema now has a column that lacks there). */
+async function insertNodeBefore0009(db: Database, name: string): Promise<NodeId> {
+  const id = generateId('node');
+  await db.execute(sql`INSERT INTO nodes (id, name) VALUES (${id}, ${name})`);
+  return id;
 }
 
 /**
@@ -57,8 +65,7 @@ describe('migrations', () => {
     try {
       await migrate(drizzle(pool), { migrationsFolder: folder });
       const db = createDatabase(pool);
-      const [node] = await db.insert(nodes).values({ name: 'busy' }).returning({ id: nodes.id });
-      if (!node) throw new Error('node insert failed');
+      const node = { id: await insertNodeBefore0009(db, 'busy') };
       const appId = await insertApp(db, node.id, 'migrated');
       const run = (status: 'queued' | 'running') => ({
         appId,
@@ -95,6 +102,49 @@ describe('migrations', () => {
       expect(row?.checkConcurrency).toBe(1);
     } finally {
       // Every connection to the database is closed first; without FORCE, one left open fails here.
+      await close();
+      await admin.pool.query(`DROP DATABASE ${name}`);
+      await admin.close();
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('0009 adds the per-node check concurrency and keeps the checks of existing apps', async () => {
+    const url = new URL(inject('databaseUrl'));
+    const name = `launchway_migrate_${randomBytes(4).toString('hex')}`;
+    const admin = trackedPool(url.toString());
+    await admin.pool.query(`CREATE DATABASE ${name}`);
+    url.pathname = `/${name}`;
+    const { pool, close } = trackedPool(url.toString());
+    const folder = await migrationsBefore('0009_check_node');
+    try {
+      await migrate(drizzle(pool), { migrationsFolder: folder });
+      const db = createDatabase(pool);
+      const node = { id: await insertNodeBefore0009(db, 'edge') };
+      const appId = await insertApp(db, node.id, 'before-0009');
+      await db.execute(sql`UPDATE apps SET checks = '{"enabled":true,"items":[]}'::jsonb`);
+
+      await runMigrations(pool, pino({ level: 'silent' }));
+
+      const [before] = await db.select().from(nodes).where(eq(nodes.id, node.id));
+      expect(before?.checkConcurrency).toBeNull();
+      const [app] = await db.select({ checks: apps.checks }).from(apps).where(eq(apps.id, appId));
+      expect(app?.checks).toMatchObject({ enabled: true });
+      expect(app?.checks.nodeId ?? null).toBeNull();
+      await db.update(nodes).set({ checkConcurrency: 4 }).where(eq(nodes.id, node.id));
+      await expect(
+        db.update(nodes).set({ checkConcurrency: 17 }).where(eq(nodes.id, node.id)),
+      ).rejects.toThrow();
+      await expect(
+        db.update(nodes).set({ checkConcurrency: 0 }).where(eq(nodes.id, node.id)),
+      ).rejects.toThrow();
+      const freshId = await insertApp(db, node.id, 'after-0009');
+      const [fresh] = await db
+        .select({ checks: apps.checks })
+        .from(apps)
+        .where(eq(apps.id, freshId));
+      expect(fresh?.checks.nodeId).toBeNull();
+    } finally {
       await close();
       await admin.pool.query(`DROP DATABASE ${name}`);
       await admin.close();

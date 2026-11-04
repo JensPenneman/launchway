@@ -378,6 +378,7 @@ describe('checks against PostgreSQL', () => {
       skipBots: false,
       items: [],
       schedule: null,
+      nodeId: null,
     });
     const patch = async (checks: unknown) => {
       const res = await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { checks }));
@@ -406,6 +407,7 @@ describe('checks against PostgreSQL', () => {
         },
       ],
       schedule: null,
+      nodeId: null,
     });
     // Omitted fields keep their value; items replace the list.
     const second = await patch({ branches: ['main'], items: [lint] });
@@ -967,6 +969,252 @@ describe('checks against PostgreSQL', () => {
       await holding;
       await dispatching;
       expect(gateway.checkRuns.filter((r) => r.nodeId === node)).toHaveLength(2);
+    });
+  });
+
+  it("runs an app's checks on the node chosen in its check settings, deployments stay on its own", async () => {
+    const appNode = await newNode(false);
+    const checkNode = await newNode(false);
+    const { app } = await createTestApp(appNode, { items: [quality] });
+    expect(app.checks.nodeId).toBeNull();
+
+    const unknown = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { nodeId: generateId('node') } }),
+    );
+    expect(unknown.status).toBe(400);
+    expect(await unknown.json()).toMatchObject({ errors: [{ path: 'body.checks.nodeId' }] });
+
+    const set = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { nodeId: checkNode } }),
+    );
+    expect(set.status).toBe(200);
+    expect(((await set.json()) as App).checks).toMatchObject({ nodeId: checkNode, items: [{}] });
+    // Other check settings keep the node.
+    const other = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { skipBots: true } }),
+    );
+    expect(((await other.json()) as App).checks.nodeId).toBe(checkNode);
+
+    const [manual] = await createRuns(app.id, { ref: 'main' });
+    expect(manual).toMatchObject({ nodeId: checkNode, status: 'queued' });
+    expect((await runRow(manual?.id ?? '')).nodeId).toBe(checkNode);
+    // The app and its deployments keep the node of the app.
+    expect(
+      (await db.select({ nodeId: apps.nodeId }).from(apps).where(eq(apps.id, app.id)))[0]?.nodeId,
+    ).toBe(appNode);
+    const deployed = await api.request(
+      `/api/v1/apps/${app.id}/deployments`,
+      json('POST', { ref: 'main' }),
+    );
+    expect(deployed.status).toBe(201);
+    expect(await deployed.json()).toMatchObject({ nodeId: appNode });
+
+    // A re-run goes to the check node as well, and the dispatcher sends it there only.
+    gateway.connect(checkNode);
+    await createCheckDispatcher(deps).dispatchNode(checkNode);
+    const sentTo = gateway.checkRuns.filter((r) => r.payload.runId === manual?.id);
+    expect(sentTo.map((r) => r.nodeId)).toEqual([checkNode]);
+
+    // Back to the node of the app.
+    const reset = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { nodeId: null } }),
+    );
+    expect(((await reset.json()) as App).checks.nodeId).toBeNull();
+  });
+
+  it('cancels the queued runs of the old check node when the checks move, and keeps the node in use', async () => {
+    const appNode = await newNode(false);
+    const first = await newNode(false);
+    const second = await newNode(false);
+    const { app } = await createTestApp(appNode, { items: [quality], nodeId: first });
+    const [run] = await createRuns(app.id, { ref: 'main' });
+    expect(run?.nodeId).toBe(first);
+    // A node some app checks on cannot be deleted.
+    const blocked = await api.request(`/api/v1/nodes/${first}`, { method: 'DELETE' });
+    expect(blocked.status).toBe(409);
+
+    const res = await api.request(
+      `/api/v1/apps/${app.id}`,
+      json('PATCH', { checks: { nodeId: second } }),
+    );
+    expect(res.status).toBe(200);
+    expect(await runRow(run?.id ?? '')).toMatchObject({
+      status: 'cancelled',
+      statusMessage: APP_MOVED_MESSAGE,
+    });
+    // No app uses the old check node any more; its cancelled run still keeps it (409, not 500).
+    const kept409 = await api.request(`/api/v1/nodes/${first}`, { method: 'DELETE' });
+    expect(kept409.status).toBe(409);
+    expect(((await kept409.json()) as { detail: string }).detail).toContain('still referenced');
+    // Moving the app itself leaves checks that run elsewhere alone.
+    const [kept] = await createRuns(app.id, { ref: 'main' });
+    expect(kept?.nodeId).toBe(second);
+    const to = await newNode(false);
+    expect(
+      (await api.request(`/api/v1/apps/${app.id}`, json('PATCH', { nodeId: to }))).status,
+    ).toBe(200);
+    expect((await runRow(kept?.id ?? '')).status).toBe('queued');
+  });
+
+  it('locks the check node, not the node of the app, when it counts the queue', async () => {
+    const appNode = await newNode(false);
+    const checkNode = await newNode(false);
+    const { app } = await createTestApp(appNode, { items: [quality], nodeId: checkNode });
+    const second = await createTestApp(appNode, { items: [quality], nodeId: checkNode });
+    const lockNode = async (id: NodeId) => {
+      const client = await pool.connect();
+      await client.query('BEGIN');
+      await client.query('SELECT id FROM nodes WHERE id = $1 FOR UPDATE', [id]);
+      return {
+        release: async () => {
+          await client.query('ROLLBACK');
+          client.release();
+        },
+      };
+    };
+    // A lock on the node of the app does not hold the queueing of checks back.
+    const appLock = await lockNode(appNode);
+    try {
+      const [run] = await createRuns(app.id, { ref: 'main' });
+      expect(run?.nodeId).toBe(checkNode);
+    } finally {
+      await appLock.release();
+    }
+    // A lock on the check node does, until it is released.
+    const checkLock = await lockNode(checkNode);
+    let done = false;
+    const pending = createRuns(second.app.id, { ref: 'main' }).then(() => {
+      done = true;
+    });
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(done).toBe(false);
+    } finally {
+      await checkLock.release();
+    }
+    await pending;
+    expect(done).toBe(true);
+  });
+
+  it('counts the queue per check node, across apps of other nodes', async () => {
+    const setLimits = async (perNode: number) => {
+      const res = await api.request(
+        '/api/v1/settings',
+        json('PATCH', { checkMaxQueuedPerNode: perNode }),
+      );
+      expect(res.status).toBe(200);
+    };
+    await setLimits(10);
+    try {
+      const checkNode = await newNode(false);
+      const nodeA = await newNode(false);
+      const nodeB = await newNode(false);
+      const items = ['a', 'b', 'c', 'd', 'e', 'f'].map((name) => ({ ...lint, name }));
+      const first = await createTestApp(nodeA, { items, nodeId: checkNode });
+      const second = await createTestApp(nodeB, { items, nodeId: checkNode });
+      const own = await createTestApp(nodeA, { items });
+      await createRuns(first.app.id, { ref: 'main' });
+      // 6 queued on the check node; 6 more of an app of another node exceed its limit of 10.
+      const full = await api.request(
+        `/api/v1/apps/${second.app.id}/checks`,
+        json('POST', { ref: 'main' }),
+      );
+      expect(full.status).toBe(409);
+      expect(((await full.json()) as { detail: string }).detail).toContain(
+        "6 queued and 6 new checks would exceed its node's limit of 10",
+      );
+      // The runs of the first app sit on the check node, not on its own node: that one is free.
+      const fits = await createRuns(own.app.id, { ref: 'main' });
+      expect(fits).toHaveLength(6);
+      expect(fits.every((run) => run.nodeId === nodeA)).toBe(true);
+    } finally {
+      await setLimits(100);
+    }
+  });
+
+  it("claims up to the node's own concurrency, else the platform's", async () => {
+    const node = await newNode(false);
+    const { app } = await createTestApp(node, {
+      items: [quality, lint, { name: 'unit', command: 'npm run unit' }],
+    });
+    const sent = () =>
+      gateway.checkRuns.filter((r) => r.nodeId === node).map((r) => r.payload.runId);
+    const reset = async () => {
+      await db
+        .update(checkRuns)
+        .set({ status: 'cancelled', reason: 'cancelled', finishedAt: new Date() })
+        .where(and(eq(checkRuns.nodeId, node), eq(checkRuns.status, 'running')));
+      await db
+        .update(checkRuns)
+        .set({ status: 'cancelled', reason: 'cancelled', finishedAt: new Date() })
+        .where(and(eq(checkRuns.nodeId, node), eq(checkRuns.status, 'queued')));
+    };
+    const runningCount = async () =>
+      (await db.select().from(checkRuns).where(eq(checkRuns.nodeId, node))).filter(
+        (r) => r.status === 'running',
+      ).length;
+    gateway.connect(node);
+    const dispatcher = createCheckDispatcher(deps);
+
+    // Override 2 above the platform's 1.
+    const patch = await api.request(
+      `/api/v1/nodes/${node}`,
+      json('PATCH', { checkConcurrency: 2 }),
+    );
+    expect(patch.status).toBe(200);
+    expect(await patch.json()).toMatchObject({ checkConcurrency: 2 });
+    await createRuns(app.id, { ref: 'main' });
+    await dispatcher.dispatchNode(node);
+    expect(await runningCount()).toBe(2);
+    await reset();
+
+    // Override 1 below the platform's 3.
+    await withConcurrency(3, async () => {
+      await api.request(`/api/v1/nodes/${node}`, json('PATCH', { checkConcurrency: 1 }));
+      await createRuns(app.id, { ref: 'main' });
+      await dispatcher.dispatchNode(node);
+      expect(await runningCount()).toBe(1);
+      await reset();
+
+      // Back to null: the platform's value.
+      const cleared = await api.request(
+        `/api/v1/nodes/${node}`,
+        json('PATCH', { checkConcurrency: null }),
+      );
+      expect(await cleared.json()).toMatchObject({ checkConcurrency: null });
+      await createRuns(app.id, { ref: 'main' });
+      await dispatcher.dispatchNode(node);
+      expect(await runningCount()).toBe(3);
+    });
+    expect(sent().length).toBeGreaterThanOrEqual(6);
+
+    for (const checkConcurrency of [0, 17, 1.5, '2']) {
+      const bad = await api.request(`/api/v1/nodes/${node}`, json('PATCH', { checkConcurrency }));
+      expect(bad.status).toBe(400);
+    }
+  });
+
+  it('errors the runs of a check node whose agent does not run checks, for apps of other nodes', async () => {
+    const appNode = await newNode(true);
+    const checkNode = await newNode(true);
+    const { app } = await createTestApp(appNode, { items: [quality], nodeId: checkNode });
+    const running = await runningRun(app.id, checkNode);
+    await createCheckSink(deps).onHeartbeat(checkNode, undefined);
+    expect(await runRow(running.id)).toMatchObject({
+      status: 'errored',
+      reason: 'unsupported',
+      statusMessage: UNSUPPORTED_AGENT_MESSAGE,
+    });
+    // The node of the app is untouched: it runs deployments and has no check to fail.
+    const [queued] = await createRuns(app.id, { ref: 'main', names: ['quality'] });
+    await until(async () => (await runRow(queued?.id ?? '')).status === 'errored');
+    expect(await runRow(queued?.id ?? '')).toMatchObject({
+      nodeId: checkNode,
+      reason: 'unsupported',
     });
   });
 

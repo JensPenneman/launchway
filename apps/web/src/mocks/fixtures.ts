@@ -226,6 +226,7 @@ export function createNodes(): Node[] {
       protocolVersion: 1,
       docker: docker(8, 32, 'x86_64'),
       allowedBindRoots: ['/srv/data', '/run/desktop/mnt/host/d/Backups'],
+      checkConcurrency: null,
       lastSeenAt: ago(0.2),
       joinedAt: ago(60 * 24 * 40),
       createdAt: ago(60 * 24 * 40),
@@ -243,6 +244,7 @@ export function createNodes(): Node[] {
       protocolVersion: 1,
       docker: { ...docker(4, 8, 'aarch64'), kernelVersion: '6.12.43+deb13-arm64' },
       allowedBindRoots: [],
+      checkConcurrency: null,
       lastSeenAt: ago(0.3),
       joinedAt: ago(60 * 24 * 20),
       createdAt: ago(60 * 24 * 20),
@@ -260,6 +262,7 @@ export function createNodes(): Node[] {
       protocolVersion: 1,
       docker: { ...docker(4, 4, 'aarch64'), operatingSystem: 'Raspberry Pi OS' },
       allowedBindRoots: [],
+      checkConcurrency: null,
       lastSeenAt: ago(60 * 7),
       joinedAt: ago(60 * 24 * 10),
       createdAt: ago(60 * 24 * 10),
@@ -369,6 +372,7 @@ function trailChecks(): AppChecksSettings {
     skipBots: true,
     // Trail's Monday test of main.
     schedule: '0 6 * * 1',
+    nodeId: null,
     items: [
       {
         name: 'quality',

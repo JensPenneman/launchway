@@ -250,6 +250,20 @@ export const CheckConcurrency = z.number().int().min(1).max(MAX_CHECK_CONCURRENC
   example: DEFAULT_CHECK_CONCURRENCY,
 });
 
+/** Per-node override of the platform setting (`nodes.check_concurrency`, ADR 0022): 1 to 16. */
+export const MAX_NODE_CHECK_CONCURRENCY = 16;
+
+export const NodeCheckConcurrency = z
+  .number()
+  .int()
+  .min(1)
+  .max(MAX_NODE_CHECK_CONCURRENCY)
+  .openapi({
+    description:
+      'Checks this node runs at once, all apps together; overrides the platform setting. Each one gets the limits of every service, so the node needs this many times their memory and CPUs',
+    example: 2,
+  });
+
 /**
  * Defaults of the platform settings that bound the queue: runs that would make an app or a node
  * hold more queued runs end at once with `errored`, reason `queue-full`.

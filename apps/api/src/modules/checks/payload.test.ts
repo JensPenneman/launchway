@@ -89,6 +89,7 @@ describe('run snapshot', () => {
       skipBots: false,
       items: [],
       schedule: null,
+      nodeId: null,
     },
   });
 
@@ -117,6 +118,7 @@ describe('run snapshot', () => {
       skipBots: false,
       items: [],
       schedule: null,
+      nodeId: null,
     });
   });
 });

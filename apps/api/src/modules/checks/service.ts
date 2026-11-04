@@ -56,6 +56,7 @@ import {
   BRANCH_DELETED_PREFIX,
   type CheckRunRow,
   checkLogHub,
+  checkNodeOf,
   checksSettingsOf,
   runSnapshot,
   toCheckRun,
@@ -68,7 +69,7 @@ type QueueLimits = Pick<Settings, 'checkMaxQueuedPerApp' | 'checkMaxQueuedPerNod
 export const CANCELLED_MESSAGE = 'Cancelled';
 export const CANCEL_REQUESTED_MESSAGE = 'Cancellation requested';
 export const APP_DELETED_MESSAGE = 'Cancelled: the app is being deleted';
-export const APP_MOVED_MESSAGE = 'Cancelled: the app moved to another node';
+export const APP_MOVED_MESSAGE = 'Cancelled: the checks of the app moved to another node';
 /** Log lines deleted per statement when pruning. */
 const PRUNE_BATCH = 5000;
 
@@ -270,7 +271,11 @@ export function createChecksService(deps: Deps): ChecksService {
     adding: number,
     limits: QueueLimits,
   ): Promise<string | null> {
-    await tx.select({ id: nodes.id }).from(nodes).where(eq(nodes.id, app.nodeId)).for('update');
+    await tx
+      .select({ id: nodes.id })
+      .from(nodes)
+      .where(eq(nodes.id, checkNodeOf(app)))
+      .for('update');
     const queuedOf = async (where: SQL | undefined) => {
       const [row] = await tx
         .select({ value: count() })
@@ -285,7 +290,7 @@ export function createChecksService(deps: Deps): ChecksService {
     if (ofApp + adding > limits.checkMaxQueuedPerApp) {
       return exceeded(ofApp, "the app's", limits.checkMaxQueuedPerApp);
     }
-    const ofNode = await queuedOf(eq(checkRuns.nodeId, app.nodeId));
+    const ofNode = await queuedOf(eq(checkRuns.nodeId, checkNodeOf(app)));
     if (ofNode + adding > limits.checkMaxQueuedPerNode) {
       return exceeded(ofNode, "its node's", limits.checkMaxQueuedPerNode);
     }
@@ -504,7 +509,7 @@ export function createChecksService(deps: Deps): ChecksService {
       .values(
         items.map((item) => ({
           appId: app.id,
-          nodeId: app.nodeId,
+          nodeId: checkNodeOf(app),
           ...runSnapshot(item, settings),
           commitSha: commit.sha,
           ref: commit.ref,
@@ -555,7 +560,7 @@ export function createChecksService(deps: Deps): ChecksService {
       .values(
         copies.map(({ item, source }) => ({
           appId: app.id,
-          nodeId: app.nodeId,
+          nodeId: checkNodeOf(app),
           ...runSnapshot(item, settings),
           commitSha: commit.sha,
           ref: commit.ref,
@@ -732,7 +737,7 @@ export function createChecksService(deps: Deps): ChecksService {
         const commit = { sha, ref: input.ref, prNumber: null, trigger: 'manual' as const, treeSha };
         return {
           rows: await insertRuns(tx, locked, settings, items, commit, actor),
-          nodeId: locked.nodeId,
+          nodeId: checkNodeOf(locked),
         };
       });
       logger.info(
@@ -773,7 +778,7 @@ export function createChecksService(deps: Deps): ChecksService {
         const seen = new Set(existing.map((row) => row.name));
         const items = settings.items.filter((item) => !seen.has(item.name));
         if (items.length === 0)
-          return { rows: [], superseded: [], served, nodeId: locked.nodeId, full: null };
+          return { rows: [], superseded: [], served, nodeId: checkNodeOf(locked), full: null };
         // A check that ran and exited for a commit of the same tree is not run again.
         const copies: { item: CheckItem; source: CheckRunRow }[] = [];
         const run: CheckItem[] = [];
@@ -813,7 +818,7 @@ export function createChecksService(deps: Deps): ChecksService {
             : await insertCopies(tx, locked, settings, copies, { ...target, treeSha }, actor)),
           ...(await insertRuns(tx, locked, settings, run, target, actor, {}, full)),
         ];
-        return { rows, superseded, served, nodeId: locked.nodeId, full };
+        return { rows, superseded, served, nodeId: checkNodeOf(locked), full };
       });
       for (const row of result.superseded) announceStatus(deps, row);
       // No status: the commit status mirror has nothing to post for these.
@@ -1010,11 +1015,16 @@ export function createChecksService(deps: Deps): ChecksService {
         // A full queue: the slot is used, nothing is queued (no errored runs on the branch).
         const note = full ? `Not queued for ${slotLabel(slot)}: ${full}` : null;
         await markSlot(tx, app.id, slot, note);
-        if (note) return { rows: [], nodeId: locked.nodeId, note, changed: true };
+        if (note) return { rows: [], nodeId: checkNodeOf(locked), note, changed: true };
         const commit = { sha, ref: branch, prNumber: null, trigger: 'schedule' as const, treeSha };
         const summary = { schedule, slot: slot.toISOString() };
         const rows = await insertRuns(tx, locked, settings, items, commit, actor, summary);
-        return { rows, nodeId: locked.nodeId, note, changed: locked.checksScheduleNote !== null };
+        return {
+          rows,
+          nodeId: checkNodeOf(locked),
+          note,
+          changed: locked.checksScheduleNote !== null,
+        };
       });
       if (!result) return { kind: 'none' };
       // The note shows in the app's Checks tab.
@@ -1102,7 +1112,7 @@ export function createChecksService(deps: Deps): ChecksService {
           rerunOf: previous.id,
         });
         if (!created) throw new Error('insert returned no row');
-        return { row: created, nodeId: app.nodeId };
+        return { row: created, nodeId: checkNodeOf(app) };
       });
       queued([row], nodeId);
       return toCheckRun(row);

@@ -44,3 +44,22 @@ test('edits the allowed bind-mount roots of a node', async ({ page }) => {
   await page.getByRole('button', { name: 'Save roots' }).click();
   await expect(page.getByText('Allowed bind-mount roots saved')).toBeVisible();
 });
+
+test('sets how many checks a node runs at once', async ({ page }) => {
+  await page.goto(`/nodes/${EDGE_NODE_ID}`);
+  const form = page.getByRole('form', { name: 'Checks at once' });
+  const field = form.getByLabel('Checks at once');
+  await expect(field).toHaveValue('');
+  await expect(field).toHaveAttribute('placeholder', 'Platform setting');
+
+  await field.fill('17');
+  await expect(form.getByRole('button', { name: 'Save' })).toBeDisabled();
+  await field.fill('3');
+  await form.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Checks at once saved')).toBeVisible();
+  await expect(field).toHaveValue('3');
+
+  await field.fill('');
+  await form.getByRole('button', { name: 'Save' }).click();
+  await expect(page.getByText('Checks at once saved').last()).toBeVisible();
+});

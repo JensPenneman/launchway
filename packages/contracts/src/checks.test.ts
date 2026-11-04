@@ -100,7 +100,20 @@ describe('check settings', () => {
       skipBots: false,
       items: [],
       schedule: null,
+      nodeId: null,
     });
+  });
+
+  it('takes the node that runs the checks or null', () => {
+    const node = generateId('node');
+    expect(UpdateAppChecksSettings.parse({ nodeId: node }).nodeId).toBe(node);
+    expect(UpdateAppChecksSettings.parse({ nodeId: null }).nodeId).toBeNull();
+    expect(UpdateAppChecksSettings.parse({}).nodeId).toBeUndefined();
+    expect(UpdateAppChecksSettings.safeParse({ nodeId: 'edge' }).success).toBe(false);
+    expect(UpdateAppChecksSettings.safeParse({ nodeId: generateId('app') }).success).toBe(false);
+    expect(
+      AppChecksSettings.safeParse({ ...DEFAULT_APP_CHECKS_SETTINGS, nodeId: node }).success,
+    ).toBe(true);
   });
 
   it('takes a schedule or null', () => {

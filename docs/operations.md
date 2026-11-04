@@ -808,6 +808,30 @@ refuses the stored credential, the agent joins again with the token. Whoever
 can read the agent's volume can act as that node, and the agent is
 root-equivalent on its machine: protect both.
 
+### Run checks on another node
+
+Checks may run on a node other than the one the app runs on, for example a
+fast machine on the LAN while the edge node keeps deploying. Add the machine
+as a node (steps above), then:
+
+1. Open the app's **Settings → Checks** and choose the node under **Run
+   checks on** (default: *The app's node*), or send `PATCH /api/v1/apps/{id}`
+   with `{"checks": {"nodeId": "node_…"}}`; `null` goes back to the app's
+   node. Changing it cancels the app's queued runs on the old node; running
+   ones finish there.
+2. Optionally open the node's page and set **Checks at once** (1 to 16; empty
+   uses the platform setting under *Settings → Platform → Checks*), or send
+   `PATCH /api/v1/nodes/{id}` with `{"checkConcurrency": 6}`.
+
+The check node needs Docker, the agent at the same version as the control
+plane (an older agent without checks makes its runs `errored`), access to
+GitHub for the checkout, and enough CPU and memory: every service of every
+check gets the platform limits, so the node needs *checks at once x services x
+limits* (*Resources on a 16 GB node* has the arithmetic). It needs nothing of
+the app: checks get no app variables, secrets or volumes. Routed previews
+and deployments still run on the app's node. A node that an app names for its
+checks cannot be deleted until the app checks elsewhere.
+
 ### Trusted mounts (bind mounts and existing volumes)
 
 The Compose policy refuses host bind mounts, `external: true` volumes and
@@ -976,6 +1000,16 @@ docker compose -f compose.agent.yaml up -d
 
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
+
+### Upgrading to 0.8.0
+
+- **Checks on a chosen node.** Nothing changes until an app names a node under
+  **Settings → Checks → Run checks on** ([ADR 0022](adr/0022-checks-on-a-chosen-node.md)).
+  Migration 0009 adds the nullable `nodes.check_concurrency`; nodes keep using
+  the platform setting. Upgrade the agent of a check node together with the
+  control plane.
+- **Going back.** Migration 0009 has no down path: restore the backup taken
+  before the upgrade.
 
 ### Upgrading to 0.7.0
 

@@ -5,7 +5,9 @@ Date: 2026-10-27
 ## Status
 
 Accepted. One check per node at a time is amended by
-[ADR 0021](0021-concurrent-checks-per-node.md) (concurrent checks per node).
+[ADR 0021](0021-concurrent-checks-per-node.md) (concurrent checks per node);
+running the checks on the node of the app only is amended by
+[ADR 0022](0022-checks-on-a-chosen-node.md) (checks on a chosen node).
 
 ## Context
 

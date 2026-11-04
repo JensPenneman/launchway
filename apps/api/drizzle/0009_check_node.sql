@@ -1,0 +1,3 @@
+ALTER TABLE "apps" ALTER COLUMN "checks" SET DEFAULT '{"enabled":false,"composeFiles":[".devcontainer/compose.yaml"],"branches":null,"skipBots":false,"items":[],"schedule":null,"nodeId":null}'::jsonb;--> statement-breakpoint
+ALTER TABLE "nodes" ADD COLUMN "check_concurrency" integer;--> statement-breakpoint
+ALTER TABLE "nodes" ADD CONSTRAINT "nodes_check_concurrency_range" CHECK ("nodes"."check_concurrency" IS NULL OR "nodes"."check_concurrency" BETWEEN 1 AND 16);

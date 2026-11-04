@@ -239,7 +239,12 @@ export function createCheckDispatcher(deps: Deps): CheckDispatcher {
   async function dispatchNode(nodeId: NodeId): Promise<void> {
     try {
       if (!deps.agents.isOnline(nodeId)) return;
-      const { checkConcurrency } = await settings.get();
+      // The node's own limit wins over the platform setting (ADR 0022).
+      const [node] = await deps.db
+        .select({ checkConcurrency: nodes.checkConcurrency })
+        .from(nodes)
+        .where(eq(nodes.id, nodeId));
+      const checkConcurrency = node?.checkConcurrency ?? (await settings.get()).checkConcurrency;
       // Until the node is full or nothing waits: a sent run takes a slot, and an errored or
       // copied one leaves it for the next queued run (those count against the attempts).
       for (let attempts = 0; attempts < MAX_DISPATCH_ATTEMPTS; ) {

@@ -1001,7 +1001,7 @@ docker compose -f compose.agent.yaml up -d
 The control plane refuses agents that speak an incompatible protocol version;
 the UI shows those nodes with an error until they are upgraded.
 
-### Upgrading to 0.8.0
+### Upgrading to the version with checks on a chosen node
 
 - **Checks on a chosen node.** Nothing changes until an app names a node under
   **Settings → Checks → Run checks on** ([ADR 0022](adr/0022-checks-on-a-chosen-node.md)).

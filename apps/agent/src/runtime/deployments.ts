@@ -27,6 +27,7 @@ import { classifyFailure, type FailedStep } from './failure-reason.js';
 import { checkoutPlan, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
 import { Batcher, MAX_LINE_LENGTH, Tail } from './lines.js';
 import type { Send } from './outbox.js';
+import { IMAGE_RETRY_DELAYS_MS, isTransientImageError, withRetries } from './retry.js';
 import { isInsideReal, PolicyError, type Workspace, writeFileReplacing } from './workspace.js';
 
 const MINUTE = 60_000;
@@ -55,6 +56,10 @@ export interface DeploymentManagerOptions {
   gitConfig?: GitConfig;
   /** The node's build/pull slots, shared with check runs; created here when absent. */
   builds?: Semaphore;
+  /** The node's pull slot, shared with check runs: one pull at a time (default: its own). */
+  pulls?: Semaphore;
+  /** Waits before the retries of a pull that failed like a daemon or registry hiccup. */
+  imageRetryDelaysMs?: readonly number[];
   /** Slots of the semaphore created when `builds` is absent (default 2). */
   maxConcurrentBuilds?: number;
   /** Values no deployment log line or message may show (the node credential, the join token). */
@@ -82,13 +87,17 @@ class StepError extends Error {
   readonly code: AgentError['code'];
   readonly retryable: boolean;
   readonly reason: DeploymentFailureReason;
+  /** Last output lines of a command that exited non-zero (empty otherwise). */
+  readonly output: readonly string[];
   constructor(
     message: string,
     code: AgentError['code'] = 'internal-error',
     retryable = false,
     reason: DeploymentFailureReason = 'unknown',
+    output: readonly string[] = [],
   ) {
     super(message);
+    this.output = output;
     this.name = 'StepError';
     this.code = code;
     this.retryable = retryable;
@@ -172,6 +181,7 @@ export class DeploymentManager {
   readonly #jobs = new Map<DeploymentId, Job>();
   readonly #tails = new Map<string, Promise<void>>();
   readonly #builds: Semaphore;
+  readonly #pulls: Semaphore;
   #shuttingDown = false;
 
   constructor(options: DeploymentManagerOptions) {
@@ -179,6 +189,7 @@ export class DeploymentManager {
     this.#log = options.logger;
     this.#run = options.run ?? runProcess;
     this.#builds = options.builds ?? new Semaphore(options.maxConcurrentBuilds ?? 2);
+    this.#pulls = options.pulls ?? new Semaphore(1);
   }
 
   /** Deployments queued or running on this node (heartbeat `activeDeploymentIds`). */
@@ -296,7 +307,7 @@ export class DeploymentManager {
     if (job.cancelled) return;
     job.state = 'running';
     try {
-      await new DeploymentRun(job, this.#options, this.#run, this.#builds).run();
+      await new DeploymentRun(job, this.#options, this.#run, this.#builds, this.#pulls).run();
     } catch (error) {
       this.#log.error({ err: error, deploymentId: job.payload.deploymentId }, 'deployment crashed');
     } finally {
@@ -351,17 +362,25 @@ class DeploymentRun {
   readonly #options: DeploymentManagerOptions;
   readonly #run: Runner;
   readonly #builds: Semaphore;
+  readonly #pulls: Semaphore;
   readonly #log: Logger;
   readonly #secrets: string[];
   readonly #tail = new Tail<string>(15);
   readonly #batcher: Batcher<LogLine>;
 
-  constructor(job: Job, options: DeploymentManagerOptions, run: Runner, builds: Semaphore) {
+  constructor(
+    job: Job,
+    options: DeploymentManagerOptions,
+    run: Runner,
+    builds: Semaphore,
+    pulls: Semaphore,
+  ) {
     this.#job = job;
     this.#payload = job.payload;
     this.#options = options;
     this.#run = run;
     this.#builds = builds;
+    this.#pulls = pulls;
     this.#log = options.logger.child({
       deploymentId: job.payload.deploymentId,
       appId: job.payload.app.id,
@@ -622,14 +641,37 @@ class DeploymentRun {
         env,
         timeoutMs: TIMEOUTS.build,
       });
-      await this.#exec('docker', composeArgs(target, 'pull', '--ignore-buildable'), {
-        label: 'docker compose pull',
-        step: 'pull',
-        cwd,
-        env,
-        timeoutMs: TIMEOUTS.pull,
-      });
     }, this.#signal);
+    // One pull at a time on the node, shared with checks and taken before a build slot; a pull
+    // that fails like a daemon or registry hiccup is tried again within the pull time limit.
+    await withRetries(
+      (timeoutMs) =>
+        this.#pulls.use(
+          () =>
+            this.#builds.use(
+              () =>
+                this.#exec('docker', composeArgs(target, 'pull', '--ignore-buildable'), {
+                  label: 'docker compose pull',
+                  step: 'pull',
+                  cwd,
+                  env,
+                  timeoutMs,
+                }),
+              this.#signal,
+            ),
+          this.#signal,
+        ),
+      {
+        delaysMs: this.#options.imageRetryDelaysMs ?? IMAGE_RETRY_DELAYS_MS,
+        budgetMs: TIMEOUTS.pull,
+        retryable: (error) => error instanceof StepError && isTransientImageError(error.output),
+        onRetry: (retry, of, delayMs) =>
+          this.#system(
+            `docker compose pull failed; retrying in ${delayMs / 1000} s (retry ${retry} of ${of})`,
+          ),
+        signal: this.#signal,
+      },
+    );
 
     this.#progress('starting', 'Starting containers');
     await this.#exec(
@@ -705,8 +747,15 @@ class DeploymentRun {
             'internal-error',
             true,
             reason,
+            output.values(),
           )
-        : new StepError(`Command failed (${exit}): ${label}`, 'internal-error', false, reason);
+        : new StepError(
+            `Command failed (${exit}): ${label}`,
+            'internal-error',
+            false,
+            reason,
+            output.values(),
+          );
     }
     return result;
   }

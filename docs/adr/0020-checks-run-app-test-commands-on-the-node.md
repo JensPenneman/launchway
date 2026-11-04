@@ -142,7 +142,14 @@ shape the design:
    container and a database fits an 8 GB Docker VM next to production) and the
    OOM killer
    takes check containers first. Builds share the node's build slots with
-   deployments and stop after 60 minutes; the command stops after its
+   deployments and stop after 60 minutes (builds) or 30 minutes (pulls), counted
+   over all attempts. Pulls take turns on the node, deployments' included, and
+   wait for their turn without holding a build slot. A pull or build whose
+   output shows a daemon or registry hiccup ("unable to lease content", a
+   timeout, a reset connection, a rate limit, a 5xx) is tried again up to
+   three times (after 2, 5 and 10 s) within that time; any other failure
+   fails once, and the final message says "after 3 retries". Concurrent pulls
+   of one image can fail in the daemon with "unable to lease content"; the command stops after its
    `timeoutMinutes`; a run sends at most 20 000 log lines or 16 MiB of text,
    and inlines at most 256 files and 1 MiB.
 10. **Cleanup.** The result is reported first, then the run cleans up while it

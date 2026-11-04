@@ -607,8 +607,12 @@ export interface DnsProvider {
      the builder container's network namespace and Docker's DNS, and
      `# syntax=` limited to `docker/dockerfile`; builders unused for a day
      are removed. Then `pull --policy always --ignore-buildable`, so no image
-     comes from the node alone; Compose of checks runs without the agent's
-     proxy variables;
+     comes from the node alone; pulls take turns on the node (deployments'
+     included) and a pull or build that fails with a daemon or registry error
+     such as "unable to lease content" or a timeout is tried again up to three
+     times (after 2, 5 and 10 s, within the step's time limit, each retry
+     logged as a `system` line); other failures fail once; Compose of checks runs
+     without the agent's proxy variables;
   5. create the volume `<project>_source`, `docker cp` the checkout into a
      created (never started) container that mounts it, and `chown` it to the
      user of the check's service in a one-shot container (the agent has no

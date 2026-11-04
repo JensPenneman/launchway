@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.0](https://github.com/JensPenneman/launchway/compare/v0.7.0...v0.8.0) (2026-11-04)
+
+
+### Features
+
+* **checks:** run an app's checks on a chosen node, with a concurrency per node ([#28](https://github.com/JensPenneman/launchway/issues/28)) ([d5d6289](https://github.com/JensPenneman/launchway/commit/d5d62896cf393271304938bb32cfb1c9deab1412))
+
 ## [0.7.0](https://github.com/JensPenneman/launchway/compare/v0.6.0...v0.7.0) (2026-10-28)
 
 

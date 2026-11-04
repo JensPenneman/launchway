@@ -1,6 +1,15 @@
 import { type DockerInfo, NODE_STATUSES } from '@launchway/contracts';
 import { sql } from 'drizzle-orm';
-import { inet, integer, jsonb, pgEnum, pgTable, text, uniqueIndex } from 'drizzle-orm/pg-core';
+import {
+  check,
+  inet,
+  integer,
+  jsonb,
+  pgEnum,
+  pgTable,
+  text,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
 import { idColumn, timestamps, tz } from '../../db/columns.js';
 
 export const nodeStatus = pgEnum('node_status', NODE_STATUSES);
@@ -20,6 +29,8 @@ export const nodes = pgTable(
     dockerInfo: jsonb('docker_info').$type<DockerInfo>(),
     /** Daemon-side directories trusted apps may bind-mount from (admin-controlled). */
     allowedBindRoots: text('allowed_bind_roots').array().notNull().default(sql`'{}'::text[]`),
+    /** Checks the node runs at once; null: the platform setting (ADR 0022). */
+    checkConcurrency: integer('check_concurrency'),
     /** Long-lived node credential (`lwya_...`), issued on join; rotate by replacing. */
     credentialHash: text('credential_hash'),
     credentialIssuedAt: tz('credential_issued_at'),
@@ -34,5 +45,9 @@ export const nodes = pgTable(
     uniqueIndex('nodes_name_key').on(t.name),
     uniqueIndex('nodes_credential_hash_key').on(t.credentialHash),
     uniqueIndex('nodes_join_token_hash_key').on(t.joinTokenHash),
+    check(
+      'nodes_check_concurrency_range',
+      sql`${t.checkConcurrency} IS NULL OR ${t.checkConcurrency} BETWEEN 1 AND 16`,
+    ),
   ],
 );

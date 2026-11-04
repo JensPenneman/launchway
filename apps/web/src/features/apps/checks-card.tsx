@@ -18,18 +18,27 @@ import { updateApp } from '@/api/apps';
 import { capabilitiesQuery } from '@/api/github';
 import { keys } from '@/api/keys';
 import { useApiMutation } from '@/api/mutation';
+import { nodesQuery } from '@/api/nodes';
 import { Field } from '@/components/field';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { statusesBlocked } from '@/features/settings/github-capabilities';
 import {
   type ChecksForm,
   newCheckItem,
+  OWN_NODE,
   parseChecksForm,
   scheduleHint,
   toChecksForm,
@@ -54,6 +63,8 @@ export function ChecksCard({ app }: { app: App }) {
   });
   const items = useFieldArray({ control: form.control, name: 'items' });
   const capabilities = useQuery(capabilitiesQuery(app.connectionId));
+  const nodes = useQuery(nodesQuery);
+  const appNode = nodes.data?.items.find((node) => node.id === app.nodeId);
   const save = useApiMutation((checks: UpdateAppChecksSettings) => updateApp(app.id, { checks }), {
     invalidate: [keys.apps],
     success: 'Check settings saved',
@@ -66,8 +77,8 @@ export function ChecksCard({ app }: { app: App }) {
       <CardHeader>
         <CardTitle>Checks</CardTitle>
         <CardDescription>
-          Checks run their commands in the app's own dev-container Compose project on its node, get
-          no app variables or secrets, and appear on GitHub as{' '}
+          Checks run their commands in the app's own dev-container Compose project on a node, get no
+          app variables or secrets, and appear on GitHub as{' '}
           <code className="font-mono">launchway/&lt;name&gt;</code> commit statuses that branch
           protection can require.
         </CardDescription>
@@ -147,6 +158,48 @@ export function ChecksCard({ app }: { app: App }) {
           >
             <Input className="font-mono" placeholder="0 6 * * 1" {...form.register('schedule')} />
           </Field>
+          <div className="flex flex-col gap-1.5">
+            <Label htmlFor="settings-checks-node">Run checks on</Label>
+            <Controller
+              control={form.control}
+              name="nodeId"
+              render={({ field }) => (
+                <Select
+                  value={field.value === '' ? OWN_NODE : field.value}
+                  onValueChange={(value) =>
+                    field.onChange(value === OWN_NODE ? '' : value, { shouldDirty: true })
+                  }
+                >
+                  <SelectTrigger
+                    id="settings-checks-node"
+                    className="w-full"
+                    aria-describedby="settings-checks-node-description"
+                  >
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={OWN_NODE}>
+                      The app's node{appNode ? ` (${appNode.name})` : ''}
+                    </SelectItem>
+                    {(nodes.data?.items ?? [])
+                      // The app's own node is the default entry; it is listed by name only
+                      // when the checks are pinned to it, as they stay there if the app moves.
+                      .filter((node) => node.id !== app.nodeId || field.value === node.id)
+                      .map((node) => (
+                        <SelectItem key={node.id} value={node.id}>
+                          {node.name} ({node.status})
+                          {node.id === app.nodeId ? ', pinned: stays when the app moves' : ''}
+                        </SelectItem>
+                      ))}
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <p id="settings-checks-node-description" className="text-xs text-muted-foreground">
+              Deployments and previews always run on the node of the app. The node needs Docker and
+              the agent, and enough CPU and memory for the limits of every check it runs at once.
+            </p>
+          </div>
           <Field
             label="Compose files of the checks"
             error={errors.composeFiles?.message}

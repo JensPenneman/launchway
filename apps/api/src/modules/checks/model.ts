@@ -100,6 +100,17 @@ export function checksSettingsOf(app: { readonly checks: AppChecksSettings }): A
 }
 
 /**
+ * The node that runs the checks of an app (ADR 0022): the one chosen in its check settings, else
+ * the node of the app. Deployments and previews always use `app.nodeId`.
+ */
+export function checkNodeOf(app: {
+  readonly nodeId: NodeId;
+  readonly checks: AppChecksSettings;
+}): NodeId {
+  return app.checks.nodeId ?? app.nodeId;
+}
+
+/**
  * The configuration a run keeps from its check, taken when the run is queued: a check with its
  * own Compose file runs with that file only, the others with the composeFiles of the checks.
  */

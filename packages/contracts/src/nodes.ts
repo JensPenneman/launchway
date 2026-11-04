@@ -1,3 +1,4 @@
+import { NodeCheckConcurrency } from './checks.js';
 import { DisplayName, IpAddress, Timestamp } from './common.js';
 import { NodeId } from './ids.js';
 import { list } from './pagination.js';
@@ -96,6 +97,9 @@ export const Node = z
     protocolVersion: z.number().int().nullable(),
     docker: DockerInfo.nullable(),
     allowedBindRoots: AllowedBindRoots,
+    checkConcurrency: NodeCheckConcurrency.nullable().openapi({
+      description: 'Checks the node runs at once; null: the platform setting',
+    }),
     lastSeenAt: Timestamp.nullable(),
     joinedAt: Timestamp.nullable(),
     createdAt: Timestamp,
@@ -112,7 +116,11 @@ export type CreateNodeInput = z.infer<typeof CreateNodeInput>;
 
 /** Changing `allowedBindRoots` requires the admin role (as does every node change). */
 export const UpdateNodeInput = z
-  .strictObject({ name: DisplayName.optional(), allowedBindRoots: AllowedBindRoots.optional() })
+  .strictObject({
+    name: DisplayName.optional(),
+    allowedBindRoots: AllowedBindRoots.optional(),
+    checkConcurrency: NodeCheckConcurrency.nullable().optional(),
+  })
   .refine((value) => Object.keys(value).length > 0, 'Provide at least one field')
   .openapi('UpdateNodeInput');
 export type UpdateNodeInput = z.infer<typeof UpdateNodeInput>;

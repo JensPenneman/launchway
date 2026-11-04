@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { BindRootsCard } from '@/features/nodes/bind-roots-card';
+import { CheckConcurrencyCard } from '@/features/nodes/check-concurrency-card';
 import { JoinInstructions } from '@/features/nodes/join-instructions';
 import { useCan } from '@/hooks/use-me';
 import { formatBytes, formatDateTime, formatRelative } from '@/lib/format';
@@ -101,7 +102,9 @@ function NodeDetail() {
   }
 
   const data = node.data;
-  const nodeApps = (apps.data?.items ?? []).filter((app) => app.nodeId === data.id);
+  const nodeApps = (apps.data?.items ?? []).filter(
+    (app) => app.nodeId === data.id || app.checks.nodeId === data.id,
+  );
   const docker = data.docker;
 
   return (
@@ -243,13 +246,15 @@ function NodeDetail() {
           </Card>
         )}
         <BindRootsCard key={data.allowedBindRoots.join('\n')} node={data} editable={isAdmin} />
+        <CheckConcurrencyCard key={String(data.checkConcurrency)} node={data} editable={isAdmin} />
         <Card className="lg:col-span-2">
           <CardHeader>
             <CardTitle>Apps on this node</CardTitle>
+            <CardDescription>Apps that run here, and apps whose checks run here.</CardDescription>
           </CardHeader>
           <CardContent>
             {nodeApps.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No apps are assigned to this node.</p>
+              <p className="text-sm text-muted-foreground">No apps run or check on this node.</p>
             ) : (
               <ul className="divide-y">
                 {nodeApps.map((app) => (
@@ -261,7 +266,9 @@ function NodeDetail() {
                     >
                       {app.name}
                     </Link>
-                    {app.activeDeploymentId ? (
+                    {app.nodeId !== data.id ? (
+                      <StatusBadge tone="neutral">checks only</StatusBadge>
+                    ) : app.activeDeploymentId ? (
                       <StatusBadge tone="success">running</StatusBadge>
                     ) : (
                       <StatusBadge tone="neutral">not running</StatusBadge>

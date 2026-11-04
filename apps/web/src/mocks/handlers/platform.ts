@@ -191,6 +191,7 @@ export const platformHandlers = [
       protocolVersion: null,
       docker: null,
       allowedBindRoots: [],
+      checkConcurrency: null,
       lastSeenAt: null,
       joinedAt: null,
       createdAt: now(),
@@ -225,7 +226,7 @@ export const platformHandlers = [
     const node = db.nodes.find((item) => item.id === params.id);
     if (!node) return problem('not-found');
     if (node.isEdge) return problem('conflict', 'Choose another edge node first.');
-    if (db.apps.some((app) => app.nodeId === node.id))
+    if (db.apps.some((app) => app.nodeId === node.id || app.checks.nodeId === node.id))
       return problem('conflict', 'Apps still run on this node.');
     db.nodes = db.nodes.filter((item) => item !== node);
     recordAudit('node.delete', 'node', node.id);

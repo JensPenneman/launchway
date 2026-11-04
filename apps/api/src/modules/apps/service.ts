@@ -38,7 +38,11 @@ import { decodeCursor, encodeCursor } from '../../lib/pagination.js';
 import { conflict, forbidden, invalidField, notFound, ProblemError } from '../../lib/problem.js';
 import type { SseMessage } from '../../lib/sse.js';
 import { diffSummary, recordAudit } from '../audit/service.js';
-import { announceStatus as announceCheckStatus, type CheckRunRow } from '../checks/model.js';
+import {
+  announceStatus as announceCheckStatus,
+  type CheckRunRow,
+  checkNodeOf,
+} from '../checks/model.js';
 import { cancelQueuedOnNode, createChecksService } from '../checks/service.js';
 import { announceStatus } from '../deployments/model.js';
 import { deployments } from '../deployments/schema.js';
@@ -425,6 +429,14 @@ export function createAppsService(deps: Deps): AppsService {
             if (input.checks.items !== undefined) {
               next.items = input.checks.items.map((item) => CheckItem.parse(item));
             }
+            if (next.nodeId !== null && next.nodeId !== current.nodeId) {
+              const [checkNode] = await tx
+                .select({ id: nodes.id })
+                .from(nodes)
+                .where(eq(nodes.id, next.nodeId))
+                .for('share');
+              if (!checkNode) throw invalidField('body.checks.nodeId', 'Unknown node');
+            }
             if (JSON.stringify(next) !== JSON.stringify(current)) patch.checks = next;
             // A new schedule runs from its next slot on, never for one that already passed.
             if (next.schedule !== current.schedule) {
@@ -460,11 +472,11 @@ export function createAppsService(deps: Deps): AppsService {
             target: { type: 'app', id },
             summary: diffSummary(before, after, Object.keys(patch)),
           });
-          // Queued checks were meant for the old node; running ones finish there.
+          // Queued checks were meant for the old check node; running ones finish there.
           const cancelledChecks =
-            after.nodeId === before.nodeId
+            checkNodeOf(after) === checkNodeOf(before)
               ? []
-              : await cancelQueuedOnNode(tx, id, before.nodeId, actor);
+              : await cancelQueuedOnNode(tx, id, checkNodeOf(before), actor);
           return { before, after, active: await activeDeploymentId(tx, id), cancelledChecks };
         });
       } catch (error) {

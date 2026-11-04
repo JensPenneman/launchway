@@ -48,7 +48,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **ApiToken** | Bearer token for scripts/CI; hashed at rest, shown once. |
 | **Invitation** | Single-use invite link with a role. |
 | **GitHubConnection** | How Launchway talks to GitHub: a GitHub App (preferred) or a fine-grained personal access token. |
-| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route), `previews` settings (enabled, bot and label filters, host template, env overrides, Compose files) and `checks` settings (enabled, Compose files, branch and bot filters, the checks to run). |
+| **App** | A deployable unit linked to one repository + Compose/Dockerfile location + target node. Has a URL-safe `slug` and optional `proxyServices` (attached to the proxy network without a route), `previews` settings (enabled, bot and label filters, host template, env overrides, Compose files) and `checks` settings (enabled, Compose files, branch and bot filters, the node that runs them, the checks to run). |
 | **EnvVar** | Per-app environment variable; `secret` ones are encrypted and never returned in clear text. |
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app in one environment (`production` or a preview's `preview/pr-<n>`). Has a state machine and logs. |
 | **Preview** | The running copy of an app for one pull request: branch, head commit, host name, the domain and route it created, status (section 4). |
@@ -276,7 +276,7 @@ whose head is a branch of its repository (fork pull requests are ignored)
 
 ### Checks
 
-An app's checks are its test commands, run in job containers on its node for
+An app's checks are its test commands, run in job containers on its node, or the node its checks name ([ADR 0022](adr/0022-checks-on-a-chosen-node.md)), for
 every push and every pull request from a branch of its repository, and
 reported to GitHub as commit statuses that branch protection can require
 ([ADR 0020](adr/0020-checks-run-app-test-commands-on-the-node.md)):
@@ -285,13 +285,16 @@ reported to GitHub as commit statuses that branch protection can require
   `.devcontainer/compose.yaml`, the app's development container), `branches`
   (exact names; pushes to them and pull requests into them run the checks;
   `null` = every branch), `skipBots`, `schedule` (cron in UTC, at most hourly,
-  or null) and up to ten `items` `{ name, command, service (default dev),
-  composeFile?, timeoutMinutes (1-120, default 30) }`.
+  or null), `nodeId` (the node that runs the checks, null = the app's node;
+  [ADR 0022](adr/0022-checks-on-a-chosen-node.md)) and up to ten `items`
+  `{ name, command, service (default dev), composeFile?, timeoutMinutes
+  (1-120, default 30) }`.
   Members change them with `PATCH /apps/{id}`; the limits every service of a
   check gets are platform settings (`checkMemoryMb`, `checkCpus`,
   `checkPidsLimit`; defaults 2048, 2, 4096), and so are the checks a node
-  runs at once (`checkConcurrency`, 1-8, default 1) and the bounds of the
-  queue (`checkMaxQueuedPerApp` 30, `checkMaxQueuedPerNode` 100, each
+  runs at once (`checkConcurrency`, 1-8, default 1; a node may override it
+  with `nodes.check_concurrency`, 1-16, set by `PATCH /nodes/{id}`) and the
+  bounds of the queue (`checkMaxQueuedPerApp` 30, `checkMaxQueuedPerNode` 100, each
   10-1000).
 - **Triggers.** `push` to a branch (no tags, no deletions) and
   `pull_request` `opened` / `reopened` / `synchronize` from the same
@@ -318,9 +321,18 @@ reported to GitHub as commit statuses that branch protection can require
   /checks/{id}/rerun` and `POST /checks/{id}/cancel` act on one run. Queued
   runs carry their place in the node's queue (`queuedBehind`: the runs of the
   node that have to end before they start).
+- **Check node.** A run takes `checkNodeOf(app)` = `App.checks.nodeId ??
+  App.nodeId` as its node when it is queued (the row lock and the queue cap
+  per node count that node) and keeps it; dispatch, `queuedBehind`,
+  same-tree copies, supersede and cancel work per `check_runs.node_id`.
+  The agent of that node must run checks, or its runs end `errored`
+  (`unsupported`). Deployments and previews always use `App.nodeId`. Writing
+  `checks.nodeId` needs an existing node; changing the check node cancels
+  the app's queued runs on the old one; a node that apps name cannot be
+  deleted.
 - **Lifecycle.** `queued → running → succeeded | failed | errored`, or
-  `cancelled`. A node runs up to `checkConcurrency` checks at once, oldest
-  first across its apps: the dispatcher's claim counts the node's running
+  `cancelled`. A node runs up to its `check_concurrency` (else the platform's
+  `checkConcurrency`) checks at once, oldest first across its apps: the dispatcher's claim counts the node's running
   runs under a transaction-level advisory lock of the node
   ([ADR 0021](adr/0021-concurrent-checks-per-node.md)). `failed` means the command exited
   non-zero or timed out; `errored` that there is no verdict on the code

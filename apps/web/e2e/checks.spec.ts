@@ -143,6 +143,11 @@ test('configures the checks of an app in its settings', async ({ page }) => {
   await second.getByLabel('Name', { exact: true }).fill('unit');
   await second.getByLabel('Timeout (minutes)', { exact: true }).fill('10');
 
+  const runOn = form.getByRole('combobox', { name: 'Run checks on' });
+  await expect(runOn).toContainText("The app's node");
+  await runOn.click();
+  await page.getByRole('option', { name: /^pi-garage/ }).click();
+  await expect(runOn).toContainText('pi-garage');
   await form.getByLabel('Branches').fill('main, release');
   await form.getByLabel('Schedule (UTC)').fill('*/10 * * * *');
   await form.getByLabel('Schedule (UTC)').blur();
@@ -156,6 +161,7 @@ test('configures the checks of an app in its settings', async ({ page }) => {
   await expect(page.getByText('Check settings saved')).toBeVisible();
   await expect(form.getByRole('button', { name: 'Save check settings' })).toBeDisabled();
   await expect(form.getByLabel('Branches')).toHaveValue('main, release');
+  await expect(runOn).toContainText('pi-garage');
 
   await page.getByRole('tab', { name: 'Checks' }).click();
   await expect(page.getByText('No check runs yet')).toBeVisible();

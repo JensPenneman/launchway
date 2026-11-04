@@ -419,6 +419,10 @@ export const AppChecksSettings = z
       description:
         'Runs the checks for the head of the default branch on this cron schedule (UTC), whether or not pushes run them; null: never',
     }),
+    nodeId: NodeId.nullable().openapi({
+      description:
+        'The node that runs the checks (ADR 0022); null: the node of the app. Deployments and previews always run on the node of the app',
+    }),
   })
   .openapi('AppChecksSettings');
 export type AppChecksSettings = z.infer<typeof AppChecksSettings>;
@@ -430,6 +434,7 @@ export const DEFAULT_APP_CHECKS_SETTINGS: AppChecksSettings = {
   skipBots: false,
   items: [],
   schedule: null,
+  nodeId: null,
 };
 
 /** Partial update of the check settings; omitted fields keep their value, `items` replaces all. */
@@ -445,6 +450,7 @@ export const UpdateAppChecksSettings = z
       .refine(uniqueCheckNames, 'Check names must be unique')
       .optional(),
     schedule: CheckSchedule.nullable().optional(),
+    nodeId: NodeId.nullable().optional(),
   })
   .openapi('UpdateAppChecksSettings');
 export type UpdateAppChecksSettings = z.infer<typeof UpdateAppChecksSettings>;

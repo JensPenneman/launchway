@@ -68,7 +68,7 @@ const updateNode = createRoute({
   tags: TAGS,
   summary: 'Update a node',
   description:
-    'Renames the node and/or replaces its allowed bind-mount roots (daemon-side directories that apps with trustedMounts may bind-mount from). Requires the admin role. Audited.',
+    'Renames the node, replaces its allowed bind-mount roots (daemon-side directories that apps with trustedMounts may bind-mount from) and/or sets checkConcurrency (1-16 checks at once, or null for the platform setting). Requires the admin role. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('admin')],
   request: { params: NodeParams, body: jsonBody(UpdateNodeInput) },
@@ -84,7 +84,8 @@ const deleteNode = createRoute({
   operationId: 'deleteNode',
   tags: TAGS,
   summary: 'Delete a node',
-  description: 'Refused (409) while apps target the node. Disconnects its agent. Audited.',
+  description:
+    'Refused (409) while apps run or check on the node, and for good once check runs or deployments reference it (they are kept as history). Disconnects its agent. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('admin')],
   request: { params: NodeParams },

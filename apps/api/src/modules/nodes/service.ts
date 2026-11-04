@@ -11,9 +11,9 @@ import {
   type NodeList,
   type UpdateNodeInput,
 } from '@launchway/contracts';
-import { asc, eq, sql } from 'drizzle-orm';
+import { asc, eq, or, sql } from 'drizzle-orm';
 import type { Executor } from '../../db/client.js';
-import { isForeignKeyViolation, isUniqueViolation } from '../../db/errors.js';
+import { isForeignKeyViolation, isUniqueViolation, pgErrorCode } from '../../db/errors.js';
 import type { Deps } from '../../deps.js';
 import { type RequestActor, systemActor } from '../../lib/auth-context.js';
 import { generateToken, hashToken } from '../../lib/crypto.js';
@@ -61,6 +61,7 @@ function toNode(row: NodeRow, edgeNodeId: NodeId | null): Node {
     protocolVersion: row.protocolVersion,
     docker: row.dockerInfo,
     allowedBindRoots: row.allowedBindRoots,
+    checkConcurrency: row.checkConcurrency,
     lastSeenAt: row.lastSeenAt?.toISOString() ?? null,
     joinedAt: row.joinedAt?.toISOString() ?? null,
     createdAt: row.createdAt.toISOString(),
@@ -150,9 +151,10 @@ export function createNodesService(deps: NodesDeps): NodesService {
     },
 
     async update(id, input, actor) {
-      const patch: Partial<Pick<NodeRow, 'name' | 'allowedBindRoots'>> = {};
+      const patch: Partial<Pick<NodeRow, 'name' | 'allowedBindRoots' | 'checkConcurrency'>> = {};
       if (input.name !== undefined) patch.name = input.name;
       if (input.allowedBindRoots !== undefined) patch.allowedBindRoots = input.allowedBindRoots;
+      if (input.checkConcurrency !== undefined) patch.checkConcurrency = input.checkConcurrency;
       let row: NodeRow;
       try {
         row = await deps.db.transaction(async (tx) => {
@@ -181,10 +183,10 @@ export function createNodesService(deps: NodesDeps): NodesService {
           const [usage] = await tx
             .select({ count: sql<number>`count(*)::int` })
             .from(apps)
-            .where(eq(apps.nodeId, id));
+            .where(or(eq(apps.nodeId, id), sql`${apps.checks}->>'nodeId' = ${id}`));
           if ((usage?.count ?? 0) > 0) {
             throw conflict(
-              `${usage?.count} app(s) run on node "${node.name}"; move or delete them first`,
+              `${usage?.count} app(s) run or check on node "${node.name}"; move or delete them, or choose another node for their checks, first`,
             );
           }
           await tx.delete(nodes).where(eq(nodes.id, id));
@@ -195,7 +197,8 @@ export function createNodesService(deps: NodesDeps): NodesService {
           });
         });
       } catch (error) {
-        if (isForeignKeyViolation(error)) {
+        // ON DELETE RESTRICT (deployments, check runs) raises 23001, a plain foreign key 23503.
+        if (isForeignKeyViolation(error) || pgErrorCode(error) === '23001') {
           throw conflict(
             'The node is still referenced by deployments or check runs and cannot be deleted',
           );

@@ -32,8 +32,13 @@ export interface ChecksForm {
   skipBots: boolean;
   /** Cron expression (UTC); empty means no schedule. */
   schedule: string;
+  /** Id of the node that runs the checks; empty means the node of the app. */
+  nodeId: string;
   items: CheckItemForm[];
 }
+
+/** Select value of "the node of the app"; the form keeps it as an empty `nodeId`. */
+export const OWN_NODE = 'own';
 
 export function toChecksForm(settings: AppChecksSettings): ChecksForm {
   return {
@@ -42,6 +47,7 @@ export function toChecksForm(settings: AppChecksSettings): ChecksForm {
     branches: (settings.branches ?? []).join(', '),
     skipBots: settings.skipBots,
     schedule: settings.schedule ?? '',
+    nodeId: settings.nodeId ?? '',
     items: settings.items.map((item) => ({
       name: item.name,
       command: item.command,
@@ -107,6 +113,7 @@ export function parseChecksForm(form: ChecksForm): ChecksFormResult {
       branches: branches.length === 0 ? null : branches,
       skipBots: form.skipBots,
       schedule: form.schedule.trim() === '' ? null : form.schedule,
+      nodeId: form.nodeId === '' ? null : form.nodeId,
       items,
     },
     { error: friendlyMessage },

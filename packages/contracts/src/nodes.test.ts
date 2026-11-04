@@ -37,6 +37,15 @@ describe('allowed bind roots', () => {
     expect(UpdateNodeInput.safeParse({}).success).toBe(false);
     expect(UpdateNodeInput.safeParse({ allowedBindRoots: ['/'] }).success).toBe(false);
   });
+
+  it('takes 1 to 16 checks at once or null for the platform setting', () => {
+    for (const value of [1, 16, null]) {
+      expect(UpdateNodeInput.parse({ checkConcurrency: value }).checkConcurrency).toBe(value);
+    }
+    for (const value of [0, 17, 1.5, '2']) {
+      expect(UpdateNodeInput.safeParse({ checkConcurrency: value }).success).toBe(false);
+    }
+  });
 });
 
 describe('deploy payload policy', () => {

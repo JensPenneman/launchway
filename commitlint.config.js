@@ -7,6 +7,7 @@ export default {
       'always',
       [
         'api',
+        'checks',
         'agent',
         'web',
         'contracts',

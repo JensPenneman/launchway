@@ -36,6 +36,7 @@ import { childEnv, type Runner, type RunResult, runProcess } from './exec.js';
 import { assertSafeRef, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
 import { Batcher, MAX_LINE_LENGTH, Tail } from './lines.js';
 import type { Send } from './outbox.js';
+import { IMAGE_RETRY_DELAYS_MS, withRetries } from './retry.js';
 import { WorkQueue } from './work-queue.js';
 import {
   isInsideReal,
@@ -78,6 +79,8 @@ export interface CheckManagerOptions {
   workspace: Workspace;
   /** The node's build/pull slots, shared with deployments. */
   builds: Semaphore;
+  /** Waits before the retries of a failed pull or build (default 2 s, 5 s, 10 s). */
+  imageRetryDelaysMs?: readonly number[];
   run?: Runner;
   /** Base environment for child processes (already allow-listed). */
   env?: NodeJS.ProcessEnv;
@@ -91,8 +94,11 @@ export interface CheckManagerOptions {
 class CheckFailure extends Error {
   readonly reason: CheckOutcome['reason'];
   readonly tail: boolean;
-  constructor(reason: CheckOutcome['reason'], message: string, tail = false) {
+  /** The command ran and exited non-zero (not a timeout, not a start failure). */
+  readonly exited: boolean;
+  constructor(reason: CheckOutcome['reason'], message: string, tail = false, exited = false) {
     super(message);
+    this.exited = exited;
     this.name = 'CheckFailure';
     this.reason = reason;
     this.tail = tail;
@@ -525,6 +531,11 @@ interface RunContext {
    * one build there at a time, and no prune or untagging while a build loads its image.
    */
   builderLock: Semaphore;
+  /**
+   * Held while a run pulls images: one pull at a time on the node, so that simultaneous checks
+   * never pull the same image at once (the daemon loses the lease of the content, ADR 0020).
+   */
+  pullLock: Semaphore;
   /** True once the agent shuts down: cleanups leave the check builder alone. */
   shuttingDown: () => boolean;
 }
@@ -714,37 +725,60 @@ class CheckRun {
       // engine's builder that deployments use, and one at a time there: every build starts with
       // empty cache mounts that no build of another run writes to meanwhile (ADR 0021). The wait
       // counts as the run's running time; its command's time limit starts with the command.
-      if (this.#context.builderLock.full) this.#system(BUILDER_WAIT_LINE);
-      await this.#context.builderLock.use(
+      // A failed build is tried again (its `--pull` fetches base images, which can fail like a
+      // pull); the wait between attempts is outside the lock.
+      await this.#retryImages('docker compose build', async () => {
+        if (this.#context.builderLock.full) this.#system(BUILDER_WAIT_LINE);
+        await this.#context.builderLock.use(
+          () =>
+            this.#options.builds.use(async () => {
+              const builder = await this.#ensureBuilder(runDir);
+              const build = composeArgs(target, 'build', '--pull', '--builder', builder);
+              await this.#exec('docker', build, {
+                label: 'docker compose build',
+                reason: 'build',
+                cwd: runDir,
+                // Compose finds the check builder in the agent's buildx records.
+                env: await this.#builderEnv(),
+                timeoutMs: TIMEOUTS.build,
+              });
+            }, this.#signal),
+          this.#signal,
+        );
+      });
+    }
+    // One pull at a time on the node, and a failed pull is tried again: the daemon can lose the
+    // lease of an image that two pulls fetch at once ("unable to lease content").
+    await this.#retryImages('docker compose pull', () =>
+      this.#options.builds.use(
         () =>
-          this.#options.builds.use(async () => {
-            const builder = await this.#ensureBuilder(runDir);
-            const build = composeArgs(target, 'build', '--pull', '--builder', builder);
-            await this.#exec('docker', build, {
-              label: 'docker compose build',
+          this.#context.pullLock.use(async () => {
+            // Always from the registry: an image that only exists on the node may be another app's.
+            const pull = composeArgs(target, 'pull', '--policy', 'always', '--ignore-buildable');
+            await this.#exec('docker', pull, {
+              label: 'docker compose pull',
               reason: 'build',
               cwd: runDir,
-              // Compose finds the check builder in the agent's buildx records.
-              env: await this.#builderEnv(),
-              timeoutMs: TIMEOUTS.build,
+              env,
+              timeoutMs: TIMEOUTS.pull,
             });
           }, this.#signal),
         this.#signal,
-      );
-    }
-    await this.#options.builds.use(async () => {
-      // Always from the registry: an image that only exists on the node may be another app's.
-      const pull = composeArgs(target, 'pull', '--policy', 'always', '--ignore-buildable');
-      await this.#exec('docker', pull, {
-        label: 'docker compose pull',
-        reason: 'build',
-        cwd: runDir,
-        env,
-        timeoutMs: TIMEOUTS.pull,
-      });
-    }, this.#signal);
+      ),
+    );
     if (built.usesSource) await this.#deliverSource(resolved.root, built.image, built.user);
     return this.#runCommand(target, runDir);
+  }
+
+  /** Runs `attempt` again after a failed exit, with the waits of `imageRetryDelaysMs`. */
+  #retryImages(label: string, attempt: () => Promise<void>): Promise<void> {
+    return withRetries(attempt, {
+      delaysMs: this.#options.imageRetryDelaysMs ?? IMAGE_RETRY_DELAYS_MS,
+      retryable: (error) => error instanceof CheckFailure && error.exited,
+      onRetry: (retry, of, delayMs) =>
+        this.#system(`${label} failed; retrying in ${delayMs / 1000} s (retry ${retry} of ${of})`),
+      signal: this.#signal,
+    });
   }
 
   /** Fetches exactly the commit (credentials only in git's environment) and verifies HEAD. */
@@ -1114,6 +1148,7 @@ class CheckRun {
         options.reason,
         `Command failed (exit ${result.code ?? result.signal}): ${options.label}`,
         true,
+        true,
       );
     }
     return result;
@@ -1162,6 +1197,7 @@ export class CheckManager {
   readonly #builderLock = new Semaphore(1);
   readonly #context: RunContext = {
     builderLock: this.#builderLock,
+    pullLock: new Semaphore(1),
     shuttingDown: () => this.#shuttingDown,
   };
   #shuttingDown = false;

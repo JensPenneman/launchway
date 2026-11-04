@@ -142,7 +142,10 @@ shape the design:
    container and a database fits an 8 GB Docker VM next to production) and the
    OOM killer
    takes check containers first. Builds share the node's build slots with
-   deployments and stop after 60 minutes; the command stops after its
+   deployments and stop after 60 minutes; pulls also take turns on the node
+   and a failed pull or build is tried again up to three times (2, 5 and 10 s),
+   as concurrent pulls of one image can fail in the daemon with "unable to
+   lease content"; the command stops after its
    `timeoutMinutes`; a run sends at most 20 000 log lines or 16 MiB of text,
    and inlines at most 256 files and 1 MiB.
 10. **Cleanup.** The result is reported first, then the run cleans up while it

@@ -226,6 +226,7 @@ function manager(builds = new Semaphore(2)) {
     },
     workspace: new Workspace(root),
     builds,
+    imageRetryDelaysMs: [0, 0, 0],
     run: fake.run,
     env: { PATH: process.env.PATH ?? '' },
     secrets: () => [NODE_CREDENTIAL, null],
@@ -729,6 +730,81 @@ describe('CheckManager', () => {
     await waitFor(() => results().length === 2);
     await cleanedUp(a);
     await cleanedUp(b);
+  });
+
+  const LEASE_ERROR =
+    'Error response from daemon: unable to lease content: lease does not exist: not found';
+
+  it('tries a failed pull again up to three times and logs each retry', async () => {
+    let pulls = 0;
+    fake.on['compose pull'] = (call) => {
+      pulls += 1;
+      if (pulls <= 3) {
+        call.options.onStderrLine?.(LEASE_ERROR);
+        return { code: 1 };
+      }
+      return {};
+    };
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 0 });
+    expect(callsOf('compose pull')).toHaveLength(4);
+    const retries = linesOf('req-1').filter(
+      (l) => l.stream === 'system' && l.line.includes('retrying'),
+    );
+    expect(retries.map((l) => l.line)).toEqual([
+      'docker compose pull failed; retrying in 0 s (retry 1 of 3)',
+      'docker compose pull failed; retrying in 0 s (retry 2 of 3)',
+      'docker compose pull failed; retrying in 0 s (retry 3 of 3)',
+    ]);
+  });
+
+  it('errors a run whose pull keeps failing only after the retries', async () => {
+    fake.on['compose pull'] = (call) => {
+      call.options.onStderrLine?.(LEASE_ERROR);
+      return { code: 1 };
+    };
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(callsOf('compose pull')).toHaveLength(4);
+    expect(resultOf('req-1')).toMatchObject({ reason: 'build', exitCode: null });
+    expect(resultOf('req-1')?.message).toContain('unable to lease content');
+  });
+
+  it('tries a failed build again, and does not retry a timeout', async () => {
+    let builds = 0;
+    fake.on['compose build'] = () => (++builds === 1 ? { code: 1 } : {});
+    const checks = manager();
+    checks.run('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(callsOf('compose build')).toHaveLength(2);
+    expect(resultOf('req-1')).toMatchObject({ reason: 'exit', exitCode: 0 });
+
+    fake.calls.length = 0;
+    fake.on['compose pull'] = () => ({ timedOut: true });
+    checks.run('req-2', payload());
+    await waitFor(() => results().length === 2);
+    expect(callsOf('compose pull')).toHaveLength(1);
+    expect(resultOf('req-2')).toMatchObject({ reason: 'build' });
+  });
+
+  it('pulls one run at a time on the node, while builds stay side by side', async () => {
+    let pulling = 0;
+    let most = 0;
+    fake.on['compose pull'] = async () => {
+      pulling += 1;
+      most = Math.max(most, pulling);
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      pulling -= 1;
+      return {};
+    };
+    const checks = manager(new Semaphore(4));
+    for (const id of ['req-a', 'req-b', 'req-c']) checks.run(id, payload());
+    await waitFor(() => results().length === 3);
+    expect(callsOf('compose pull')).toHaveLength(3);
+    expect(most).toBe(1);
   });
 
   it('builds one run at a time in the check builder, prunes it between builds, runs side by side', async () => {

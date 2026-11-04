@@ -103,6 +103,7 @@ function manager(fake: FakeDocker, maxConcurrentBuilds = 2) {
     run: fake.run,
     env: { PATH: process.env.PATH ?? '' },
     maxConcurrentBuilds,
+    imageRetryDelaysMs: [0, 0, 0],
   });
 }
 
@@ -395,6 +396,35 @@ describe('DeploymentManager', () => {
       reason: 'image-not-found',
     });
     expect(fake.calls.some((c) => c.args.includes('up'))).toBe(false);
+  });
+
+  it('tries a pull again that failed like a daemon error, and not a pull that was denied', async () => {
+    const fake = fakeDocker();
+    let pulls = 0;
+    fake.on.pull = (call) => {
+      if (++pulls === 1) {
+        call.options.onStderrLine?.(
+          'Error response from daemon: unable to lease content: lease does not exist: not found',
+        );
+        return { code: 1 };
+      }
+      return {};
+    };
+    manager(fake).deploy('req-1', payload());
+    await waitFor(() => results().length === 1);
+    expect(pulls).toBe(2);
+    expect(results()[0]?.payload).toMatchObject({ outcome: 'succeeded' });
+
+    const denied = fakeDocker();
+    let attempts = 0;
+    denied.on.pull = (call) => {
+      attempts += 1;
+      call.options.onStderrLine?.('pull access denied for acme/app');
+      return { code: 1 };
+    };
+    manager(denied).deploy('req-2', payload());
+    await waitFor(() => results().length === 2);
+    expect(attempts).toBe(1);
   });
 
   it('reports start when compose up fails', async () => {

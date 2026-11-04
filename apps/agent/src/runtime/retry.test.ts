@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
-import { withRetries } from './retry.js';
+import { isTransientImageError, withRetries } from './retry.js';
 
 const options = (
-  over: { delaysMs?: number[]; retryable?: () => boolean; signal?: AbortSignal } = {},
+  over: {
+    delaysMs?: number[];
+    budgetMs?: number;
+    now?: () => number;
+    retryable?: () => boolean;
+    signal?: AbortSignal;
+  } = {},
 ) => ({
   delaysMs: [0, 0, 0] as readonly number[],
+  budgetMs: 60_000,
   retryable: (): boolean => true,
   onRetry: vi.fn<(retry: number, of: number, delayMs: number, error: unknown) => void>(),
   signal: new AbortController().signal,
@@ -96,9 +103,51 @@ describe('withRetries', () => {
       async () => {
         throw new Error('x');
       },
-      options({ delaysMs: [60_000], signal: controller.signal }),
+      options({ delaysMs: [60_000], budgetMs: 120_000, signal: controller.signal }),
     );
     setTimeout(() => controller.abort(), 10);
     await expect(promise).rejects.toThrow('aborted');
+  });
+});
+
+describe('withRetries budget', () => {
+  it('hands each attempt the time that is left and stops when a retry would not fit', async () => {
+    let clock = 0;
+    const seen: number[] = [];
+    await expect(
+      withRetries(
+        async (remaining) => {
+          seen.push(remaining);
+          clock += 40;
+          throw new Error('x');
+        },
+        options({ delaysMs: [0, 0, 0], budgetMs: 100, now: () => clock }),
+      ),
+    ).rejects.toThrow('x');
+    // 100, then 60, then 20 ms left; the third attempt used them up.
+    expect(seen).toEqual([100, 60, 20]);
+  });
+});
+
+describe('isTransientImageError', () => {
+  it.each([
+    'Error response from daemon: unable to lease content: lease does not exist: not found',
+    'dial tcp 1.2.3.4:443: i/o timeout',
+    'net/http: TLS handshake timeout',
+    'read tcp: connection reset by peer',
+    'unexpected EOF',
+    'toomanyrequests: You have reached your pull rate limit',
+    'received unexpected HTTP status: 503 Service Unavailable',
+  ])('retries %s', (line) => {
+    expect(isTransientImageError(['pulling', line])).toBe(true);
+  });
+
+  it.each([
+    'The command returned a non-zero code: 1',
+    'pull access denied for acme/app, repository does not exist',
+    'manifest unknown',
+    'failed to solve: process "/bin/sh -c npm ci" did not complete successfully: exit code: 1',
+  ])('does not retry %s', (line) => {
+    expect(isTransientImageError([line])).toBe(false);
   });
 });

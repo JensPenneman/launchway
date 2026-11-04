@@ -36,7 +36,7 @@ import { childEnv, type Runner, type RunResult, runProcess } from './exec.js';
 import { assertSafeRef, fetchCommitPlan, type GitConfig, gitEnv } from './git.js';
 import { Batcher, MAX_LINE_LENGTH, Tail } from './lines.js';
 import type { Send } from './outbox.js';
-import { IMAGE_RETRY_DELAYS_MS, withRetries } from './retry.js';
+import { IMAGE_RETRY_DELAYS_MS, isTransientImageError, withRetries } from './retry.js';
 import { WorkQueue } from './work-queue.js';
 import {
   isInsideReal,
@@ -79,6 +79,8 @@ export interface CheckManagerOptions {
   workspace: Workspace;
   /** The node's build/pull slots, shared with deployments. */
   builds: Semaphore;
+  /** The node's pull slot, shared with deployments; one pull at a time (default: its own). */
+  pulls?: Semaphore;
   /** Waits before the retries of a failed pull or build (default 2 s, 5 s, 10 s). */
   imageRetryDelaysMs?: readonly number[];
   run?: Runner;
@@ -94,11 +96,16 @@ export interface CheckManagerOptions {
 class CheckFailure extends Error {
   readonly reason: CheckOutcome['reason'];
   readonly tail: boolean;
-  /** The command ran and exited non-zero (not a timeout, not a start failure). */
-  readonly exited: boolean;
-  constructor(reason: CheckOutcome['reason'], message: string, tail = false, exited = false) {
+  /** Last output lines of a command that exited non-zero (empty otherwise). */
+  readonly output: readonly string[];
+  constructor(
+    reason: CheckOutcome['reason'],
+    message: string,
+    tail = false,
+    output: readonly string[] = [],
+  ) {
     super(message);
-    this.exited = exited;
+    this.output = output;
     this.name = 'CheckFailure';
     this.reason = reason;
     this.tail = tail;
@@ -533,7 +540,8 @@ interface RunContext {
   builderLock: Semaphore;
   /**
    * Held while a run pulls images: one pull at a time on the node, so that simultaneous checks
-   * never pull the same image at once (the daemon loses the lease of the content, ADR 0020).
+   * and deployments never pull the same image at once (the daemon loses the lease of the
+   * content, ADR 0020). Taken before a build slot, so waiting for it holds no slot.
    */
   pullLock: Semaphore;
   /** True once the agent shuts down: cleanups leave the check builder alone. */
@@ -542,6 +550,8 @@ interface RunContext {
 
 /** Log line of a run whose build waits for another run's build in the check builder. */
 const BUILDER_WAIT_LINE = 'waiting for the check builder: another check is building';
+/** Log line of a run whose pull waits for another pull on the node. */
+const PULL_WAIT_LINE = 'waiting for another pull on this node to finish';
 
 /**
  * One check run, from fetching the commit to cleaning up (ADR 0020). Runs of a node overlap (ADR
@@ -725,9 +735,9 @@ class CheckRun {
       // engine's builder that deployments use, and one at a time there: every build starts with
       // empty cache mounts that no build of another run writes to meanwhile (ADR 0021). The wait
       // counts as the run's running time; its command's time limit starts with the command.
-      // A failed build is tried again (its `--pull` fetches base images, which can fail like a
-      // pull); the wait between attempts is outside the lock.
-      await this.#retryImages('docker compose build', async () => {
+      // A build or pull that fails the way a daemon or registry hiccup does is tried again; the
+      // wait between attempts is outside the locks.
+      await this.#retryImages('docker compose build', TIMEOUTS.build, async (timeoutMs) => {
         if (this.#context.builderLock.full) this.#system(BUILDER_WAIT_LINE);
         await this.#context.builderLock.use(
           () =>
@@ -740,19 +750,21 @@ class CheckRun {
                 cwd: runDir,
                 // Compose finds the check builder in the agent's buildx records.
                 env: await this.#builderEnv(),
-                timeoutMs: TIMEOUTS.build,
+                timeoutMs,
               });
             }, this.#signal),
           this.#signal,
         );
       });
     }
-    // One pull at a time on the node, and a failed pull is tried again: the daemon can lose the
-    // lease of an image that two pulls fetch at once ("unable to lease content").
-    await this.#retryImages('docker compose pull', () =>
-      this.#options.builds.use(
+    // One pull at a time on the node, taken before a build slot so that waiting for it holds no
+    // slot: the daemon can lose the lease of an image that two pulls fetch at once ("unable to
+    // lease content").
+    await this.#retryImages('docker compose pull', TIMEOUTS.pull, async (timeoutMs) => {
+      if (this.#context.pullLock.full) this.#system(PULL_WAIT_LINE);
+      await this.#context.pullLock.use(
         () =>
-          this.#context.pullLock.use(async () => {
+          this.#options.builds.use(async () => {
             // Always from the registry: an image that only exists on the node may be another app's.
             const pull = composeArgs(target, 'pull', '--policy', 'always', '--ignore-buildable');
             await this.#exec('docker', pull, {
@@ -760,25 +772,51 @@ class CheckRun {
               reason: 'build',
               cwd: runDir,
               env,
-              timeoutMs: TIMEOUTS.pull,
+              timeoutMs,
             });
           }, this.#signal),
         this.#signal,
-      ),
-    );
+      );
+    });
     if (built.usesSource) await this.#deliverSource(resolved.root, built.image, built.user);
     return this.#runCommand(target, runDir);
   }
 
-  /** Runs `attempt` again after a failed exit, with the waits of `imageRetryDelaysMs`. */
-  #retryImages(label: string, attempt: () => Promise<void>): Promise<void> {
-    return withRetries(attempt, {
-      delaysMs: this.#options.imageRetryDelaysMs ?? IMAGE_RETRY_DELAYS_MS,
-      retryable: (error) => error instanceof CheckFailure && error.exited,
-      onRetry: (retry, of, delayMs) =>
-        this.#system(`${label} failed; retrying in ${delayMs / 1000} s (retry ${retry} of ${of})`),
-      signal: this.#signal,
-    });
+  /**
+   * Runs `attempt` again, after the waits of `imageRetryDelaysMs`, while it fails with output of
+   * a daemon or registry hiccup; every attempt and wait shares `budgetMs`. A plain failure is
+   * thrown at once, and the last one names the retries it came after.
+   */
+  async #retryImages(
+    label: string,
+    budgetMs: number,
+    attempt: (timeoutMs: number) => Promise<void>,
+  ): Promise<void> {
+    let retries = 0;
+    try {
+      await withRetries(attempt, {
+        delaysMs: this.#options.imageRetryDelaysMs ?? IMAGE_RETRY_DELAYS_MS,
+        budgetMs,
+        retryable: (error) => error instanceof CheckFailure && isTransientImageError(error.output),
+        onRetry: (retry, of, delayMs) => {
+          retries = retry;
+          this.#system(
+            `${label} failed; retrying in ${delayMs / 1000} s (retry ${retry} of ${of})`,
+          );
+        },
+        signal: this.#signal,
+      });
+    } catch (error) {
+      if (retries > 0 && error instanceof CheckFailure && error.output.length > 0) {
+        throw new CheckFailure(
+          error.reason,
+          `${error.message} (after ${retries} ${retries === 1 ? 'retry' : 'retries'})`,
+          error.tail,
+          error.output,
+        );
+      }
+      throw error;
+    }
   }
 
   /** Fetches exactly the commit (credentials only in git's environment) and verifies HEAD. */
@@ -1124,16 +1162,25 @@ class CheckRun {
   async #exec(command: string, args: string[], options: ExecOptions): Promise<RunResult> {
     if (this.#signal.aborted) throw new Error('aborted');
     this.#system(`$ ${command} ${args.join(' ')}`);
+    // The last lines of this command alone, to tell a failure a new attempt can fix.
+    const output = new Tail<string>(TAIL_LINES * 2);
     const result = await this.#spawn(command, args, {
       cwd: options.cwd,
       env: options.env,
       signal: this.#signal,
       timeoutMs: options.timeoutMs,
-      onStderrLine: (line) =>
-        this.#line('stderr', options.stderrFilter ? options.stderrFilter(line) : line),
+      onStderrLine: (line) => {
+        output.push(line);
+        this.#line('stderr', options.stderrFilter ? options.stderrFilter(line) : line);
+      },
       ...(options.captureStdout
         ? { captureStdoutBytes: CONFIG_OUTPUT_LIMIT }
-        : { onStdoutLine: (line: string) => this.#line('stdout', line) }),
+        : {
+            onStdoutLine: (line: string) => {
+              output.push(line);
+              this.#line('stdout', line);
+            },
+          }),
     });
     if (result.aborted || this.#signal.aborted) throw new Error('aborted');
     if (result.timedOut) {
@@ -1148,7 +1195,7 @@ class CheckRun {
         options.reason,
         `Command failed (exit ${result.code ?? result.signal}): ${options.label}`,
         true,
-        true,
+        output.values(),
       );
     }
     return result;
@@ -1195,16 +1242,17 @@ export class CheckManager {
   readonly #work: WorkQueue;
   /** One build of checks at a time, and no prune or removal of builders meanwhile. */
   readonly #builderLock = new Semaphore(1);
-  readonly #context: RunContext = {
-    builderLock: this.#builderLock,
-    pullLock: new Semaphore(1),
-    shuttingDown: () => this.#shuttingDown,
-  };
+  readonly #context: RunContext;
   #shuttingDown = false;
   #idleBuilders: NodeJS.Timeout | undefined;
 
   constructor(options: CheckManagerOptions) {
     this.#options = options;
+    this.#context = {
+      builderLock: this.#builderLock,
+      pullLock: options.pulls ?? new Semaphore(1),
+      shuttingDown: () => this.#shuttingDown,
+    };
     this.#logger = options.logger;
     this.#run = options.run ?? runProcess;
     this.#work = new WorkQueue((error) => {

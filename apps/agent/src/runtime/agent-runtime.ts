@@ -61,9 +61,18 @@ export function createAgentRuntime(options: AgentRuntimeOptions): AgentRuntime {
   const git = options.gitConfig ? { gitConfig: options.gitConfig } : {};
   // One set of build slots for the node: deployments and check runs build through it.
   const builds = new Semaphore(options.maxConcurrentBuilds ?? 2);
+  // One pull at a time on the node, deployments and checks together (ADR 0020).
+  const pulls = new Semaphore(1);
   const secrets = options.secrets ? { secrets: options.secrets } : {};
-  const deployments = new DeploymentManager({ ...shared, ...git, ...secrets, workspace, builds });
-  const checks = new CheckManager({ ...shared, ...git, ...secrets, workspace, builds });
+  const deployments = new DeploymentManager({
+    ...shared,
+    ...git,
+    ...secrets,
+    workspace,
+    builds,
+    pulls,
+  });
+  const checks = new CheckManager({ ...shared, ...git, ...secrets, workspace, builds, pulls });
   const logStreams = new LogStreamManager({
     ...shared,
     neutralDir: () => workspace.neutralDir(),

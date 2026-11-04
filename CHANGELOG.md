@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.1](https://github.com/JensPenneman/launchway/compare/v0.8.0...v0.8.1) (2026-11-04)
+
+
+### Bug Fixes
+
+* **checks:** retry image pulls and serialise them per node ([#31](https://github.com/JensPenneman/launchway/issues/31)) ([f6eec9e](https://github.com/JensPenneman/launchway/commit/f6eec9e6b1fb5485ca5a824b588bcaa4f25178e1))
+
 ## [0.8.0](https://github.com/JensPenneman/launchway/compare/v0.7.0...v0.8.0) (2026-11-04)
 
 

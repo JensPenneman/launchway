@@ -23,8 +23,16 @@ const PERMISSIONS: Record<string, { token: string; app: string }> = {
     token: 'Commit statuses: Read and write',
     app: 'Commit statuses to Read and write',
   },
+  'contents: write': { token: 'Contents: Read and write', app: 'Contents to Read and write' },
+  'pull_requests: write': {
+    token: 'Pull requests: Read and write',
+    app: 'Pull requests to Read and write',
+  },
+  'checks: read': { token: 'Checks: Read-only', app: 'Checks to Read-only' },
   'pull_requests: read': { token: 'Pull requests: Read-only', app: 'Pull requests to Read-only' },
 };
+/** Grants only the automation (automatic updates and releases) uses. */
+const AUTOMATION_GRANTS = ['contents: write', 'pull_requests: write', 'checks: read'];
 const PULL_REQUEST_EVENT = 'event: pull_request';
 
 function sentenceList(items: readonly string[]): string {
@@ -71,9 +79,11 @@ export function capabilityTitle(caps: Capabilities): string {
   const shown = [deployments && 'deployments', statuses && 'check results'].filter(
     (part) => typeof part === 'string',
   );
-  return shown.length > 0
-    ? `Grant in GitHub to show ${shown.join(' and ')} there`
-    : 'Grant in GitHub to preview and check pull requests';
+  if (shown.length > 0) return `Grant in GitHub to show ${shown.join(' and ')} there`;
+  if (caps.missing.length > 0 && caps.missing.every((item) => AUTOMATION_GRANTS.includes(item))) {
+    return 'Grant in GitHub to let Launchway merge and release for you';
+  }
+  return 'Grant in GitHub to preview and check pull requests';
 }
 
 /** How to grant what is missing: tokens and GitHub Apps are set up differently. */

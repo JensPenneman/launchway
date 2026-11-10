@@ -26,22 +26,24 @@ describe('GitHub App manifest', () => {
       setup_url: `https://deploy.example.com/api/v1/github/connections/${id}/installation-callback`,
       hook_attributes: { url: 'https://deploy.example.com/api/v1/webhooks/github', active: true },
       default_permissions: {
-        contents: 'read',
+        contents: 'write',
         metadata: 'read',
         deployments: 'write',
-        pull_requests: 'read',
+        pull_requests: 'write',
         statuses: 'write',
+        checks: 'read',
       },
       default_events: ['release', 'push', 'pull_request'],
       public: false,
     });
-    // Exactly these: nothing beyond what the deployment mirror and the checks need.
+    // Exactly these: what the deployment mirror, the checks and the automation need.
     expect(manifest.default_permissions).toEqual({
-      contents: 'read',
+      contents: 'write',
       metadata: 'read',
       deployments: 'write',
-      pull_requests: 'read',
+      pull_requests: 'write',
       statuses: 'write',
+      checks: 'read',
     });
     expect(manifest.description).toBe(
       'Deploys your repositories with Launchway and reports deployments and checks to GitHub.',

@@ -5,22 +5,36 @@ import { appCapabilities, missingGrants } from './capabilities.js';
 const id = generateId('gh');
 const at = new Date('2026-10-07T10:00:00Z');
 const legacy = { contents: 'read', metadata: 'read' };
-const full = { ...legacy, deployments: 'write', pull_requests: 'read', statuses: 'write' };
+const full = {
+  contents: 'write',
+  metadata: 'read',
+  deployments: 'write',
+  pull_requests: 'write',
+  statuses: 'write',
+  checks: 'read',
+};
 const allEvents = ['release', 'push', 'pull_request'];
 
 describe('missingGrants', () => {
   it('lists permissions below the requested level and missing events', () => {
     expect(missingGrants(legacy, ['release'])).toEqual([
+      'contents: write',
       'deployments: write',
-      'pull_requests: read',
+      'pull_requests: write',
       'statuses: write',
+      'checks: read',
       'event: push',
       'event: pull_request',
     ]);
     expect(missingGrants({ ...full, deployments: 'read' }, allEvents)).toEqual([
       'deployments: write',
     ]);
-    expect(missingGrants({ ...full, contents: 'write' }, allEvents)).toEqual([]);
+    expect(missingGrants(full, allEvents)).toEqual([]);
+    const { checks: _checks, ...withoutChecks } = full;
+    expect(missingGrants({ ...withoutChecks, contents: 'read' }, allEvents)).toEqual([
+      'contents: write',
+      'checks: read',
+    ]);
   });
 
   it('asks for statuses: write, the permission commit statuses of checks need', () => {
@@ -58,9 +72,11 @@ describe('appCapabilities', () => {
       statuses: false,
       events: ['release'],
       missing: [
+        'contents: write',
         'deployments: write',
-        'pull_requests: read',
+        'pull_requests: write',
         'statuses: write',
+        'checks: read',
         'event: push',
         'event: pull_request',
       ],

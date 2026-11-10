@@ -8,6 +8,8 @@ import {
   forgetInstallationTokens,
   GitProviderError,
   getAppInstallation,
+  installationAccessToken,
+  installationWriteToken,
   verifyPatToken,
 } from './git-provider.js';
 
@@ -167,6 +169,85 @@ describe('GitProvider (GitHub)', () => {
         { repositories: ['trail'], permissions: { contents: 'read' } },
         { repositories: ['trail'], permissions: { contents: 'read' } },
       ]);
+    });
+
+    const READ_SET = {
+      contents: 'read',
+      metadata: 'read',
+      deployments: 'write',
+      pull_requests: 'read',
+      statuses: 'write',
+    };
+    const WRITE_SET = {
+      contents: 'write',
+      pull_requests: 'write',
+      statuses: 'read',
+      checks: 'read',
+      metadata: 'read',
+    };
+    const grantAll = () => {
+      const fake = github.apps.get(appId);
+      if (fake) fake.installationPermissions = { ...READ_SET, ...WRITE_SET, statuses: 'write' };
+    };
+
+    it('names the pre-upgrade permissions on every installation-wide token', async () => {
+      grantAll();
+      const credentials = { appId, privateKey: testPrivateKey() };
+      await installationAccessToken(credentials, installationId);
+      forgetInstallationTokens(appId);
+      await createInstallationProvider(credentials, installationId).listRepos(
+        undefined,
+        undefined,
+        10,
+      );
+      expect(github.tokenRequests).toEqual([{ permissions: READ_SET }, { permissions: READ_SET }]);
+    });
+
+    it('limits the installation-wide token to what a legacy installation granted', async () => {
+      // The fake installation only has contents and metadata: asking for more answers 422.
+      const credentials = { appId, privateKey: testPrivateKey() };
+      const provider = createInstallationProvider(credentials, installationId);
+      await expect(provider.listRepos(undefined, undefined, 10)).resolves.toBeDefined();
+      expect(github.tokenRequests).toEqual([
+        { permissions: { contents: 'read', metadata: 'read' } },
+      ]);
+      // Lower levels are kept lower: a read-only deployments grant is requested as read.
+      const fake = github.apps.get(appId);
+      if (fake) {
+        fake.installationPermissions = { contents: 'read', metadata: 'read', deployments: 'read' };
+      }
+      forgetInstallationTokens(appId);
+      await installationAccessToken(credentials, installationId);
+      expect(github.tokenRequests.at(-1)).toEqual({
+        permissions: { contents: 'read', metadata: 'read', deployments: 'read' },
+      });
+    });
+
+    it('fails closed for the write token on an installation without the grants', async () => {
+      const credentials = { appId, privateKey: testPrivateKey() };
+      await expect(
+        installationWriteToken(credentials, installationId, 'trail'),
+      ).rejects.toMatchObject({ kind: 'upstream', status: 422 });
+      expect(github.tokenRequests).toEqual([{ repositories: ['trail'], permissions: WRITE_SET }]);
+    });
+
+    it('mints the write token for one repository and caches it per repository', async () => {
+      grantAll();
+      const credentials = { appId, privateKey: testPrivateKey() };
+      const writePermissions = WRITE_SET;
+      const a = await installationWriteToken(credentials, installationId, 'trail');
+      expect(await installationWriteToken(credentials, installationId, 'trail')).toBe(a);
+      const b = await installationWriteToken(credentials, installationId, 'other');
+      expect(b).not.toBe(a);
+      expect(github.tokenRequests).toEqual([
+        { repositories: ['trail'], permissions: writePermissions },
+        { repositories: ['other'], permissions: writePermissions },
+      ]);
+      // The installation-wide token is a separate cache entry with the narrower set.
+      const wide = await installationAccessToken(credentials, installationId);
+      expect(wide).not.toBe(a);
+      expect(github.tokenRequests).toHaveLength(3);
+      expect(github.tokenRequests[2]).toEqual({ permissions: READ_SET });
     });
   });
 });

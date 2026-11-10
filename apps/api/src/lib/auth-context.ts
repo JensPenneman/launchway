@@ -23,7 +23,12 @@ export interface AuthUser {
 
 /** The authenticated caller of a request. */
 export type Principal =
-  | { readonly kind: 'session'; readonly user: AuthUser; readonly sessionId: SessionId }
+  | {
+      readonly kind: 'session';
+      readonly user: AuthUser;
+      readonly sessionId: SessionId;
+      readonly authMethod: 'password' | 'passkey';
+    }
   | {
       readonly kind: 'token';
       readonly user: AuthUser;
@@ -141,6 +146,21 @@ export function getSessionPrincipal(c: Context<AppEnv>): Extract<Principal, { ki
   const principal = getPrincipal(c);
   if (principal.kind !== 'session') {
     throw forbidden('This operation requires a signed-in session, not an API token');
+  }
+  return principal;
+}
+
+/**
+ * The session principal of a request that signed in with a passkey. API tokens and password
+ * sessions get a 403: the notification target decides where alerts go, so only the strongest
+ * sign-in may change it.
+ */
+export function getPasskeySessionPrincipal(
+  c: Context<AppEnv>,
+): Extract<Principal, { kind: 'session' }> {
+  const principal = getSessionPrincipal(c);
+  if (principal.authMethod !== 'passkey') {
+    throw forbidden('This operation requires a session signed in with a passkey');
   }
   return principal;
 }

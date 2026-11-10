@@ -210,7 +210,7 @@ export function createInvitationsService(deps: Pick<Deps, 'db' | 'events'>): Inv
           target: { type: 'invitation', id: row.id },
           summary: { userId: user.id, email: user.email, role: user.role },
         });
-        const session = await startSession(tx, user.id, as);
+        const session = await startSession(tx, user.id, as, 'password');
         const loaded = await loadUser(tx, user.id);
         if (!loaded) throw new Error('accepted user vanished');
         return { ...session, invitationId: row.id, user: loaded };

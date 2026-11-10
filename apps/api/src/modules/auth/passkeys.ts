@@ -246,7 +246,7 @@ export function createPasskeyService(
           })
           .where(eq(passkeys.id, stored.id));
         const as = actingAs(actor, user);
-        const session = await startSession(tx, user.id, as);
+        const session = await startSession(tx, user.id, as, 'passkey');
         await recordAudit(tx, as, {
           action: 'auth.login',
           target: { type: 'user', id: user.id },

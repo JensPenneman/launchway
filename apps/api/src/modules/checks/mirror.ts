@@ -70,7 +70,9 @@ export interface StatusStore {
   unsynced(since: Date): Promise<CheckRunId[]>;
 }
 
-export function createDbStatusStore(deps: Pick<Deps, 'db' | 'config' | 'events'>): StatusStore {
+export function createDbStatusStore(
+  deps: Pick<Deps, 'db' | 'config' | 'events' | 'secrets'>,
+): StatusStore {
   const settings = createSettingsService(deps);
   return {
     async load(id) {

@@ -22,11 +22,12 @@ import { type FakeApp, FakeGitHub, sha, testPrivateKey } from '../support/fake-g
 
 const PUBLIC_URL = 'https://deploy.example.com';
 const FULL = {
-  contents: 'read',
+  contents: 'write',
   metadata: 'read',
   deployments: 'write',
-  pull_requests: 'read',
+  pull_requests: 'write',
   statuses: 'write',
+  checks: 'read',
 };
 const json = (method: string, body?: unknown) => ({
   method,
@@ -120,9 +121,11 @@ describe('GitHub deployments and capabilities against PostgreSQL', () => {
       statuses: false,
       events: ['release'],
       missing: [
+        'contents: write',
         'deployments: write',
-        'pull_requests: read',
+        'pull_requests: write',
         'statuses: write',
+        'checks: read',
         'event: push',
         'event: pull_request',
       ],

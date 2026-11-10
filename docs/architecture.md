@@ -491,9 +491,22 @@ export interface DnsProvider {
   4), `installation`,
   `installation_repositories`, `ping`. *(Release and push deployments carry
   the trigger `auto` and are deduplicated per tag or commit.)*
-- The GitHub App asks for `contents: read`, `metadata: read`,
-  `deployments: write`, `pull_requests: read` and `statuses: write`, and
-  subscribes to `release`, `push` and `pull_request`.
+- The GitHub App asks for `contents: write`, `metadata: read`,
+  `deployments: write`, `pull_requests: write`, `statuses: write` and
+  `checks: read`, and subscribes to `release`, `push` and `pull_request`. The
+  write permissions are for the automation only. Every token the API mints
+  names its permissions: installation-wide tokens get the set the App had
+  before (`contents: read`, `metadata: read`, `deployments: write`,
+  `pull_requests: read`, `statuses: write`) limited to what the installation
+  granted, never an unscoped token, the clone token for a node gets
+  `contents: read` on one repository, and the automation's write token
+  (`installationWriteToken`, importable only under `modules/automation/`) gets
+  `contents: write`, `pull_requests: write`, `statuses: read`, `checks: read`
+  and `metadata: read` on one repository, cached per repository; it has no
+  fallback and fails closed when the installation lacks a grant. The
+  automation module exports actions, never tokens or clients. An existing
+  App keeps working until its owner accepts the new permissions on GitHub;
+  the capabilities endpoint lists them as missing until then.
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; getPullRequest; }` so another host could be
   added later.

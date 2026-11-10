@@ -348,7 +348,20 @@ export class FakeGitHub {
       }
       if (method === 'POST' && m[2]) {
         const body = await request.text();
-        this.tokenRequests.push(body ? JSON.parse(body) : {});
+        const requested = body ? JSON.parse(body) : {};
+        this.tokenRequests.push(requested);
+        // GitHub refuses permissions the installation does not have.
+        const granted: Record<string, string> =
+          app.installationPermissions ?? app.permissions ?? LEGACY_PERMISSIONS;
+        const rank = (level: string | undefined) => ['read', 'write', 'admin'].indexOf(level ?? '');
+        const refused = Object.entries(
+          (requested.permissions ?? {}) as Record<string, string>,
+        ).filter(([name, level]) => rank(granted[name]) < rank(level));
+        if (refused.length > 0) {
+          return json(422, {
+            message: `The permissions requested are not granted to this installation (${refused.map(([name]) => name).join(', ')}).`,
+          });
+        }
         const token = `ghs_${randomBytes(18).toString('hex')}`;
         this.installationTokens.set(token, installationId);
         return json(201, {

@@ -38,6 +38,46 @@ describe('settings routes (authorization and validation)', () => {
     );
   });
 
+  it('answers 403 to an API token of any scope that writes the notification target', async () => {
+    const owner = testPrincipal('owner');
+    const token = {
+      kind: 'token' as const,
+      user: owner.user,
+      tokenId: 'tok_01ja53wvjvfk1sp7hz5965tvkz' as const,
+      scopes: ['read' as const, 'write' as const, 'admin' as const],
+    };
+    const app = createApp(createTestDeps({ auth: fixedAuth(token) }));
+    for (const body of [
+      { notifyToken: 'tk_x' },
+      { notifyUrl: 'https://ntfy.example.com/launchway' },
+      { notifyToken: null },
+    ]) {
+      expect((await app.request('/api/v1/settings', patch(body))).status).toBe(403);
+    }
+  });
+
+  it('answers 403 to a password session that writes the notification target', async () => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('owner', 'password')) }));
+    expect((await app.request('/api/v1/settings', patch({ notifyToken: 'tk_x' }))).status).toBe(
+      403,
+    );
+  });
+
+  it('validates the ntfy target: a topic URL without credentials, a token without whitespace', async () => {
+    const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
+    for (const body of [
+      { notifyUrl: 'https://user:pw@ntfy.example.com/t' },
+      { notifyUrl: 'https://ntfy.example.com' },
+      { notifyUrl: 'https://ntfy.example.com/t?auth=x' },
+      { notifyToken: 'two words' },
+      { notifyToken: 'tökén' },
+      { notifyUrl: 'http://ntfy.example.com/t', notifyToken: 'tk_x' },
+      { notifyToken: '' },
+    ]) {
+      expect((await app.request('/api/v1/settings', patch(body))).status).toBe(400);
+    }
+  });
+
   it('validates the body for admins before touching the database', async () => {
     const app = createApp(createTestDeps({ auth: fixedAuth(testPrincipal('admin')) }));
     const res = await app.request(

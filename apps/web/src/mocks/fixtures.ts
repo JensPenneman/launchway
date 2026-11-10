@@ -791,6 +791,8 @@ export function createSettings(): Settings {
     checkConcurrency: DEFAULT_CHECK_CONCURRENCY,
     checkMaxQueuedPerApp: DEFAULT_CHECK_MAX_QUEUED_PER_APP,
     checkMaxQueuedPerNode: DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
+    notifyUrlSet: false,
+    notifyTokenSet: false,
     updatedAt: ago(60 * 24),
   };
 }

@@ -24,7 +24,7 @@ import { apiTokens } from '../tokens/schema.js';
 import { users } from '../users/schema.js';
 import { insertUser, loadUser } from '../users/service.js';
 import { hashPassword, verifyPassword } from './password.js';
-import { sessions } from './schema.js';
+import { type SessionAuthMethod, sessions } from './schema.js';
 import { generateSessionToken } from './session-cookie.js';
 
 type SessionPrincipal = Extract<Principal, { kind: 'session' }>;
@@ -48,6 +48,7 @@ export async function startSession(
   tx: Executor,
   userId: UserId,
   actor: RequestActor,
+  authMethod: SessionAuthMethod,
 ): Promise<{ token: string; sessionId: SessionId }> {
   const token = generateSessionToken();
   const now = new Date();
@@ -56,6 +57,7 @@ export async function startSession(
     .values({
       userId,
       tokenHash: hashToken(token),
+      authMethod,
       ipAddress: actor.ipAddress,
       userAgent: actor.userAgent,
       expiresAt: new Date(now.getTime() + SESSION_TTL_SECONDS * 1000),
@@ -144,7 +146,7 @@ export function createAuthService(
           target: { type: 'user', id: owner.id },
           summary: { email: owner.email, name: owner.name },
         });
-        const session = await startSession(tx, owner.id, as);
+        const session = await startSession(tx, owner.id, as, 'password');
         return { ...session, user: await requireUser(tx, owner.id) };
       });
       deps.events.publish({ topic: 'users', action: 'created', resourceId: result.user.id });
@@ -171,7 +173,7 @@ export function createAuthService(
           await tx.delete(sessions).where(eq(sessions.tokenHash, hashToken(previousToken)));
         }
         const as = actingAs(actor, user);
-        const session = await startSession(tx, user.id, as);
+        const session = await startSession(tx, user.id, as, 'password');
         await recordAudit(tx, as, {
           action: 'auth.login',
           target: { type: 'user', id: user.id },

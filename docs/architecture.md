@@ -58,7 +58,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
 | **Domain** | A fully-qualified name Launchway serves (`trail.example.com`). Optionally bound to a zone so Launchway manages its record. |
 | **Route** | What a domain serves: an app service port, an external host:port, or a redirect. Options: `protected` (forward auth), `compress`, `hsts`, and admin-only `extraDirectives` (verbatim Caddyfile). |
-| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth gate (external URL or app service), edge node, preview base domain and limits. |
+| **Setting** | Platform settings: public URL, ACME e-mail, anchor hostname + dynamic DNS, forward-auth gate (external URL or app service), edge node, preview base domain and limits, the ntfy topic URL and access token for notifications (both write-only; the token is encrypted; set from a passkey session only; [ADR 0023](adr/0023-automation.md)). |
 | **AuditEvent** | Who changed what, when, from where. Written for every mutation. |
 
 IDs are prefixed type IDs (`typeid-js`, UUIDv7 underneath): `user_…`, `sess_…`,
@@ -771,6 +771,12 @@ Agent (`launchway-agent` container):
   node credentials) encrypted with AES-256-GCM, random IV, key from
   `LAUNCHWAY_SECRET_KEY`; never returned in clear text after creation (env vars:
   `secret: true` masks the value; non-secret ones are returned).
+- The ntfy access token is encrypted like the other secrets, never returned
+  (`notifyTokenSet` says whether one is stored), redacted in the audit log and
+  writable only from an admin session signed in with a passkey, not with an API
+  token or a password session; the topic URL is write-only too (`notifyUrlSet`),
+  and a token needs an https URL.
+  Notifications carry PR numbers, versions and links, never logs or secrets.
 - Passwords argon2id; tokens and node credentials hashed (SHA-256) at rest;
   constant-time comparisons.
 - Webhook signatures verified before parsing; replay protection by delivery ID.

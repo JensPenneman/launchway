@@ -126,11 +126,18 @@ describe('createAuthResolver', () => {
 
   it('resolves a session cookie without rewriting a recently used session', async () => {
     const sessionId = generateId('sess');
-    const { db, statements } = scriptedDb([[{ id: sessionId, lastUsedAt: NOW, user }]]);
+    const { db, statements } = scriptedDb([
+      [{ id: sessionId, authMethod: 'passkey', lastUsedAt: NOW, user }],
+    ]);
     const { body, setCookie } = await resolveWith(db, {
       cookie: `${SESSION_COOKIE_NAME}=${generateSessionToken()}`,
     });
-    expect(body.principal).toEqual({ kind: 'session', user, sessionId });
+    expect(body.principal).toEqual({
+      kind: 'session',
+      user,
+      sessionId,
+      authMethod: 'passkey',
+    });
     expect(statements).toEqual(['select']);
     expect(setCookie).toBeNull();
   });

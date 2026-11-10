@@ -507,6 +507,10 @@ export interface DnsProvider {
   automation module exports actions, never tokens or clients. An existing
   App keeps working until its owner accepts the new permissions on GitHub;
   the capabilities endpoint lists them as missing until then.
+- **Dependabot pull requests** are classified by a pure function
+  (`modules/automation/policy/classify.ts`: author id, one verified Dependabot-only
+  commit, a per-app file allowlist, manifest fields outside the dependency maps
+  unchanged, parseable `updated-dependencies` front matter; Postgres and derived images are held unless a minor or patch) ([ADR 0023](adr/0023-automation.md)).
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; getPullRequest; }` so another host could be
   added later.

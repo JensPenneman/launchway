@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.9.0](https://github.com/JensPenneman/launchway/compare/v0.8.1...v0.9.0) (2026-11-10)
+
+
+### Features
+
+* **api:** add an ntfy notification helper and its settings ([6a48c1f](https://github.com/JensPenneman/launchway/commit/6a48c1fa17ca90099b83a6aa70034a4a41554a27))
+* **api:** classify Dependabot pull requests for automation ([c00a6c9](https://github.com/JensPenneman/launchway/commit/c00a6c95255189d4fe4aafe37efa15d5cca335be))
+* **api:** merge eligible Dependabot pull requests automatically ([30ffbe2](https://github.com/JensPenneman/launchway/commit/30ffbe25091c1458b7d6e6172c59bb8289d606ba))
+* **api:** scoped installation tokens and write permissions for the automation ([4006be2](https://github.com/JensPenneman/launchway/commit/4006be26e55335de36dbc1f068b484f0c285201f))
+
 ## [0.8.1](https://github.com/JensPenneman/launchway/compare/v0.8.0...v0.8.1) (2026-11-04)
 
 

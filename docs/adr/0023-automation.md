@@ -12,7 +12,10 @@ their decisions below.
 
 Unattended work (merging a Dependabot pull request, cutting a release) has to
 tell the owner when it needs a person. The owner runs an ntfy server; nothing
-in Launchway should depend on a notification arriving.
+in Launchway should depend on a notification arriving. The first act is
+merging the dependency updates Dependabot opens when they are safe, which needs
+a decision that can be tested in isolation and that a clever pull request
+cannot argue out of its rules.
 
 ## Decision
 
@@ -50,9 +53,37 @@ in Launchway should depend on a notification arriving.
    explicit read-only permission set, so a new permission on the App never
    widens an existing code path. An import scan in the tests enforces the
    location.
+6. **A pure classifier.** `modules/automation/policy/classify.ts` takes one
+   pull request head (the pull request, its single commit, its changed files,
+   the base and head contents of changed `package.json` files) and a policy,
+   and returns `eligible`, `hold(reason)` or `ineligible(reason)`. It imports
+   nothing from the database, dependency, HTTP or GitHub layers; the caller
+   gathers the input and acts on the verdict.
+7. **The policy is input.** Dependabot's user id, the allowlist of changed
+   paths and the held image names come from the app's automation settings, so
+   no app's file layout is known to the platform.
+8. **Eligible needs all of:** author id of the policy and type `Bot`; head in
+   the base repository on `dependabot/*`, base the default branch, not a
+   draft; exactly one commit, the head, verified, authored by that id and
+   committed by `web-flow`; the commit and file lists complete (their length
+   equals the pull request's `commits` and `changed_files`, within GitHub's
+   caps of 250 and 3000); every changed file modified (never added, removed
+   or renamed) and on the allowlist; in each `package.json` everything outside
+   the four dependency fields equal between base and head; the commit message
+   holds exactly one `updated-dependencies` front matter block, ended by a
+   `...` line and followed only by blank lines and trailers, that parses.
+9. **Hold, not refuse,** for a held image (Postgres and the images built on
+   it: `postgres`, `postgis`, `timescaledb`, `pgvector` by default) unless
+   Dependabot says the update is a minor or a patch: a major, a digest-only
+   bump, an empty or any other `update-type` is held, and a person decides.
+   Every other update, npm majors included, is eligible. Lockfile URLs and
+   integrity are the business of the app's own supply-chain check.
+10. **Fail closed.** Missing, incomplete or unparseable input is `ineligible`.
 
 ## Consequences
 
 A lost notification is possible by design (ntfy down for more than a few
 seconds); callers that need certainty read the run record, not the phone.
 Replacing the helper by outbound webhooks later changes one module.
+The classifier rules are table-tested without a database or GitHub. The executor can
+change how it reaches GitHub without touching the policy.

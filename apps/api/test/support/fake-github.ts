@@ -15,6 +15,52 @@ export interface FakePull {
   headSha: string;
   /** The head lives in a fork (`<forker>/<repo>`). */
   fromFork?: boolean;
+  /** What the automation reads and writes: the author, the commits, the files, auto-merge. */
+  auto?: FakeAutomationPull;
+}
+
+/** A pull request as the automation sees it (commits, files, contents, auto-merge). */
+export interface FakeAutomationPull {
+  baseSha?: string;
+  /** The branch the pull request merges into (default: the default branch). */
+  baseRef?: string;
+  authorId?: number;
+  authorType?: string;
+  draft?: boolean;
+  merged?: boolean;
+  /** Commits of the pull request; one verified Dependabot commit when unset. */
+  commits?: {
+    sha: string;
+    verified?: boolean;
+    authorId?: number | null;
+    committer?: string | null;
+    message: string;
+  }[];
+  files?: { filename: string; status?: string; previous?: string }[];
+  /** File contents by `<sha>:<path>`. */
+  contents?: Record<string, string>;
+  /** Who turned auto-merge on, as REST says it (`<slug>[bot]`, a user's login); null/unset: off. */
+  autoMergeBy?: string | null;
+  /** GraphQL answers the existing request with `enabledBy: null` (the user is gone). */
+  enabledByNull?: boolean;
+  /** After applying the enable the fake keeps the response for this long (a lost response). */
+  enableHangsMs?: number;
+  mergeableState?: string;
+  /** What enabling auto-merge answers: ok, a clean-status refusal, or an error. */
+  enableAnswer?: 'ok' | 'clean-status' | 'error';
+  /** GraphQL errors arrive as HTTP 200 with `errors`: this one answers the enable call. */
+  enableError?: { type: string; message: string };
+  /** The same for `disablePullRequestAutoMerge`; unset: it succeeds. */
+  disableError?: { type: string; message: string };
+  /** REST keeps reading `auto_merge: null` although the request exists (GitHub's field lags). */
+  restAutoMergeLag?: boolean;
+  /** The GraphQL read of `autoMergeRequest` fails (HTTP 200 with an INTERNAL error). */
+  readError?: boolean;
+  /** `PUT .../merge` answers this status instead of merging. */
+  mergeStatus?: number;
+  /** The head's commit count and file count the PR object reports (default: the list lengths). */
+  commitCount?: number;
+  changedFiles?: number;
 }
 
 export interface FakeRepo {
@@ -123,6 +169,48 @@ export class FakeGitHub {
   /** Lifetime of issued installation tokens. */
   tokenLifetimeMs = 60 * 60 * 1000;
   readonly calls: string[] = [];
+  /** Writes of the automation: GraphQL mutations (`enablePullRequestAutoMerge ...`) and merges. */
+  readonly automationWrites: string[] = [];
+  /** Tokens minted with `pull_requests: write` (the automation's write token). */
+  readonly writeTokens = new Set<string>();
+  /** Reads of the automation that used a write token (there must be none). */
+  readonly writeTokenReads: string[] = [];
+  /** Holds the next request matching `match` until `release()`; `entered` resolves on arrival. */
+  private gateState: { match: RegExp; entered: () => void; wait: Promise<void> } | null = null;
+  /** Holds every request matching, not just the next one, until released. */
+  private gateAllState: { match: RegExp; wait: Promise<void>; held: number } | null = null;
+  /** Answers requests matching `match` only after `ms` (a slow GitHub). */
+  delays: { match: RegExp; ms: number }[] = [];
+
+  /** Like `gate`, but holds every matching request; `held()` counts the ones waiting. */
+  gateAll(match: RegExp): { held: () => number; release: () => void } {
+    let release: () => void = () => undefined;
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const state = { match, wait, held: 0 };
+    this.gateAllState = state;
+    return {
+      held: () => state.held,
+      release: () => {
+        if (this.gateAllState === state) this.gateAllState = null;
+        release();
+      },
+    };
+  }
+
+  gate(match: RegExp): { entered: Promise<void>; release: () => void } {
+    let entered: () => void = () => undefined;
+    let release: () => void = () => undefined;
+    const enteredPromise = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const wait = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    this.gateState = { match, entered, wait };
+    return { entered: enteredPromise, release };
+  }
   private readonly realFetch = globalThis.fetch;
 
   readonly fetch = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
@@ -130,6 +218,25 @@ export class FakeGitHub {
     const url = new URL(request.url);
     if (url.hostname !== 'api.github.com') return this.realFetch(input, init);
     this.calls.push(`${request.method} ${url.pathname}`);
+    const gate = this.gateState;
+    if (gate?.match.test(`${request.method} ${url.pathname}`)) {
+      this.gateState = null;
+      gate.entered();
+      await gate.wait;
+    }
+    const gateAll = this.gateAllState;
+    if (gateAll?.match.test(`${request.method} ${url.pathname}`)) {
+      gateAll.held += 1;
+      await gateAll.wait;
+    }
+    const delay = this.delays.find((d) => d.match.test(`${request.method} ${url.pathname}`));
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay.ms));
+    if (request.method === 'GET') {
+      const token = (request.headers.get('authorization') ?? '').split(' ')[1] ?? '';
+      if (this.writeTokens.has(token) && /\/repos\//.test(url.pathname)) {
+        this.writeTokenReads.push(url.pathname);
+      }
+    }
     return this.route(request, url);
   };
 
@@ -285,6 +392,230 @@ export class FakeGitHub {
     return null;
   }
 
+  private pullJson(repo: FakeRepo, number: number, pull: FakePull) {
+    const fullName = `${repo.owner}/${repo.name}`;
+    const auto = pull.auto ?? {};
+    const repoId = this.repos.indexOf(repo) + 1;
+    return {
+      number,
+      node_id: `PR_${fullName}#${number}`,
+      title: pull.title,
+      state: pull.state ?? 'open',
+      merged: auto.merged ?? false,
+      draft: auto.draft ?? false,
+      html_url: `https://github.com/${fullName}/pull/${number}`,
+      user: {
+        id: auto.authorId ?? 49699333,
+        type: auto.authorType ?? 'Bot',
+        login: 'dependabot[bot]',
+      },
+      head: {
+        ref: pull.headRef,
+        sha: pull.headSha,
+        repo: pull.fromFork
+          ? { id: 9_000_000 + repoId, full_name: `forker/${repo.name}` }
+          : { id: repoId, full_name: fullName },
+      },
+      base: {
+        ref: auto.baseRef ?? repo.defaultBranch ?? 'main',
+        sha: auto.baseSha ?? sha('base'),
+        repo: { id: repoId, full_name: fullName },
+      },
+      commits: auto.commitCount ?? auto.commits?.length ?? 1,
+      changed_files: auto.changedFiles ?? auto.files?.length ?? 0,
+      auto_merge:
+        auto.autoMergeBy && !auto.restAutoMergeLag
+          ? { enabled_by: { login: auto.autoMergeBy } }
+          : null,
+      mergeable_state: auto.mergeableState ?? 'blocked',
+    };
+  }
+
+  private pullByNodeId(nodeId: string): { repo: FakeRepo; pull: FakePull; number: number } | null {
+    const m = /^PR_(.+)\/(.+)#(\d+)$/.exec(nodeId);
+    const repo = m ? this.repo(m[1] ?? '', m[2] ?? '') : undefined;
+    const number = Number(m?.[3]);
+    const pull = repo?.pulls?.[number];
+    return repo && pull ? { repo, pull, number } : null;
+  }
+
+  /** `POST /graphql`: the two auto-merge mutations of the automation. */
+  private async graphql(request: Request): Promise<Response> {
+    const body = (await request.json()) as { query: string; variables?: Record<string, string> };
+    const token = (request.headers.get('authorization') ?? '').split(' ')[1] ?? '';
+    const installation = this.installationTokens.get(token);
+    const app = [...this.apps.values()].find(
+      (a) => installation && a.installations.has(installation),
+    );
+    const found = this.pullByNodeId(body.variables?.id ?? '');
+    const isRead = body.query.includes('autoMergeRequest');
+    if (!isRead && !this.writeTokens.has(token)) {
+      return json(403, { message: 'Resource not accessible by integration' });
+    }
+    if (isRead && !installation) return json(401, { message: 'Bad credentials' });
+    const refuse = (message: string) =>
+      json(200, { data: null, errors: [{ type: 'UNPROCESSABLE', message }] });
+    if (!found || !app)
+      return json(200, {
+        data: null,
+        errors: [{ type: 'NOT_FOUND', message: 'Could not resolve to a node' }],
+      });
+    found.pull.auto ??= {};
+    const auto = found.pull.auto;
+    if (isRead) {
+      if (auto.readError) {
+        return json(200, {
+          data: null,
+          errors: [
+            { type: 'INTERNAL', message: 'Something went wrong while executing your query' },
+          ],
+        });
+      }
+      // GraphQL is not subject to the lag of the REST field.
+      return json(200, {
+        data: {
+          node: {
+            // GraphQL gives a bot's login without the `[bot]` REST adds.
+            autoMergeRequest: auto.autoMergeBy
+              ? {
+                  enabledBy: auto.enabledByNull
+                    ? null
+                    : {
+                        __typename: auto.autoMergeBy.endsWith('[bot]') ? 'Bot' : 'User',
+                        login: auto.autoMergeBy.replace(/\[bot\]$/, ''),
+                      },
+                }
+              : null,
+          },
+        },
+      });
+    }
+    if (body.query.includes('enablePullRequestAutoMerge')) {
+      this.automationWrites.push(
+        `enablePullRequestAutoMerge #${found.number} ${body.variables?.oid}`,
+      );
+      if (body.variables?.oid !== found.pull.headSha) return refuse('Head branch was modified');
+      if (auto.enableAnswer === 'clean-status')
+        return refuse('Pull request Pull request is in clean status');
+      if (auto.enableError) {
+        return json(200, { data: null, errors: [auto.enableError] });
+      }
+      if (auto.enableAnswer === 'error') {
+        return json(200, {
+          data: null,
+          errors: [
+            { type: 'INTERNAL', message: 'Something went wrong while executing your query' },
+          ],
+        });
+      }
+      auto.autoMergeBy = `${app.slug}[bot]`;
+      if (auto.enableHangsMs)
+        await new Promise((resolve) => setTimeout(resolve, auto.enableHangsMs));
+      return json(200, {
+        data: { enablePullRequestAutoMerge: { pullRequest: { number: found.number } } },
+      });
+    }
+    if (body.query.includes('disablePullRequestAutoMerge')) {
+      this.automationWrites.push(`disablePullRequestAutoMerge #${found.number}`);
+      // Refused while a request still exists, or when there is none to disable (GitHub says so
+      // in words that are no contract).
+      if (auto.disableError) return json(200, { data: null, errors: [auto.disableError] });
+      if (!auto.autoMergeBy) {
+        return refuse('Pull request Auto merge is not enabled for this pull request');
+      }
+      auto.autoMergeBy = null;
+      return json(200, {
+        data: { disablePullRequestAutoMerge: { pullRequest: { number: found.number } } },
+      });
+    }
+    return refuse('Unknown mutation');
+  }
+
+  /** The pull request endpoints only the automation uses (lists, commits, files, merge, contents). */
+  private async automationApi(
+    request: Request,
+    repo: FakeRepo,
+    rest: string,
+    url: URL,
+  ): Promise<Response | null> {
+    const method = request.method;
+    if (method === 'GET' && rest === 'pulls') {
+      const open = Object.entries(repo.pulls ?? {}).filter(
+        ([, pull]) => pull.auto && (pull.state ?? 'open') === 'open',
+      );
+      if (open.length === 0) return null;
+      return json(
+        200,
+        open.map(([number, pull]) => this.pullJson(repo, Number(number), pull)),
+      );
+    }
+    let m = /^pulls\/(\d+)\/(commits|files)$/.exec(rest);
+    if (method === 'GET' && m) {
+      const pull = repo.pulls?.[Number(m[1])];
+      if (!pull) return json(404, { message: 'Not Found' });
+      const auto = pull.auto ?? {};
+      if (m[2] === 'commits') {
+        const commits = auto.commits ?? [
+          {
+            sha: pull.headSha,
+            message:
+              'Bump x\n\n---\nupdated-dependencies:\n- dependency-name: x\n  dependency-type: direct:production\n  update-type: version-update:semver-patch\n...\n',
+          },
+        ];
+        const { slice, headers } = this.page(
+          commits.map((c) => ({
+            sha: c.sha,
+            commit: { message: c.message, verification: { verified: c.verified ?? true } },
+            author: c.authorId === null ? null : { id: c.authorId ?? 49699333 },
+            committer: c.committer === null ? null : { login: c.committer ?? 'web-flow' },
+          })),
+          url,
+        );
+        return json(200, slice, headers);
+      }
+      const { slice, headers } = this.page(
+        (auto.files ?? []).map((f) => ({
+          filename: f.filename,
+          status: f.status ?? 'modified',
+          ...(f.previous ? { previous_filename: f.previous } : {}),
+        })),
+        url,
+      );
+      return json(200, slice, headers);
+    }
+    m = /^pulls\/(\d+)\/merge$/.exec(rest);
+    if (method === 'PUT' && m) {
+      const number = Number(m[1]);
+      const pull = repo.pulls?.[number];
+      const body = (await request.json()) as { sha?: string; merge_method?: string };
+      if (!pull) return json(404, { message: 'Not Found' });
+      const mergeToken = (request.headers.get('authorization') ?? '').split(' ')[1] ?? '';
+      if (!this.writeTokens.has(mergeToken)) {
+        return json(403, { message: 'Resource not accessible by integration' });
+      }
+      this.automationWrites.push(`merge #${number} ${body.sha} ${body.merge_method}`);
+      if (pull.auto?.mergeStatus) return json(pull.auto.mergeStatus, { message: 'Not mergeable' });
+      if (body.sha !== pull.headSha) return json(409, { message: 'Head branch was modified' });
+      pull.state = 'closed';
+      pull.auto = { ...pull.auto, merged: true };
+      return json(200, { merged: true, sha: sha('merge') });
+    }
+    m = /^contents\/(.+)$/.exec(rest);
+    if (method === 'GET' && m) {
+      const ref = url.searchParams.get('ref') ?? '';
+      const text = Object.values(repo.pulls ?? {})
+        .map((pull) => pull.auto?.contents?.[`${ref}:${m?.[1]}`])
+        .find((value) => value !== undefined);
+      return text === undefined
+        ? json(404, { message: 'Not Found' })
+        : new Response(text, {
+            status: 200,
+            headers: { 'content-type': 'application/vnd.github.raw+json' },
+          });
+    }
+    return null;
+  }
+
   private async route(request: Request, url: URL): Promise<Response> {
     const path = decodeURIComponent(url.pathname);
     const method = request.method;
@@ -318,6 +649,8 @@ export class FakeGitHub {
 
     const auth = this.authorized(request);
     if (!auth) return json(401, { message: 'Bad credentials' });
+
+    if (method === 'POST' && path === '/graphql') return this.graphql(request);
 
     if (method === 'GET' && path === '/app') {
       if (auth !== 'jwt') return json(401, { message: 'JWT required' });
@@ -364,6 +697,7 @@ export class FakeGitHub {
         }
         const token = `ghs_${randomBytes(18).toString('hex')}`;
         this.installationTokens.set(token, installationId);
+        if (requested.permissions?.pull_requests === 'write') this.writeTokens.add(token);
         return json(201, {
           token,
           expires_at: new Date(Date.now() + this.tokenLifetimeMs).toISOString(),
@@ -404,6 +738,8 @@ export class FakeGitHub {
     const repo = m ? this.repo(m[1] ?? '', m[2] ?? '') : undefined;
     if (!m || !repo) return json(404, { message: 'Not Found' });
     const rest = m[3] ?? '';
+    const automation = await this.automationApi(request, repo, rest, url);
+    if (automation) return automation;
     if (rest === 'deployments' || rest.startsWith('deployments/') || rest === 'pulls') {
       return this.deploymentsApi(request, repo, rest);
     }
@@ -461,19 +797,7 @@ export class FakeGitHub {
       const number = Number(r[1]);
       const pull = repo.pulls?.[number];
       if (!pull) return json(404, { message: 'Not Found' });
-      const fullName = `${repo.owner}/${repo.name}`;
-      return json(200, {
-        number,
-        title: pull.title,
-        state: pull.state ?? 'open',
-        merged: false,
-        head: {
-          ref: pull.headRef,
-          sha: pull.headSha,
-          repo: { full_name: pull.fromFork ? `forker/${repo.name}` : fullName },
-        },
-        base: { ref: 'main', repo: { full_name: fullName } },
-      });
+      return json(200, this.pullJson(repo, number, pull));
     }
     r = /^commits\/([0-9a-f]{40})\/pulls$/.exec(rest);
     if (r) {

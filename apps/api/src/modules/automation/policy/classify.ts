@@ -54,8 +54,13 @@ export interface ClassifierInput {
   packageJson: Record<string, { base: string | null; head: string | null }>;
 }
 
+/** Raised whenever the rules below change: a stored verdict of an older version is reclassified. */
+export const CLASSIFIER_VERSION = 1;
+
 export type Verdict =
   | { verdict: 'eligible' }
+  /** A result that may be transient (GitHub still computing); the caller retries, then gives up. */
+  | { verdict: 'unknown'; reason: string }
   | { verdict: 'hold'; reason: string }
   | { verdict: 'ineligible'; reason: string };
 
@@ -112,6 +117,7 @@ function outsideDependencies(manifest: Record<string, unknown>): Record<string, 
 }
 
 const no = (reason: string): Verdict => ({ verdict: 'ineligible', reason });
+const later = (reason: string): Verdict => ({ verdict: 'unknown', reason });
 
 export function classifyDependabotPullRequest(input: ClassifierInput): Verdict {
   const { policy, pullRequest: pr, commits, files } = input;
@@ -126,15 +132,14 @@ export function classifyDependabotPullRequest(input: ClassifierInput): Verdict {
   if (pr.baseRef !== pr.defaultBranch) return no('base is not the default branch');
   if (pr.draft) return no('pull request is a draft');
 
-  if (pr.commitCount > MAX_COMMITS || commits.length !== pr.commitCount) {
-    return no('commit list is incomplete');
-  }
-  if (pr.changedFiles > MAX_FILES || files.length !== pr.changedFiles) {
-    return no('file list is incomplete');
-  }
+  if (pr.commitCount > MAX_COMMITS) return no('commit list is incomplete');
+  if (pr.changedFiles > MAX_FILES) return no('file list is incomplete');
+  // GitHub computes the lists after a push: an incomplete list may be complete a moment later.
+  if (commits.length !== pr.commitCount) return later('commit list is incomplete');
+  if (files.length !== pr.changedFiles) return later('file list is incomplete');
   const [commit] = commits;
   if (commits.length !== 1 || !commit) return no('not exactly one commit');
-  if (commit.sha !== pr.headSha) return no('the commit is not the head');
+  if (commit.sha !== pr.headSha) return later('the commit is not the head');
   if (!commit.verified) return no('commit is not verified');
   if (commit.authorId !== policy.dependabotUserId) return no('commit has a foreign author');
   if (commit.committerLogin !== WEB_FLOW) return no('commit has a foreign committer');

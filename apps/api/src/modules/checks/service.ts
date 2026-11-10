@@ -74,6 +74,34 @@ export const APP_MOVED_MESSAGE = 'Cancelled: the checks of the app moved to anot
 const PRUNE_BATCH = 5000;
 
 /** The commit a push or a pull request of the app's repository runs the checks for. */
+export interface QueueOptions {
+  /** Runs cancelled by a person do not count: the commit runs again. */
+  readonly requeueCancelled?: boolean;
+  /** Aborted: the caller lost its lock, nothing more is queued. */
+  readonly signal?: AbortSignal;
+}
+
+/**
+ * Which runs of a commit count as having run: those that never ran (superseded by another commit
+ * of the branch, not queued while the queue was full, cancelled because their pull request
+ * closed, or ended while their node was offline before it took them) do not, so the commit runs
+ * when it is pushed again. One predicate for the queue and for the automation's "has checks".
+ */
+export function runCountsForCommit(options: Pick<QueueOptions, 'requeueCancelled'> = {}) {
+  return or(
+    isNull(checkRuns.reason),
+    and(
+      notInArray(checkRuns.reason, [
+        'superseded',
+        'queue-full',
+        'closed',
+        ...(options.requeueCancelled ? (['cancelled'] as const) : []),
+      ]),
+      or(ne(checkRuns.reason, 'offline'), isNotNull(checkRuns.startedAt)),
+    ),
+  );
+}
+
 export interface CommitTarget {
   readonly sha: string;
   /** The pushed branch, or the head branch of the pull request. */
@@ -136,7 +164,12 @@ export interface ChecksService {
    * checks that ran for the commit already (any status) are skipped. Queued push and pull request
    * runs of the same ref for another commit are superseded. Returns the new runs.
    */
-  queueForCommit(app: AppRow, commit: CommitTarget, actor: RequestActor): Promise<CheckRun[]>;
+  queueForCommit(
+    app: AppRow,
+    commit: CommitTarget,
+    actor: RequestActor,
+    options?: QueueOptions,
+  ): Promise<CheckRun[]>;
   /**
    * Webhooks: a pull request was closed or merged. The queued runs it started (trigger
    * `pull_request`, its number, its head branch, queued before `closed_at`) are cancelled
@@ -754,8 +787,11 @@ export function createChecksService(deps: Deps): ChecksService {
       return { items: await withPositions(rows) };
     },
 
-    async queueForCommit(app, commit, actor) {
+    async queueForCommit(app, commit, actor, options = {}) {
+      options.signal?.throwIfAborted();
       const treeSha = commit.treeSha !== undefined ? commit.treeSha : await treeOf(app, commit.sha);
+      // The tree read cannot be aborted: a caller that lost its lock meanwhile queues nothing.
+      options.signal?.throwIfAborted();
       const limits = await queueLimits();
       const result = await deps.db.transaction(async (tx) => {
         const locked = await lockApp(tx, app.id);
@@ -771,13 +807,7 @@ export function createChecksService(deps: Deps): ChecksService {
             and(
               eq(checkRuns.appId, app.id),
               eq(checkRuns.commitSha, commit.sha),
-              or(
-                isNull(checkRuns.reason),
-                and(
-                  notInArray(checkRuns.reason, ['superseded', 'queue-full', 'closed']),
-                  or(ne(checkRuns.reason, 'offline'), isNotNull(checkRuns.startedAt)),
-                ),
-              ),
+              runCountsForCommit(options),
             ),
           );
         const served = await serveExisting(tx, existing, commit);

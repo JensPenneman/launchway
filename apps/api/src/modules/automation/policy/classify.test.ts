@@ -249,28 +249,24 @@ describe('classifyDependabotPullRequest', () => {
     }
   });
 
-  it('rejects incomplete commit and file lists', () => {
+  it('rejects lists past GitHub caps, and calls an incomplete list unknown (retry)', () => {
     const base = input();
-    for (const patch of [
-      { commitCount: 2 },
-      { changedFiles: 3 },
-      { commitCount: 251 },
-      { changedFiles: 3001 },
-    ]) {
-      expect(
-        classifyDependabotPullRequest({ ...base, pullRequest: { ...base.pullRequest, ...patch } })
-          .verdict,
-      ).toBe('ineligible');
-    }
+    const run = (patch: Partial<ClassifierInput['pullRequest']>) =>
+      classifyDependabotPullRequest({ ...base, pullRequest: { ...base.pullRequest, ...patch } })
+        .verdict;
+    expect(run({ commitCount: 251 })).toBe('ineligible');
+    expect(run({ changedFiles: 3001 })).toBe('ineligible');
+    expect(run({ commitCount: 2 })).toBe('unknown');
+    expect(run({ changedFiles: 3 })).toBe('unknown');
   });
 
-  it('rejects a commit that is not the head, and a missing commit', () => {
+  it('calls a commit that is not the head, or a missing commit, unknown (retry)', () => {
     const i = input();
     i.pullRequest.headSha = 'other';
-    expect(verdict(i).verdict).toBe('ineligible');
+    expect(verdict(i).verdict).toBe('unknown');
     const j = input();
     j.commits = [];
-    expect(verdict(j).verdict).toBe('ineligible');
+    expect(classifyDependabotPullRequest(j).verdict).toBe('unknown');
   });
 
   it('rejects several Dependabot commits', () => {

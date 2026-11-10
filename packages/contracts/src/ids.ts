@@ -21,6 +21,7 @@ export const ID_PREFIXES = {
   auditEvent: 'aud',
   preview: 'prv',
   checkRun: 'chk',
+  automationRun: 'run',
 } as const;
 
 export type IdPrefix = (typeof ID_PREFIXES)[keyof typeof ID_PREFIXES];
@@ -87,3 +88,5 @@ export const PreviewId = typeId('prv');
 export type PreviewId = z.infer<typeof PreviewId>;
 export const CheckRunId = typeId('chk');
 export type CheckRunId = z.infer<typeof CheckRunId>;
+export const AutomationRunId = typeId('run');
+export type AutomationRunId = z.infer<typeof AutomationRunId>;

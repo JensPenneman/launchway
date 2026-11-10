@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { generateId, type NodeId } from '@launchway/contracts';
+import { type AppId, generateId, type NodeId } from '@launchway/contracts';
 import { eq, sql } from 'drizzle-orm';
 import { drizzle } from 'drizzle-orm/node-postgres';
 import { migrate } from 'drizzle-orm/node-postgres/migrator';
@@ -11,8 +11,15 @@ import { pino } from 'pino';
 import { describe, expect, inject, it } from 'vitest';
 import { createDatabase, type Database } from '../../src/db/client.js';
 import { MIGRATIONS_FOLDER, runMigrations } from '../../src/db/migrate.js';
-import { apps, checkRuns, nodes, settings } from '../../src/db/schema.js';
-import { insertApp } from '../support/edge-fixtures.js';
+import {
+  apps,
+  automationRuns,
+  checkRuns,
+  githubConnections,
+  nodes,
+  settings,
+} from '../../src/db/schema.js';
+import { insertApp, unique } from '../support/edge-fixtures.js';
 
 /** A migrations folder that ends before `tag`, as an installation of an older version has it. */
 async function migrationsBefore(tag: string): Promise<string> {
@@ -31,6 +38,21 @@ async function migrationsBefore(tag: string): Promise<string> {
 async function insertNodeBefore0009(db: Database, name: string): Promise<NodeId> {
   const id = generateId('node');
   await db.execute(sql`INSERT INTO nodes (id, name) VALUES (${id}, ${name})`);
+  return id;
+}
+
+/** An app row as a database before 0012 takes it (the schema now has a column that lacks there). */
+async function insertAppBefore0012(db: Database, nodeId: NodeId, slug: string): Promise<AppId> {
+  const [connection] = await db
+    .insert(githubConnections)
+    .values({ kind: 'pat', name: unique('conn-'), tokenEncrypted: 'not-a-real-ciphertext' })
+    .returning({ id: githubConnections.id });
+  if (!connection) throw new Error('connection insert failed');
+  const id = generateId('app');
+  await db.execute(
+    sql`INSERT INTO apps (id, slug, name, connection_id, repo_owner, repo_name, compose_files, node_id)
+        VALUES (${id}, ${slug}, ${slug}, ${connection.id}, 'example', ${slug}, ARRAY['compose.yaml'], ${nodeId})`,
+  );
   return id;
 }
 
@@ -66,7 +88,7 @@ describe('migrations', () => {
       await migrate(drizzle(pool), { migrationsFolder: folder });
       const db = createDatabase(pool);
       const node = { id: await insertNodeBefore0009(db, 'busy') };
-      const appId = await insertApp(db, node.id, 'migrated');
+      const appId = await insertAppBefore0012(db, node.id, 'migrated');
       const run = (status: 'queued' | 'running') => ({
         appId,
         nodeId: node.id,
@@ -121,7 +143,7 @@ describe('migrations', () => {
       await migrate(drizzle(pool), { migrationsFolder: folder });
       const db = createDatabase(pool);
       const node = { id: await insertNodeBefore0009(db, 'edge') };
-      const appId = await insertApp(db, node.id, 'before-0009');
+      const appId = await insertAppBefore0012(db, node.id, 'before-0009');
       await db.execute(sql`UPDATE apps SET checks = '{"enabled":true,"items":[]}'::jsonb`);
 
       await runMigrations(pool, pino({ level: 'silent' }));
@@ -144,6 +166,58 @@ describe('migrations', () => {
         .from(apps)
         .where(eq(apps.id, freshId));
       expect(fresh?.checks.nodeId).toBeNull();
+    } finally {
+      await close();
+      await admin.pool.query(`DROP DATABASE ${name}`);
+      await admin.close();
+      await rm(folder, { recursive: true, force: true });
+    }
+  });
+
+  it('0012 gives an existing app the automation defaults (merge off, not paused) and cascades its runs', async () => {
+    const url = new URL(inject('databaseUrl'));
+    const name = `launchway_migrate_${randomBytes(4).toString('hex')}`;
+    const admin = trackedPool(url.toString());
+    await admin.pool.query(`CREATE DATABASE ${name}`);
+    url.pathname = `/${name}`;
+    const { pool, close } = trackedPool(url.toString());
+    const folder = await migrationsBefore('0012_automation');
+    try {
+      await migrate(drizzle(pool), { migrationsFolder: folder });
+      const db = createDatabase(pool);
+      const node = { id: await insertNodeBefore0009(db, 'automation') };
+      const appId = await insertAppBefore0012(db, node.id, 'before-0012');
+
+      await runMigrations(pool, pino({ level: 'silent' }));
+
+      const [app] = await db
+        .select({ automation: apps.automation })
+        .from(apps)
+        .where(eq(apps.id, appId));
+      expect(app?.automation).toMatchObject({
+        merge: 'off',
+        train: 'off',
+        paused: false,
+        trainSchedule: null,
+        verify: { baseUrl: null },
+        holdPaths: [],
+        dependabotUserId: 49699333,
+      });
+      expect(app?.automation.allowedPaths).toContain('package.json');
+      expect(app?.automation.holdImages).toContain('postgres');
+
+      await db.insert(automationRuns).values({
+        appId,
+        kind: 'pr',
+        key: 'pr-1',
+        state: 'new',
+        snapshot: {},
+        actions: [],
+      });
+      await db.delete(apps).where(eq(apps.id, appId));
+      expect(await db.select().from(automationRuns).where(eq(automationRuns.appId, appId))).toEqual(
+        [],
+      );
     } finally {
       await close();
       await admin.pool.query(`DROP DATABASE ${name}`);

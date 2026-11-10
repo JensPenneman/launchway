@@ -9,6 +9,7 @@ import {
   AppSlug,
   CheckItem,
   type CreateAppInput,
+  DEFAULT_APP_AUTOMATION_SETTINGS,
   DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_APP_PREVIEW_SETTINGS,
   DEFAULT_COMPOSE_FILES,
@@ -94,6 +95,7 @@ function toApp(row: AppRow, activeDeploymentId: App['activeDeploymentId']): App 
     proxyServices: row.proxyServices,
     previews: { ...DEFAULT_APP_PREVIEW_SETTINGS, ...row.previews },
     checks: { ...DEFAULT_APP_CHECKS_SETTINGS, ...row.checks },
+    automation: { ...DEFAULT_APP_AUTOMATION_SETTINGS, ...row.automation },
     checksScheduleNote: row.checksScheduleNote,
     activeDeploymentId,
     createdAt: row.createdAt.toISOString(),
@@ -116,7 +118,7 @@ function toEnvVar(row: EnvVarRow, value: string): EnvVar {
  * Trusted mounts are an explicit admin decision (ADR 0015): members may edit everything else of
  * an app, but turning `trustedMounts` on or off needs the admin role.
  */
-function assertMayChangeTrustedMounts(actor: RequestActor): void {
+export function assertMayChangeTrustedMounts(actor: RequestActor): void {
   if (!roleAtLeast(effectiveRole(getActorPrincipal(actor)), 'admin')) {
     throw forbidden(
       'Only an admin can change trustedMounts: trusted apps may bind-mount host directories and reuse foreign volumes',

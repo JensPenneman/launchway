@@ -1,7 +1,7 @@
 import { DEFAULT_APP_CHECKS_SETTINGS } from '@launchway/contracts';
 import { describe, expect, it } from 'vitest';
+import { checkTrigger } from '../checks/trigger.js';
 import {
-  checkTrigger,
   deletedBranch,
   pullRequestPreviewAction,
   pushedBranch,

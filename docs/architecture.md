@@ -53,6 +53,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 | **Deployment** | One attempt to run a specific `ref` (tag, branch, or commit) of an app in one environment (`production` or a preview's `preview/pr-<n>`). Has a state machine and logs. |
 | **Preview** | The running copy of an app for one pull request: branch, head commit, host name, the domain and route it created, status (section 4). |
 | **CheckRun** | One run of one configured check of an app for one commit: the command as configured, trigger (`push`, `pull_request`, `manual`), status, reason, exit code, logs and the commit status posted to GitHub (section 4). |
+| **AutomationRun** | The record of one automated subject of an app (a Dependabot pull request, later a release train): the last snapshot, the actions decided in order with their idempotency keys and results, and a state (section 8, [ADR 0023](adr/0023-automation.md)). |
 | **Node** | A machine running the agent. Reports Docker info, LAN IP, architecture, health. One node is the `edge` (runs Caddy). |
 | **DnsProviderAccount** | Credentials for one DNS provider (kind + encrypted credentials). |
 | **DnsZone** | A zone discovered from a provider account (e.g. `example.com`). |
@@ -63,7 +64,7 @@ decisions do not block them. The project is licensed under Apache-2.0
 
 IDs are prefixed type IDs (`typeid-js`, UUIDv7 underneath): `user_…`, `sess_…`,
 `pk_…`, `tok_…`, `inv_…`, `gh_…`, `app_…`, `env_…`, `dep_…`, `node_…`, `prov_…`,
-`zone_…`, `dom_…`, `rt_…`, `aud_…`, `prv_…`, `chk_…`.
+`zone_…`, `dom_…`, `rt_…`, `aud_…`, `prv_…`, `chk_…`, `run_…`.
 
 ### Deployment state machine
 
@@ -347,6 +348,67 @@ reported to GitHub as commit statuses that branch protection can require
 - **On GitHub.** Each run posts the status `launchway/<name>`: `pending`,
   then `success`, `failure` or `error`, with a link to the run.
 
+### Automation
+
+Per app, `automation` (`merge` and `train`: `off | shadow | on`, `paused`, the
+Dependabot user id, the allowlist of paths, the held images) decides whether
+Launchway merges Dependabot pull requests itself. Changing it needs an admin
+passkey session (`PUT /apps/{id}/automation`); a token with write scope may
+only pause (`POST /apps/{id}/automation/pause`). `merge: shadow` records every
+decision and writes nothing to GitHub.
+
+- **Hook before the checks.** On `pull_request` `opened`, `reopened`,
+  `synchronize`, `edited`, `converted_to_draft`, `ready_for_review` and
+  `closed` of a `dependabot/*` head, and on a push to `dependabot/*`, the
+  webhook handler records the head, holds the checks the event would queue
+  and returns; it never waits for GitHub. A background pass takes the pull
+  request's database lock, disables an auto-merge the App enabled, classifies
+  the head (complete commit and file lists, pinned to the head), records it in
+  `automation_runs`, enables auto-merge (`mergeMethod: MERGE`,
+  `expectedHeadOid` = the head) when the head is eligible (or merges through
+  REST with `sha` = the head when GitHub answers "clean status" and every
+  configured check succeeded for the head), and then queues the held checks
+  for the head the API reports. GitHub never redelivers a failed delivery on
+  its own: when the pass fails the checks stay held, the 2-minute reconcile
+  runs it again, and one notification goes out after three failed passes. A
+  push to `dependabot/*` without a pull request yet waits for its `opened`
+  event.
+- **Policy and executor.** `policy/decide.ts` is `decide(snapshot) -> actions`:
+  pure, with the mode, the pause, the state of the default branch, the head's
+  verdict, the newest check run of each name and the outcomes already recorded
+  as input. Every action (`github.enableAutoMerge`, `github.disableAutoMerge`,
+  `github.merge`, `checks.rerun`, `notify`, `recordState`) has JSON input and an
+  idempotency key; one executor (`executor.ts`) performs them and a
+  refusal (a "clean status", a head that moved, a merge GitHub declines) is an
+  outcome that goes back to `decide`, never a decision of the executor. A
+  test fails when a `decide.ts` or a file under `policy/` imports the
+  database, dependencies, Hono or Octokit.
+- **Notifications** are recorded in the run and sent after the handler
+  returned (never awaited inside a webhook, where GitHub allows 10 s and one
+  `notify` can take 14 s); the reconcile sends what is still pending.
+- **Withdrawing.** An auto-merge the App enabled is disabled whenever the
+  head may not merge right now, in every mode (not only `on`): mode `off` or
+  `shadow`, paused, a head not classified or not eligible, main red or
+  unknown. A pause and every change that moves `merge` away from `on` wait
+  for a sweep that disables all of the app's App-enabled auto-merges (about 8
+  s at most) and answer with the pull requests confirmed and failed (207 when
+  any failed; the reconcile keeps trying and sends an urgent notification).
+  While `merge` is not `off`, changing `checks` or `connectionId` needs a
+  passkey session.
+- **Reconcile** every 2 minutes: open Dependabot pull requests (all pages) are
+  handled like an `opened` event, which also re-makes a verdict when the
+  policy, the classifier or the base changed; held checks are queued. Main is
+  `green` only when every configured check succeeded on its head, `red` when
+  one failed (every App-enabled auto-merge is disabled, none enabled), `pending`
+  while checks are queued, running or missing (nothing enabled, nothing
+  withdrawn), `unknown` after an errored or cancelled check or a GitHub
+  failure (nothing enabled, one notification per main sha). An errored check is
+  re-run at most twice per head; a failed check sends one notification per
+  head, a pull request that conflicts for more than 24 hours one more. In
+  `shadow` mode notifications are marked `[shadow]` and sent at the lowest
+  priority. There is no update-branch and no queue; one pull request has one
+  writer at a time through a database lock.
+
 ## 5. Edge, TLS and public exposure
 
 - **Caddy** is the only owner of ports 80/443(+udp) on the edge node. The API
@@ -511,6 +573,13 @@ export interface DnsProvider {
   (`modules/automation/policy/classify.ts`: author id, one verified Dependabot-only
   commit, a per-app file allowlist, manifest fields outside the dependency maps
   unchanged, parseable `updated-dependencies` front matter; Postgres and derived images are held unless a minor or patch) ([ADR 0023](adr/0023-automation.md)).
+- **Automation** (section 4): the webhook handler hands `pull_request` and
+  `push` events of `dependabot/*` branches to `modules/automation` before it
+  queues checks. The module reaches GitHub only through `github.ts`, with the
+  App's single-repository write token (REST for reads and the merge, GraphQL
+  for `enablePullRequestAutoMerge` and `disablePullRequestAutoMerge`), and an
+  app whose connection is a personal access token cannot turn it on. Every
+  enable, disable and merge is audited (`automation.*`).
 - The GitHub side sits behind `interface GitProvider { listRepos; listReleases;
   resolveRef; cloneCredentials; getPullRequest; }` so another host could be
   added later.
@@ -781,6 +850,10 @@ Agent (`launchway-agent` container):
   token or a password session; the topic URL is write-only too (`notifyUrlSet`),
   and a token needs an https URL.
   Notifications carry PR numbers, versions and links, never logs or secrets.
+- Automation settings (`PUT /apps/{id}/automation`) need an admin session signed
+  in with a passkey; tokens can only pause. A merge is enabled only for a head
+  the classifier accepted, pinned to that head, and never before the head is
+  recorded; unknown state means no action ([ADR 0023](adr/0023-automation.md)).
 - Passwords argon2id; tokens and node credentials hashed (SHA-256) at rest;
   constant-time comparisons.
 - Webhook signatures verified before parsing; replay protection by delivery ID.

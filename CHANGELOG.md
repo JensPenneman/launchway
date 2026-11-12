@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.9.1](https://github.com/JensPenneman/launchway/compare/v0.9.0...v0.9.1) (2026-11-12)
+
+
+### Bug Fixes
+
+* **deps:** update seroval and glob for four security advisories ([#42](https://github.com/JensPenneman/launchway/issues/42)) ([d94fad0](https://github.com/JensPenneman/launchway/commit/d94fad0ff54c4d429a24ab2a1c86cddab50061df))
+
 ## [0.9.0](https://github.com/JensPenneman/launchway/compare/v0.8.1...v0.9.0) (2026-11-10)
 
 

@@ -14,6 +14,7 @@ import { createLifecycle } from './lib/lifecycle.js';
 import { createLogger } from './logger.js';
 import { createAuthResolver } from './modules/auth/resolver.js';
 import { createAuthService } from './modules/auth/service.js';
+import { startAutomationReconciler } from './modules/automation/reconciler.js';
 import { startChecksMirror } from './modules/checks/mirror.js';
 import { createCheckSink } from './modules/checks/sink.js';
 import { startChecksWorker } from './modules/checks/worker.js';
@@ -111,6 +112,7 @@ export async function start(): Promise<void> {
   startPreviewWorker(deps);
   // Check runs (ADR 0020): dispatch and log retention, and their commit statuses on GitHub.
   startChecksWorker(deps);
+  startAutomationReconciler(deps);
   startChecksMirror(deps);
 
   // WebSocket upgrades (agent socket) are handled by `upgradeWebSocket` from @hono/node-server.

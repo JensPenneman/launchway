@@ -10,9 +10,10 @@ import {
   CreateCheckRunsInput,
 } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
-import { requestActor, requireRole } from '../../lib/auth-context.js';
+import { getPasskeySessionPrincipal, requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';
 import { sseResponse } from '../../lib/sse.js';
+import { createAutomationService } from '../automation/service.js';
 import { createChecksService } from './service.js';
 
 const AppParams = z.object({ id: AppId });
@@ -45,7 +46,9 @@ const createCheckRuns = createRoute({
     'Resolves the ref (branch, tag or commit) to a commit and queues one run per check (every ' +
     "configured check, or the named ones) on the node that runs the app's checks (its own node unless `checks.nodeId` names another); checks queued or running for that " +
     'commit already are skipped (409 when none is left). Works whether or not `checks.enabled` ' +
-    'is set. Each run is reported to GitHub as the commit status `launchway/<name>`. Audited.',
+    'is set. Each run is reported to GitHub as the commit status `launchway/<name>`. For an app that ' +
+    'is not itself automated, on a repository that has an automated app, a passkey session is ' +
+    'required (403 otherwise). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: AppParams, body: jsonBody(CreateCheckRunsInput) },
@@ -119,7 +122,8 @@ const rerunCheckRun = createRoute({
   description:
     "Queues a new run of the same check for the same commit with the check's current " +
     'configuration. 409 while the check is queued or running for that commit, or when it is no ' +
-    'longer configured. Audited.',
+    'longer configured. For an app that is not itself automated, on a repository that has an ' +
+    'automated app, a passkey session is required (403 otherwise). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: CheckRunParams },
@@ -131,6 +135,7 @@ const rerunCheckRun = createRoute({
 
 export function registerChecksRoutes(api: Api, deps: Deps): void {
   const service = createChecksService(deps);
+  const automation = createAutomationService(deps);
 
   api.openapi(listCheckRuns, async (c) =>
     c.json(await service.list(c.req.valid('param').id, c.req.valid('query')), 200),
@@ -138,6 +143,8 @@ export function registerChecksRoutes(api: Api, deps: Deps): void {
 
   api.openapi(createCheckRuns, async (c) => {
     const { id } = c.req.valid('param');
+    // A sibling of an automated app could post the automated app's check contexts.
+    if (await automation.isSiblingOfAutomated(id)) getPasskeySessionPrincipal(c);
     return c.json(await service.createManual(id, c.req.valid('json'), requestActor(c)), 201);
   });
 
@@ -158,7 +165,12 @@ export function registerChecksRoutes(api: Api, deps: Deps): void {
     c.json(await service.cancel(c.req.valid('param').id, requestActor(c)), 200),
   );
 
-  api.openapi(rerunCheckRun, async (c) =>
-    c.json(await service.rerun(c.req.valid('param').id, requestActor(c)), 201),
-  );
+  api.openapi(rerunCheckRun, async (c) => {
+    const { id } = c.req.valid('param');
+    const appId = await automation.appOfCheckRun(id);
+    if (appId !== undefined && (await automation.isSiblingOfAutomated(appId))) {
+      getPasskeySessionPrincipal(c);
+    }
+    return c.json(await service.rerun(id, requestActor(c)), 201);
+  });
 }

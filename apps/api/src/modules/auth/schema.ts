@@ -3,6 +3,7 @@ import { sql } from 'drizzle-orm';
 import {
   bigint,
   boolean,
+  check,
   index,
   inet,
   pgEnum,
@@ -12,6 +13,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import { bytea, idColumn, timestamps, tz } from '../../db/columns.js';
 import { users } from '../users/schema.js';
+
+export type SessionAuthMethod = 'password' | 'passkey';
 
 /** UI sessions. The cookie carries a random token; only its SHA-256 hash is stored. */
 export const sessions = pgTable(
@@ -23,6 +26,8 @@ export const sessions = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     tokenHash: text('token_hash').notNull(),
+    /** How the user signed in; only a passkey session may change the notification target. */
+    authMethod: text('auth_method').$type<SessionAuthMethod>().notNull().default('password'),
     ipAddress: inet('ip_address'),
     userAgent: text('user_agent'),
     /** Sliding: extended on use, 30 days after the last request. */
@@ -34,6 +39,7 @@ export const sessions = pgTable(
     uniqueIndex('sessions_token_hash_key').on(t.tokenHash),
     index('sessions_user_id_idx').on(t.userId),
     index('sessions_expires_at_idx').on(t.expiresAt),
+    check('sessions_auth_method', sql`${t.authMethod} IN ('password', 'passkey')`),
   ],
 );
 

@@ -41,9 +41,13 @@ export function createTestDeps(overrides: Partial<Deps> = {}): Deps {
 }
 
 /** A session principal with the given role. */
-export function testPrincipal(role: UserRole): Principal {
+export function testPrincipal(
+  role: UserRole,
+  authMethod: 'password' | 'passkey' = 'passkey',
+): Principal {
   return {
     kind: 'session',
+    authMethod,
     sessionId: generateId('sess'),
     user: { id: generateId('user'), email: `${role}@example.com`, name: `Test ${role}`, role },
   };

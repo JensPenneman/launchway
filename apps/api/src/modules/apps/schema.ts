@@ -1,7 +1,9 @@
 import {
+  type AppAutomationSettings,
   type AppChecksSettings,
   type AppId,
   type AppPreviewSettings,
+  DEFAULT_APP_AUTOMATION_SETTINGS,
   DEFAULT_APP_CHECKS_SETTINGS,
   type GitHubConnectionId,
   type NodeId,
@@ -62,6 +64,11 @@ export const apps = pgTable(
       .$type<AppChecksSettings>()
       .notNull()
       .default(sql.raw(`'${JSON.stringify(DEFAULT_APP_CHECKS_SETTINGS)}'::jsonb`)),
+    /** `AppAutomationSettings` (ADR 0023): auto-merge of Dependabot pull requests, release train. */
+    automation: jsonb('automation')
+      .$type<AppAutomationSettings>()
+      .notNull()
+      .default(sql.raw(`'${JSON.stringify(DEFAULT_APP_AUTOMATION_SETTINGS)}'::jsonb`)),
     /**
      * The check schedule's last slot that queued runs, or when the schedule was set: only slots
      * after it run, each once.

@@ -60,6 +60,9 @@ export const settings = pgTable(
     checkMaxQueuedPerNode: integer('check_max_queued_per_node')
       .notNull()
       .default(DEFAULT_CHECK_MAX_QUEUED_PER_NODE),
+    /** ntfy topic URL and its access token (AES-256-GCM, write-only) for notifications. */
+    notifyUrl: text('notify_url'),
+    notifyTokenEncrypted: text('notify_token_encrypted'),
     ...timestamps(),
   },
   (t) => [

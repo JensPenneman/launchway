@@ -1,6 +1,6 @@
 {
   "name": "launchway",
-  "version": "0.8.1",
+  "version": "0.9.0",
   "private": true,
   "description": "Self-hosted deployment platform: GitHub releases to running Compose apps with domains, TLS and DNS.",
   "license": "Apache-2.0",
@@ -33,7 +33,7 @@
     "openapi:generate": "turbo run openapi:generate"
   },
   "devDependencies": {
-    "@biomejs/biome": "2.6.2",
+    "@biomejs/biome": "2.6.6",
     "@commitlint/cli": "21.2.4",
     "@commitlint/config-conventional": "21.2.4",
     "knip": "6.40.0",

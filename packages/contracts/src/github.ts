@@ -25,14 +25,18 @@ export const GITHUB_WEBHOOK_EVENTS = [
  * Permissions/events requested by the generated GitHub App. `deployments: write` mirrors Launchway
  * deployments to GitHub's Deployments API; `pull_requests: read` and the `pull_request` event serve
  * preview deployments and checks; `statuses: write` reports checks as commit statuses. Apps created
- * before these were added must be updated on GitHub (ADR 0017, ADR 0020).
+ * before these were added must be updated on GitHub (ADR 0017, ADR 0020). `contents: write`,
+ * `pull_requests: write` and `checks: read` are for the automation only: the API never uses them
+ * except through the single-repository write token (`installationWriteToken`); every other token
+ * is minted with the narrower set the App had before.
  */
 export const GITHUB_APP_PERMISSIONS = {
-  contents: 'read',
+  contents: 'write',
   metadata: 'read',
   deployments: 'write',
-  pull_requests: 'read',
+  pull_requests: 'write',
   statuses: 'write',
+  checks: 'read',
 } as const;
 export const GITHUB_APP_EVENTS = ['release', 'push', 'pull_request'] as const;
 /** How long the capabilities of a connection are cached by the API. */

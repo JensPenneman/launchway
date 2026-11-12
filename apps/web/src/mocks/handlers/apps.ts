@@ -2,6 +2,7 @@ import {
   type App,
   CreateAppInput,
   CreateDeploymentInput,
+  DEFAULT_APP_AUTOMATION_SETTINGS,
   DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_APP_PREVIEW_SETTINGS,
   type Deployment,
@@ -12,6 +13,7 @@ import {
   isTerminalStatus,
   type LogLine,
   SetEnvVarsInput,
+  UpdateAppAutomation,
   UpdateAppInput,
   UpdateEnvVarInput,
 } from '@launchway/contracts';
@@ -190,6 +192,7 @@ export const appHandlers = [
         composeFiles: [...DEFAULT_APP_CHECKS_SETTINGS.composeFiles],
         items: [],
       },
+      automation: { ...DEFAULT_APP_AUTOMATION_SETTINGS },
       checksScheduleNote: null,
       activeDeploymentId: null,
       createdAt: now(),
@@ -274,6 +277,33 @@ export const appHandlers = [
     recordAudit('app.stop', 'app', app.id);
     db.emit('apps', 'updated', app.id);
     return HttpResponse.json(runtimeStatus(app));
+  }),
+  http.get(`${API}/apps/:id/automation/runs`, ({ params }) => {
+    const denied = guard('viewer');
+    if (denied) return denied;
+    return findApp(params.id) ? HttpResponse.json({ items: [] }) : problem('not-found');
+  }),
+  http.put(`${API}/apps/:id/automation`, async ({ request, params }) => {
+    const denied = guard('admin');
+    if (denied) return denied;
+    const app = findApp(params.id);
+    if (!app) return problem('not-found');
+    const { data, error } = await parseBody(request, UpdateAppAutomation);
+    if (error) return error;
+    for (const [key, value] of Object.entries(data)) {
+      if (value !== undefined) Object.assign(app.automation, { [key]: value });
+    }
+    db.emit('apps', 'updated', app.id);
+    return HttpResponse.json({ ...app.automation, sweep: { confirmed: [], failed: [] } });
+  }),
+  http.post(`${API}/apps/:id/automation/pause`, ({ params }) => {
+    const denied = guard('member');
+    if (denied) return denied;
+    const app = findApp(params.id);
+    if (!app) return problem('not-found');
+    app.automation = { ...app.automation, paused: true };
+    db.emit('apps', 'updated', app.id);
+    return HttpResponse.json({ ...app.automation, sweep: { confirmed: [], failed: [] } });
   }),
   http.get(`${API}/apps/:id/status`, ({ params }) => {
     const denied = guard('viewer');

@@ -18,6 +18,7 @@ describe('type ids', () => {
         'prov',
         'prv',
         'rt',
+        'run',
         'sess',
         'tok',
         'user',

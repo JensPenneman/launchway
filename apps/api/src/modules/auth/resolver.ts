@@ -88,7 +88,13 @@ export function createAuthResolver(
   async function fromSession(c: Context<AppEnv>, token: string): Promise<Principal | null> {
     const at = now();
     const [row] = await deps.db
-      .select({ id: sessions.id, lastUsedAt: sessions.lastUsedAt, user: userColumns })
+
+      .select({
+        id: sessions.id,
+        authMethod: sessions.authMethod,
+        lastUsedAt: sessions.lastUsedAt,
+        user: userColumns,
+      })
       .from(sessions)
       .innerJoin(users, eq(users.id, sessions.userId))
       .where(and(eq(sessions.tokenHash, hashToken(token)), gt(sessions.expiresAt, at)));
@@ -119,7 +125,7 @@ export function createAuthResolver(
         c.get('logger')?.warn({ err }, 'failed to extend session');
       }
     }
-    return { kind: 'session', user: row.user, sessionId: row.id };
+    return { kind: 'session', user: row.user, sessionId: row.id, authMethod: row.authMethod };
   }
 
   return {

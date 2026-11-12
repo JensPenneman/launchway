@@ -5,6 +5,7 @@ import {
   type AuditEvent,
   CHECK_LOG_RETENTION_MS,
   type CheckRun,
+  DEFAULT_APP_AUTOMATION_SETTINGS,
   DEFAULT_APP_CHECKS_SETTINGS,
   DEFAULT_CHECK_CONCURRENCY,
   DEFAULT_CHECK_CPUS,
@@ -416,6 +417,7 @@ export function createApps(): App[] {
       composeFiles: null,
     },
     checks: noChecks(),
+    automation: { ...DEFAULT_APP_AUTOMATION_SETTINGS },
     checksScheduleNote: null as string | null,
   };
   return [
@@ -791,6 +793,8 @@ export function createSettings(): Settings {
     checkConcurrency: DEFAULT_CHECK_CONCURRENCY,
     checkMaxQueuedPerApp: DEFAULT_CHECK_MAX_QUEUED_PER_APP,
     checkMaxQueuedPerNode: DEFAULT_CHECK_MAX_QUEUED_PER_NODE,
+    notifyUrlSet: false,
+    notifyTokenSet: false,
     updatedAt: ago(60 * 24),
   };
 }

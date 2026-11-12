@@ -470,15 +470,72 @@ interface CachedToken {
 
 const installationTokens = new Map<string, Promise<CachedToken>>();
 
-function tokenCacheKey(appId: number, installationId: number): string {
-  return `${appId}:${installationId}`;
+/**
+ * What every installation token had before the App gained write permissions. Minting always names
+ * the permissions, so a later widening of the App never widens these tokens.
+ */
+const READ_PERMISSIONS = {
+  contents: 'read',
+  metadata: 'read',
+  deployments: 'write',
+  pull_requests: 'read',
+  statuses: 'write',
+} as const;
+
+/** The one token that may write to a repository; only the automation module may ask for it. */
+const WRITE_PERMISSIONS = {
+  contents: 'write',
+  pull_requests: 'write',
+  statuses: 'read',
+  checks: 'read',
+  metadata: 'read',
+} as const;
+
+type TokenKind = 'read' | { readonly write: string };
+
+function tokenCacheKey(appId: number, installationId: number, kind: TokenKind): string {
+  return kind === 'read'
+    ? `${appId}:${installationId}:read`
+    : `${appId}:${installationId}:write:${kind.write}`;
+}
+
+const LEVELS = ['read', 'write', 'admin'] as const;
+const levelOf = (value: unknown): number =>
+  typeof value === 'string' ? LEVELS.indexOf(value as (typeof LEVELS)[number]) : -1;
+
+/**
+ * `READ_PERMISSIONS` limited to what the installation granted (each at the lower level): an
+ * installation of an older App lacks some of them, and GitHub answers 422 to a request for more
+ * than the installation has. Never an unscoped mint; an empty result is refused.
+ */
+async function readPermissionsFor(
+  app: GitHubAppCredentials,
+  installationId: number,
+): Promise<Record<string, string>> {
+  const auth = createAppAuth({ appId: app.appId, privateKey: app.privateKey });
+  const { token } = await auth({ type: 'app' });
+  const res = await client(token).request('GET /app/installations/{installation_id}', {
+    installation_id: installationId,
+    ...requestOptions(),
+  });
+  const granted = (res.data.permissions ?? {}) as Record<string, unknown>;
+  const limited: Record<string, string> = {};
+  for (const [name, wanted] of Object.entries(READ_PERMISSIONS)) {
+    const level = Math.min(levelOf(wanted), levelOf(granted[name]));
+    if (level >= 0) limited[name] = LEVELS[level] as string;
+  }
+  if (Object.keys(limited).length === 0) {
+    throw new GitProviderError('forbidden', 'The installation grants none of the permissions');
+  }
+  return limited;
 }
 
 async function installationToken(
   app: GitHubAppCredentials,
   installationId: number,
+  kind: TokenKind = 'read',
 ): Promise<string> {
-  const key = tokenCacheKey(app.appId, installationId);
+  const key = tokenCacheKey(app.appId, installationId, kind);
   const cached = installationTokens.get(key);
   if (cached !== undefined) {
     try {
@@ -487,11 +544,26 @@ async function installationToken(
     } catch {
       // A failed fetch is retried below.
     }
-    if (installationTokens.get(key) !== cached) return installationToken(app, installationId);
+    if (installationTokens.get(key) !== cached) return installationToken(app, installationId, kind);
   }
   const pending = (async (): Promise<CachedToken> => {
     const auth = createAppAuth({ appId: app.appId, privateKey: app.privateKey });
-    const result = await auth({ type: 'installation', installationId, refresh: true });
+    const result = await auth(
+      kind === 'read'
+        ? {
+            type: 'installation',
+            installationId,
+            permissions: await readPermissionsFor(app, installationId),
+            refresh: true,
+          }
+        : {
+            type: 'installation',
+            installationId,
+            repositoryNames: [kind.write],
+            permissions: WRITE_PERMISSIONS,
+            refresh: true,
+          },
+    );
     return { token: result.token, expiresAt: Date.parse(result.expiresAt) };
   })();
   installationTokens.set(key, pending);
@@ -536,6 +608,19 @@ export function installationAccessToken(
   installationId: number,
 ): Promise<string> {
   return installationToken(app, installationId);
+}
+
+/**
+ * Token for the automation: one repository, `contents: write` and `pull_requests: write` (plus
+ * read of statuses and checks), cached per repository until 5 minutes before expiry. Only
+ * `modules/automation/` may import it (enforced by a test); it never goes to a node.
+ */
+export function installationWriteToken(
+  app: GitHubAppCredentials,
+  installationId: number,
+  repo: string,
+): Promise<string> {
+  return installationToken(app, installationId, { write: repo });
 }
 
 /** Short-lived app JWT (`GET /app`, installation metadata). */

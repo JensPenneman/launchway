@@ -290,7 +290,7 @@ export function createNodesService(deps: NodesDeps): NodesService {
  * make it the edge node while none is set. Returns the local node id, or null when not configured.
  */
 export async function ensureLocalNode(
-  deps: Pick<Deps, 'db' | 'config' | 'events' | 'logger'>,
+  deps: Pick<Deps, 'db' | 'config' | 'events' | 'logger' | 'secrets'>,
 ): Promise<NodeId | null> {
   const token = deps.config.localJoinToken;
   if (!token) return null;

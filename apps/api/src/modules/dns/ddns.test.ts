@@ -141,6 +141,8 @@ describe('dynamic DNS service', () => {
       checkConcurrency: 1,
       checkMaxQueuedPerApp: 30,
       checkMaxQueuedPerNode: 100,
+      notifyUrlSet: false,
+      notifyTokenSet: false,
       updatedAt: new Date().toISOString(),
       ...initial,
     };

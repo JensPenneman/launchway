@@ -38,7 +38,11 @@ const WRITABLE_KEYS = [
   'checkConcurrency',
   'checkMaxQueuedPerApp',
   'checkMaxQueuedPerNode',
+  'notifyUrl',
 ] as const satisfies readonly (keyof UpdateSettingsInput & keyof SettingsRow)[];
+
+/** Context that binds the stored ntfy token to its column. */
+export const NOTIFY_TOKEN_CONTEXT = 'settings:notifyToken';
 
 export interface SettingsService {
   get(): Promise<Settings>;
@@ -56,7 +60,7 @@ export interface SettingsService {
 }
 
 export function createSettingsService(
-  deps: Pick<Deps, 'db' | 'config' | 'events'>,
+  deps: Pick<Deps, 'db' | 'config' | 'events' | 'secrets'>,
 ): SettingsService {
   /** Returns the singleton row, creating it with defaults on first use. */
   async function load(db: Executor, forUpdate = false): Promise<SettingsRow> {
@@ -91,6 +95,8 @@ export function createSettingsService(
       checkConcurrency: row.checkConcurrency,
       checkMaxQueuedPerApp: row.checkMaxQueuedPerApp,
       checkMaxQueuedPerNode: row.checkMaxQueuedPerNode,
+      notifyUrlSet: row.notifyUrl !== null,
+      notifyTokenSet: row.notifyTokenEncrypted !== null,
       updatedAt: row.updatedAt.toISOString(),
     };
   }
@@ -177,9 +183,17 @@ export function createSettingsService(
     },
 
     async update(input, actor) {
-      const patch: Partial<Pick<SettingsRow, (typeof WRITABLE_KEYS)[number]>> = {};
+      const patch: Partial<
+        Pick<SettingsRow, (typeof WRITABLE_KEYS)[number] | 'notifyTokenEncrypted'>
+      > = {};
       for (const key of WRITABLE_KEYS) {
         if (input[key] !== undefined) Object.assign(patch, { [key]: input[key] });
+      }
+      if (input.notifyToken !== undefined) {
+        patch.notifyTokenEncrypted =
+          input.notifyToken === null
+            ? null
+            : deps.secrets.encrypt(input.notifyToken, NOTIFY_TOKEN_CONTEXT);
       }
       if (patch.publicUrl) patch.publicUrl = new URL(patch.publicUrl).origin;
 
@@ -201,6 +215,14 @@ export function createSettingsService(
               'Set either forwardAuthUrl or forwardAuthTarget; clear the other one with null',
             );
           }
+          const notifyUrl = patch.notifyUrl === undefined ? before.notifyUrl : patch.notifyUrl;
+          const notifyToken =
+            patch.notifyTokenEncrypted === undefined
+              ? before.notifyTokenEncrypted
+              : patch.notifyTokenEncrypted;
+          if (notifyToken && notifyUrl?.startsWith('http:')) {
+            throw invalidField('body.notifyUrl', 'A token needs an https notifyUrl');
+          }
           if (patch.previewBaseDomain) await assertManagedBaseDomain(tx, patch.previewBaseDomain);
           if (patch.forwardAuthTarget) {
             hints = await checkForwardAuthTarget(
@@ -218,7 +240,10 @@ export function createSettingsService(
           await recordAudit(tx, actor, {
             action: 'settings.update',
             target: { type: 'settings', id: null },
-            summary: diffSummary(before, after, Object.keys(patch)),
+            summary: diffSummary(before, after, Object.keys(patch), [
+              'notifyUrl',
+              'notifyTokenEncrypted',
+            ]),
           });
           return after;
         });

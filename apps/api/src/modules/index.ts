@@ -2,6 +2,7 @@ import type { Api, Deps } from '../deps.js';
 import { registerAppsRoutes } from './apps/routes.js';
 import { registerAuditRoutes } from './audit/routes.js';
 import { registerAuthRoutes } from './auth/routes.js';
+import { registerAutomationRoutes } from './automation/routes.js';
 import { registerChecksRoutes } from './checks/routes.js';
 import { registerDeploymentsRoutes } from './deployments/routes.js';
 import { registerDnsRoutes } from './dns/routes.js';
@@ -50,6 +51,7 @@ export const modules: readonly ModuleDefinition[] = [
   { name: 'deployments', mount: 'v1', register: registerDeploymentsRoutes },
   { name: 'previews', mount: 'v1', register: registerPreviewsRoutes },
   { name: 'checks', mount: 'v1', register: registerChecksRoutes },
+  { name: 'automation', mount: 'v1', register: registerAutomationRoutes },
   { name: 'nodes', mount: 'v1', register: registerNodesRoutes },
   { name: 'nodes', mount: 'api', register: registerAgentSocketRoutes },
   { name: 'routes', mount: 'v1', register: registerRoutesRoutes },

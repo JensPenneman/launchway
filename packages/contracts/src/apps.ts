@@ -1,3 +1,4 @@
+import { AppAutomationSettings } from './automation.js';
 import {
   DisplayName,
   GitRef,
@@ -481,6 +482,7 @@ export const App = z
     proxyServices: ProxyServices,
     previews: AppPreviewSettings,
     checks: AppChecksSettings,
+    automation: AppAutomationSettings,
     checksScheduleNote: z.string().nullable().openapi({
       description:
         'Why the last slot of the check schedule queued no runs (a full queue, GitHub not answering); null once a slot queues runs',

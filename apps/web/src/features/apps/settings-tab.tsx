@@ -24,6 +24,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { useCan } from '@/hooks/use-me';
 import { fieldError } from '@/lib/form';
+import { AutomationCard } from './automation-card';
 import { ChecksCard } from './checks-card';
 import { PreviewsCard } from './previews-card';
 
@@ -287,6 +288,7 @@ export function SettingsTab({ app }: { app: App }) {
       <TrustedMountsCard app={app} />
       <PreviewsCard app={app} />
       <ChecksCard app={app} />
+      <AutomationCard app={app} />
     </div>
   );
 }

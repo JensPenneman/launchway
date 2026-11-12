@@ -51,6 +51,19 @@ describe('GitHub connection capabilities', () => {
     );
   });
 
+  it('labels the automation grants and words the title for them', () => {
+    const caps = {
+      ...ALL_GOOD,
+      missing: ['contents: write', 'pull_requests: write', 'checks: read'],
+    };
+    expect(capabilityTitle(caps)).toBe(
+      'Grant in GitHub to let Launchway merge and release for you',
+    );
+    expect(capabilityHint(caps, NOW)).toBe(
+      'This app was created before Launchway needed these permissions. In its permissions, set Contents to Read and write, Pull requests to Read and write and Checks to Read-only, save, then approve the change on the installation.',
+    );
+  });
+
   it('asks a GitHub App for commit statuses alone when only checks are affected', () => {
     const caps = { ...ALL_GOOD, statuses: false, missing: ['statuses: write'] };
     expect(capabilityTitle(caps)).toBe('Grant in GitHub to show check results there');

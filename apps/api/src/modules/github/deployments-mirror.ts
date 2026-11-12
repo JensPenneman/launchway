@@ -113,7 +113,9 @@ export interface MirrorStore {
   saveGitHubDeploymentId(id: DeploymentId, githubDeploymentId: number): Promise<void>;
 }
 
-export function createDbMirrorStore(deps: Pick<Deps, 'db' | 'config' | 'events'>): MirrorStore {
+export function createDbMirrorStore(
+  deps: Pick<Deps, 'db' | 'config' | 'events' | 'secrets'>,
+): MirrorStore {
   const settings = createSettingsService(deps);
 
   /** A preview's own host, or the hostname of the app's oldest production route. */

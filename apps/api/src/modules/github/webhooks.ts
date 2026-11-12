@@ -1,6 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import {
-  type AppChecksSettings,
   type AppPreviewSettings,
   CommitSha,
   DEFAULT_APP_PREVIEW_SETTINGS,
@@ -15,8 +14,10 @@ import { forgetInstallationTokens } from '../../lib/git-provider.js';
 import { badRequest, ProblemError, unauthorized } from '../../lib/problem.js';
 import { apps } from '../apps/schema.js';
 import { recordAudit } from '../audit/service.js';
+import { createAutomationService } from '../automation/service.js';
 import { checksSettingsOf } from '../checks/model.js';
 import { type CommitTarget, createChecksService } from '../checks/service.js';
+import { type CheckEvent, checkTrigger, isBot } from '../checks/trigger.js';
 import { createDeploymentsService } from '../deployments/service.js';
 import { createPreviewsService } from '../previews/service.js';
 import type { ConnectionRow } from './providers.js';
@@ -195,57 +196,12 @@ const CHECK_PULL_REQUEST_ACTIONS: ReadonlySet<string> = new Set([
   'synchronize',
 ]);
 
-type Account = z.infer<typeof Account>;
-
-/** Bots: GitHub's account type, or the `[bot]` login suffix of GitHub Apps (`dependabot[bot]`). */
-function isBot(account: Account | null | undefined): boolean {
-  return account?.type === 'Bot' || account?.login.endsWith('[bot]') === true;
-}
-
-/** The push or pull request a check decision is about. */
-export type CheckEvent =
-  | {
-      readonly kind: 'push';
-      readonly branch: string;
-      /** Who pushed. */
-      readonly sender: Account | null | undefined;
-    }
-  | {
-      readonly kind: 'pull_request';
-      /** The branch the pull request merges into; null when the event does not name it. */
-      readonly baseBranch: string | null;
-      readonly author: Account | null | undefined;
-    };
-
-/**
- * Whether a push to a branch, or a pull request from a branch of the repository, runs the checks
- * of an app with these settings (ADR 0020): checks on and configured, `branches` (null: every
- * branch) holding the pushed branch or the pull request's base branch, and with `skipBots` no
- * bot as the pusher or the pull request's author. Forks never get here. Manual runs
- * (`POST /apps/{id}/checks`) apply none of this.
- */
-export function checkTrigger(
-  settings: Pick<AppChecksSettings, 'enabled' | 'branches' | 'skipBots' | 'items'>,
-  event: CheckEvent,
-): { readonly run: true } | { readonly run: false; readonly reason: string } {
-  const skip = (reason: string) => ({ run: false, reason }) as const;
-  if (!settings.enabled) return skip('checks are off for the app');
-  if (settings.items.length === 0) return skip('the app has no checks');
-  const push = event.kind === 'push';
-  const branch = push ? event.branch : event.baseBranch;
-  if (settings.branches !== null && (branch === null || !settings.branches.includes(branch))) {
-    return skip(
-      push
-        ? `pushes to ${branch} run no checks`
-        : `pull requests into ${branch ?? 'an unnamed base branch'} run no checks`,
-    );
-  }
-  const account = push ? event.sender : event.author;
-  if (settings.skipBots && isBot(account)) {
-    return skip(`${push ? 'pushed' : 'opened'} by the bot ${account?.login}`);
-  }
-  return { run: true };
-}
+/** Actions only the automation looks at: a changed base, draft state, or a closed pull request. */
+const AUTOMATION_ONLY_ACTIONS: ReadonlySet<string> = new Set([
+  'edited',
+  'converted_to_draft',
+  'ready_for_review',
+]);
 
 /**
  * What a `pull_request` event means for the preview of an app with these settings. `opened`,
@@ -309,6 +265,7 @@ export function createWebhookHandler(deps: Deps) {
   const deployments = createDeploymentsService(deps);
   const previews = createPreviewsService(deps, { deployments });
   const checks = createChecksService(deps);
+  const automation = createAutomationService(deps);
 
   /** Apps with checks turned on; only they log why an event runs no checks. */
   const checksOn = sql`${apps.checks}->>'enabled' = 'true'`;
@@ -369,7 +326,9 @@ export function createWebhookHandler(deps: Deps) {
   ): Promise<WebhookOutcome> {
     const event = PullRequestEvent.parse(payload);
     // Forks never get here: neither previews nor checks run code from forks.
-    if (!PULL_REQUEST_ACTIONS.has(event.action)) return 'ignored';
+    if (!PULL_REQUEST_ACTIONS.has(event.action) && !AUTOMATION_ONLY_ACTIONS.has(event.action)) {
+      return 'ignored';
+    }
     const pr = event.pull_request;
     const head = pr.head.repo?.full_name.toLowerCase() ?? null;
     if (head !== pr.base.repo.full_name.toLowerCase()) {
@@ -380,6 +339,14 @@ export function createWebhookHandler(deps: Deps) {
       return 'ignored';
     }
     const targets = await appsOf(connection, event.repository);
+    // The automation classifies a Dependabot head before any check is queued for it (plan §3.3).
+    const automated = await automateDependabot(connection, event, targets);
+    if (AUTOMATION_ONLY_ACTIONS.has(event.action)) {
+      if (automated.retry) {
+        throw redeliver('The automation could not record the pull request; redeliver to retry');
+      }
+      return automated.held.size > 0 ? 'processed' : 'ignored';
+    }
     let retry = false;
     let handled = false;
     for (const app of targets) {
@@ -432,7 +399,13 @@ export function createWebhookHandler(deps: Deps) {
     const checked =
       event.action === 'closed'
         ? await closedPullRequestChecks(event, targets)
-        : await pullRequestChecks(event, targets);
+        : await pullRequestChecks(
+            event,
+            targets.filter((app) => !automated.held.has(app.id)),
+          );
+    if (automated.retry) {
+      throw redeliver('The automation could not record the pull request; redeliver to retry');
+    }
     if (retry) {
       throw redeliver('Updating a preview failed for at least one app; redeliver to retry');
     }
@@ -442,6 +415,74 @@ export function createWebhookHandler(deps: Deps) {
       );
     }
     return handled || checked.handled ? 'processed' : 'ignored';
+  }
+
+  /** The checks a `pull_request` event would queue for the app, or null when it runs none. */
+  function pullCheckTarget(event: PullRequestEvent, app: AppRow): CommitTarget | null {
+    if (!CHECK_PULL_REQUEST_ACTIONS.has(event.action) || !checksSettingsOf(app).enabled) {
+      return null;
+    }
+    const pr = event.pull_request;
+    const head = GitRef.safeParse(pr.head.ref);
+    if (!head.success) return null;
+    const decision = checkTrigger(checksSettingsOf(app), {
+      kind: 'pull_request',
+      baseBranch: pr.base.ref ?? null,
+      author: pr.user,
+    });
+    return decision.run
+      ? { sha: pr.head.sha, ref: head.data, prNumber: event.number, trigger: 'pull_request' }
+      : null;
+  }
+
+  /**
+   * A `dependabot/*` head's events (opened, reopened, synchronize, a changed base or draft state,
+   * closed): the automation records the head and its held checks and returns; it classifies in the
+   * background and queues the held checks itself once the head is recorded (the 2-minute
+   * reconcile does so when that failed). Apps it holds checks for get none from this handler.
+   */
+  async function automateDependabot(
+    connection: ConnectionRow,
+    event: PullRequestEvent,
+    targets: readonly AppRow[],
+  ): Promise<{ held: Set<AppRow['id']>; retry: boolean }> {
+    const held = new Set<AppRow['id']>();
+    let retry = false;
+    if (
+      !(
+        CHECK_PULL_REQUEST_ACTIONS.has(event.action) ||
+        AUTOMATION_ONLY_ACTIONS.has(event.action) ||
+        event.action === 'closed'
+      ) ||
+      !event.pull_request.head.ref.startsWith('dependabot/')
+    ) {
+      return { held, retry };
+    }
+    for (const app of targets) {
+      try {
+        const result = await automation.onPullRequest(
+          app,
+          connection,
+          event.number,
+          event.pull_request.head.sha,
+          pullCheckTarget(event, app),
+        );
+        if (result.held) held.add(app.id);
+      } catch (error) {
+        logger.warn(
+          {
+            appId: app.id,
+            prNumber: event.number,
+            reason: error instanceof Error ? error.message : 'unknown',
+          },
+          'the automation could not record a pull request; its checks are not queued',
+        );
+        // Not recorded: the checks stay unqueued here, and the redelivery tries again.
+        held.add(app.id);
+        retry ||= needsRedelivery(error);
+      }
+    }
+    return { held, retry };
   }
 
   /** `opened`, `reopened` and `synchronize` run the checks of the head commit. */
@@ -618,8 +659,46 @@ export function createWebhookHandler(deps: Deps) {
         : await deployEach(deployTargets, 'push', (app) =>
             deployments.createForPush(app, pushed.branch, pushed.commitSha, actor),
           );
+    // A push to a `dependabot/*` branch is held for the automation, which queues its checks once
+    // the head is recorded; a head without a pull request yet waits for its `opened` event.
+    const classified: AppRow[] = [];
+    let automationRetry = false;
+    const pushTarget: CommitTarget = {
+      sha: pushed.commitSha,
+      ref: pushed.branch,
+      prNumber: null,
+      trigger: 'push',
+      ...(pushed.treeSha === undefined ? {} : { treeSha: pushed.treeSha }),
+    };
+    for (const app of checkTargets) {
+      try {
+        const run = checkTrigger(checksSettingsOf(app), {
+          kind: 'push',
+          branch: pushed.branch,
+          sender: event.sender,
+        }).run;
+        const { held } = await automation.onPush(
+          app,
+          connection,
+          pushed.branch,
+          pushed.commitSha,
+          run ? pushTarget : null,
+        );
+        if (!held) classified.push(app);
+      } catch (error) {
+        logger.warn(
+          {
+            appId: app.id,
+            branch: pushed.branch,
+            reason: error instanceof Error ? error.message : 'unknown',
+          },
+          'the automation failed for a push; its checks are not queued',
+        );
+        automationRetry ||= needsRedelivery(error);
+      }
+    }
     const checked = await queueChecks(
-      checkTargets,
+      classified,
       {
         sha: pushed.commitSha,
         ref: pushed.branch,
@@ -630,6 +709,9 @@ export function createWebhookHandler(deps: Deps) {
       { kind: 'push', branch: pushed.branch, sender: event.sender },
     );
     if (deployed.retry) throw deployFailed('push');
+    if (automationRetry) {
+      throw redeliver('The automation failed for at least one app; redeliver to retry');
+    }
     if (checked.retry) {
       throw redeliver(
         'Queueing the checks of a push failed for at least one app; redeliver to retry',

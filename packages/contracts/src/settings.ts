@@ -46,6 +46,19 @@ export type ForwardAuthTarget = z.infer<typeof ForwardAuthTarget>;
 /** Upper bound of open previews (per app or in total); 0 turns previews off. */
 export const PreviewLimit = z.number().int().min(0).max(100);
 
+/** ntfy topic URL (`https://ntfy.example.com/launchway`): no credentials or fragment. */
+export const NotifyUrl = HttpUrl.regex(
+  /^https?:\/\/[^/?#@\s]+(?::\d+)?\/[^?#\s]+$/,
+  'Must be a topic URL such as https://ntfy.example.com/launchway (no credentials, query or fragment)',
+).max(2048);
+
+/** Access token of the ntfy server; write-only. */
+export const NotifyToken = z
+  .string()
+  .min(1)
+  .max(512)
+  .regex(/^[\x21-\x7e]+$/, 'Must be printable ASCII without spaces (it travels in a header)');
+
 /** Platform settings (a single record). */
 export const Settings = z
   .object({
@@ -94,6 +107,13 @@ export const Settings = z
         'Queued check runs a node may hold, all apps together; runs beyond it end at once with error, reason queue-full',
       example: 100,
     }),
+    notifyUrlSet: z.boolean().openapi({
+      description:
+        'Whether an ntfy topic URL is stored; the URL is write-only because the topic name can be the secret (read-only)',
+    }),
+    notifyTokenSet: z.boolean().openapi({
+      description: 'Whether an ntfy access token is stored; the token is write-only (read-only)',
+    }),
     updatedAt: Timestamp,
   })
   .openapi('Settings');
@@ -118,8 +138,14 @@ export const UpdateSettingsInput = z
     checkConcurrency: CheckConcurrency.optional(),
     checkMaxQueuedPerApp: CheckQueueLimit.optional(),
     checkMaxQueuedPerNode: CheckQueueLimit.optional(),
+    notifyUrl: NotifyUrl.nullable().optional(),
+    notifyToken: NotifyToken.nullable().optional(),
   })
   .refine((v) => Object.keys(v).length > 0, 'Provide at least one setting')
+  .refine((v) => !(v.notifyToken && v.notifyUrl?.startsWith('http:')), {
+    message: 'A token needs an https notifyUrl',
+    path: ['notifyUrl'],
+  })
   .refine((v) => !(v.forwardAuthUrl && v.forwardAuthTarget), {
     message: 'Set either forwardAuthUrl or forwardAuthTarget, not both',
     path: ['forwardAuthTarget'],

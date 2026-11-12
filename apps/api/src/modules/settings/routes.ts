@@ -1,7 +1,7 @@
 import { createRoute } from '@hono/zod-openapi';
 import { Settings, UpdateSettingsInput, UpdateSettingsResult } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
-import { requestActor, requireRole } from '../../lib/auth-context.js';
+import { getPasskeySessionPrincipal, requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';
 import { createSettingsService } from './service.js';
 
@@ -26,7 +26,7 @@ const updateSettings = createRoute({
   tags: ['Settings'],
   summary: 'Update the platform settings',
   description:
-    'Partial update; `null` clears a value. At most one of `forwardAuthUrl` and `forwardAuthTarget` may be set. Changing either re-renders the edge; `hints` lists follow-ups such as an app that must be redeployed to attach the gate service. Requires the admin role. Audited.',
+    'Partial update; `null` clears a value. At most one of `forwardAuthUrl` and `forwardAuthTarget` may be set. Changing either re-renders the edge; `hints` lists follow-ups such as an app that must be redeployed to attach the gate service. `notifyUrl` (write-only for tokens and viewers: they see `notifyUrlSet`) and `notifyToken` (write-only) need an admin session signed in with a passkey, not an API token or a password session. Requires the admin role. Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('admin')],
   request: { body: jsonBody(UpdateSettingsInput) },
@@ -42,7 +42,10 @@ export function registerSettingsRoutes(api: Api, deps: Deps): void {
   api.openapi(getSettings, async (c) => c.json(await service.get(), 200));
 
   api.openapi(updateSettings, async (c) => {
-    const updated = await service.update(c.req.valid('json'), requestActor(c));
+    const input = c.req.valid('json');
+    if (input.notifyUrl !== undefined || input.notifyToken !== undefined)
+      getPasskeySessionPrincipal(c);
+    const updated = await service.update(input, requestActor(c));
     return c.json(updated, 200);
   });
 }

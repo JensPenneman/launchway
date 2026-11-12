@@ -16,10 +16,12 @@ import {
   UpdateEnvVarInput,
 } from '@launchway/contracts';
 import type { Api, Deps } from '../../deps.js';
-import { requestActor, requireRole } from '../../lib/auth-context.js';
+import { getPasskeySessionPrincipal, requestActor, requireRole } from '../../lib/auth-context.js';
 import { AUTHENTICATED, jsonBody, jsonResponse, problemResponses } from '../../lib/openapi.js';
+import { conflict } from '../../lib/problem.js';
 import { sseResponse } from '../../lib/sse.js';
-import { createAppsService } from './service.js';
+import { createAutomationService } from '../automation/service.js';
+import { assertMayChangeTrustedMounts, createAppsService } from './service.js';
 
 const AppParams = z.object({ id: AppId });
 const EnvParams = z.object({ id: AppId, key: EnvKey });
@@ -32,7 +34,9 @@ const createApp = createRoute({
   tags: TAGS,
   summary: 'Create an app',
   description:
-    'Links a repository of a GitHub connection to a node. `trustedMounts: true` requires the admin role (403 otherwise). Audited.',
+    'Links a repository of a GitHub connection to a node. `trustedMounts: true` requires the admin role (403 otherwise). While an app of the same ' +
+    'repository has its automation on or in shadow, a passkey session is required (403 otherwise). ' +
+    'Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { body: jsonBody(CreateAppInput) },
@@ -80,7 +84,9 @@ const updateApp = createRoute({
     'deployment (an `apps` change event carries `redeployRequired`). Moving to another node ' +
     'requires the app to have no running or pending deployment and cancels its queued check ' +
     'runs. `previews` and `checks` are merged field by field (`checks.items` replaces the list). ' +
-    'Setting `trustedMounts` requires the admin role (403 otherwise). Audited.',
+    'Setting `trustedMounts` requires the admin role (403 otherwise). While the automation of ' +
+    'any app of the same repository is on or in shadow, changing `checks` or `connectionId` ' +
+    'requires a passkey session (403 for tokens and password sessions). Audited.',
   security: AUTHENTICATED,
   middleware: [requireRole('member')],
   request: { params: AppParams, body: jsonBody(UpdateAppInput) },
@@ -227,19 +233,58 @@ const getLogs = createRoute({
 export function registerAppsRoutes(api: Api, deps: Deps): void {
   const service = createAppsService(deps);
 
-  api.openapi(createApp, async (c) =>
-    c.json(await service.create(c.req.valid('json'), requestActor(c)), 201),
-  );
+  api.openapi(createApp, async (c) => {
+    const body = c.req.valid('json');
+    if (body.trustedMounts) assertMayChangeTrustedMounts(requestActor(c));
+    // Commit status contexts are shared by every app of a repository: a second app there could
+    // post the context an auto-merge waits for.
+    if (
+      await createAutomationService(deps).isRepositoryAutomated(
+        body.repository.owner,
+        body.repository.name,
+      )
+    ) {
+      getPasskeySessionPrincipal(c);
+    }
+    return c.json(await service.create(body, requestActor(c)), 201);
+  });
   api.openapi(listApps, async (c) => c.json(await service.list(c.req.valid('query')), 200));
   api.openapi(getApp, async (c) => c.json(await service.get(c.req.valid('param').id), 200));
-  api.openapi(updateApp, async (c) =>
-    c.json(
-      await service.update(c.req.valid('param').id, c.req.valid('json'), requestActor(c)),
-      200,
-    ),
-  );
+  api.openapi(updateApp, async (c) => {
+    const { id } = c.req.valid('param');
+    const body = c.req.valid('json');
+    // The checks are the gate an auto-merge relies on, and a PAT connection cannot write: while an
+    // app of the repository is automated, changing either on any of its apps needs a passkey
+    // session (T10: tokens read and pause).
+    const automation = createAutomationService(deps);
+    if (
+      (body.checks !== undefined || body.connectionId !== undefined || body.nodeId !== undefined) &&
+      (await automation.isRepositoryOfAppAutomated(id))
+    ) {
+      getPasskeySessionPrincipal(c);
+    }
+    // Stricter than the passkey gate: whatever the session, a sibling may not run checks whose
+    // names an automated app's auto-merge waits for.
+    if (body.checks !== undefined) {
+      await automation.assertChecksChangeAllowed(id, body.checks);
+    }
+    return c.json(await service.update(id, body, requestActor(c)), 200);
+  });
   api.openapi(deleteApp, async (c) => {
-    await service.remove(c.req.valid('param').id, c.req.valid('query'), requestActor(c));
+    const { id } = c.req.valid('param');
+    // Deleting cascades the automation's records of what the App enabled, and lifts the gate of
+    // the repository: it needs a passkey session and the App's auto-merges are withdrawn first.
+    const automation = createAutomationService(deps);
+    if (await automation.isAutomationLive(id)) {
+      getPasskeySessionPrincipal(c);
+      const swept = await automation.withdraw(id);
+      if (swept.failed.length > 0) {
+        throw conflict(
+          `Could not withdraw the auto-merge of pull request ${swept.failed.map((n) => `#${n}`).join(', ')}; try again`,
+        );
+      }
+    }
+    await service.remove(id, c.req.valid('query'), requestActor(c));
     return c.body(null, 204);
   });
 

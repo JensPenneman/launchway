@@ -13,7 +13,7 @@ import { writeFileReplacing } from './workspace.js';
  * carries the same reference for Dependabot; a test keeps both equal.
  */
 export const CHECK_BUILDER_IMAGE =
-  'moby/buildkit:v0.33.1@sha256:cec9f139f45e93c5c69c60f8b07cfad9f43f4ef6b6a6cd917527fea5ff2e3dea';
+  'moby/buildkit:v0.34.2@sha256:c5f8862f52499773af85bc07695b2379ef08e8002352b0df2c4864c91d78dabe';
 /**
  * Bridge network of the check builder. Build steps cannot reach the addresses of containers on
  * other networks (the default bridge included), but they can reach ports the node publishes,
